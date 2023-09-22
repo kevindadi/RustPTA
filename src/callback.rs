@@ -117,5 +117,8 @@ impl PTACallbacks {
         let mut pts_detecter = PtsDetecter::new(tcx, param_env);
         pts_detecter.output_pts(&callgraph, &mut alias_analysis);
         // TODO: 遍历所有的锁,判断其指向关系
+
+        // TODO: reduce callgraph
+        pts_detecter.generate_petri_net(&callgraph);
     }
 }

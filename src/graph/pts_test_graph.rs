@@ -84,6 +84,11 @@ impl<'tcx> PtsDetecter<'tcx> {
         lockguards
     }
 
+    pub fn generate_petri_net<'a>(&self, callgraph: &'a CallGraph<'tcx>) {
+        let lockguards = self.collect_lockguards(callgraph);
+        callgraph.dot();
+    }
+
     pub fn output_pts<'a>(
         &mut self,
         callgraph: &'a CallGraph<'tcx>,
@@ -102,7 +107,7 @@ impl<'tcx> PtsDetecter<'tcx> {
         }
         use std::cell::RefCell;
         use std::rc::Rc;
-        let mut lock_node = Rc::new(RefCell::new(FxHashMap::<LockGuardId, NodeIndex>::default()));
+        let lock_node = Rc::new(RefCell::new(FxHashMap::<LockGuardId, NodeIndex>::default()));
         let mut pts_map = Graph::<String, String>::new();
         for (a, b) in &self.lockguard_relations {
             let possibility = deadlock_possibility(a, b, &info, alias_analysis);
