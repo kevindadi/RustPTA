@@ -7,14 +7,14 @@ use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
+use crate::graph::pts_test_graph::PtsDetecter;
 use crate::options::{CrateNameList, Options};
-use log::{debug, warn};
+use log::debug;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
-use rustc_session::EarlyErrorHandler;
 
 pub struct PTACallbacks {
     options: Options,
@@ -52,7 +52,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
     }
     fn after_analysis<'tcx>(
         &mut self,
-        hanlder: &EarlyErrorHandler,
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
@@ -115,5 +114,8 @@ impl PTACallbacks {
 
         // TODO: 基于调用图构造指针分析框架
         let mut alias_analysis = AliasAnalysis::new(tcx, &callgraph);
+        let mut pts_detecter = PtsDetecter::new(tcx, param_env);
+        pts_detecter.output_pts(&callgraph, &mut alias_analysis);
+        // TODO: 遍历所有的锁,判断其指向关系
     }
 }
