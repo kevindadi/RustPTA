@@ -82,7 +82,7 @@ impl std::fmt::Display for PetriNetEdge {
 pub struct PetriNet<'a, 'tcx> {
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
-    net: Graph<PetriNetNode, PetriNetEdge>,
+    pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'a CallGraph<'tcx>,
     function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: Vec<NodeIndex>,
@@ -123,8 +123,29 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         }
     }
 
-    pub fn construct(&mut self) {
-        let (main_func, _) = self.tcx.entry_fn(()).expect("NO Main Function!");
+    pub fn construct(&mut self, alias_analysis: &mut AliasAnalysis) {
+        self.construct_func();
+        self.construct_lock(alias_analysis);
+        for (node, caller) in self.callgraph.graph.node_references() {
+            let body = self.tcx.instance_mir(caller.instance().def);
+            // Skip promoted src
+            if body.source.promoted.is_some() {
+                continue;
+            }
+            let lock_infos = self.lock_info.clone();
+            let mut link_construct = LinkConstruct::new(
+                node,
+                body,
+                self.tcx,
+                self.param_env,
+                &mut self.net,
+                lock_infos,
+                &self.function_counter,
+                &mut self.function_vec,
+                &self.locks_counter,
+            );
+            link_construct.visit_body(body);
+        }
     }
 
     // Construct Function Start and End Place by callgraph
@@ -333,43 +354,78 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
 }
 
 /// Collect lockguard info.
-pub struct LinkConstruct<'a, 'b, 'tcx> {
+pub struct LinkConstruct<'b, 'tcx> {
     instance_id: InstanceId,
-    instance: &'a Instance<'tcx>,
     body: &'b Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
-    pub pn: PetriNet<'a, 'tcx>,
+    pub net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
     pub lockguards: LockGuardMap<'tcx>,
+    function_counter: &'b HashMap<DefId, (NodeIndex, NodeIndex)>,
+    pub function_vec: &'b mut Vec<NodeIndex>,
+    locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
 }
 
-impl<'a, 'b, 'tcx> LinkConstruct<'a, 'b, 'tcx> {
+impl<'b, 'tcx> LinkConstruct<'b, 'tcx> {
     pub fn new(
         instance_id: InstanceId,
-        instance: &'a Instance<'tcx>,
         body: &'b Body<'tcx>,
         tcx: TyCtxt<'tcx>,
         param_env: ParamEnv<'tcx>,
-        pn: PetriNet<'a, 'tcx>,
+        net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
         lockguards: LockGuardMap<'tcx>,
+        function_counter: &'b HashMap<DefId, (NodeIndex, NodeIndex)>,
+        function_vec: &'b mut Vec<NodeIndex>,
+        locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
     ) -> Self {
         Self {
             instance_id,
-            instance,
             body,
             tcx,
             param_env,
-            pn,
+            net,
             lockguards,
+            function_counter,
+            function_vec,
+            locks_counter,
         }
     }
 
     pub fn analyze(&mut self) {
         self.visit_body(self.body);
     }
+
+    pub fn extract_def_id_of_called_function_from_operand(
+        operand: &rustc_middle::mir::Operand<'tcx>,
+        caller_function_def_id: rustc_hir::def_id::DefId,
+        tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    ) -> rustc_hir::def_id::DefId {
+        let function_type = match operand {
+            rustc_middle::mir::Operand::Copy(place) | rustc_middle::mir::Operand::Move(place) => {
+                // Find the type through the local declarations of the caller function.
+                // The `Place` (memory location) of the called function should be declared there and we can query its type.
+                let body = tcx.optimized_mir(caller_function_def_id);
+                let place_ty = place.ty(body, tcx);
+                place_ty.ty
+            }
+            rustc_middle::mir::Operand::Constant(constant) => constant.ty(),
+        };
+        match function_type.kind() {
+            rustc_middle::ty::TyKind::FnPtr(_) => {
+                unimplemented!(
+                    "TyKind::FnPtr not implemented yet. Function pointers are present in the MIR"
+                );
+            }
+            rustc_middle::ty::TyKind::FnDef(def_id, _)
+            | rustc_middle::ty::TyKind::Closure(def_id, _) => *def_id,
+            _ => {
+                panic!("TyKind::FnDef, a function definition, but got: {function_type:?}");
+            }
+        }
+    }
 }
 
-impl<'a, 'b, 'tcx> Visitor<'tcx> for LinkConstruct<'a, 'b, 'tcx> {
+impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
     fn visit_local(&mut self, local: Local, context: PlaceContext, location: Location) {
         let lockguard_id = LockGuardId::new(self.instance_id, local);
         // local is lockguard
@@ -377,7 +433,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LinkConstruct<'a, 'b, 'tcx> {
             match context {
                 PlaceContext::MutatingUse(context) => match context {
                     MutatingUseContext::Drop => {
-                        let lock_node = self.pn.locks_counter.get(&lockguard_id).unwrap();
+                        let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
                         let drop_t = format!("{:?}", lockguard_id.instance_id)
                             + &String::from("drop")
                             + &format!("{:?}", lock_node.index());
@@ -386,30 +442,26 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LinkConstruct<'a, 'b, 'tcx> {
                             + &format!("{:?}", lock_node.index());
                         let drop_lock_t = Transition::new(format!("{:?}", drop_t), (0, 0), 1);
                         let drop_lock_p = Place::new(format!("{:?}", drop_p), 0);
-                        let drop_node_t = self.pn.net.add_node(PetriNetNode::T(drop_lock_t));
-                        let drop_node_p = self.pn.net.add_node(PetriNetNode::P(drop_lock_p));
+                        let drop_node_t = self.net.add_node(PetriNetNode::T(drop_lock_t));
+                        let drop_node_p = self.net.add_node(PetriNetNode::P(drop_lock_p));
 
-                        let prev_node = self.pn.function_vec.last().unwrap();
-                        self.pn
-                            .net
+                        let prev_node = self.function_vec.last().unwrap();
+                        self.net
                             .add_edge(*prev_node, drop_node_t, PetriNetEdge { label: 1u32 });
-                        self.pn.net.add_edge(
-                            drop_node_t,
-                            drop_node_p,
-                            PetriNetEdge { label: 1u32 },
-                        );
-                        match &self.pn.lock_info[&lockguard_id].lockguard_ty {
+                        self.net
+                            .add_edge(drop_node_t, drop_node_p, PetriNetEdge { label: 1u32 });
+                        match &self.lockguards[&lockguard_id].lockguard_ty {
                             LockGuardTy::StdMutex(_)
                             | LockGuardTy::ParkingLotMutex(_)
                             | LockGuardTy::SpinMutex(_) => {
-                                self.pn.net.add_edge(
+                                self.net.add_edge(
                                     drop_node_t,
                                     *lock_node,
                                     PetriNetEdge { label: 1u32 },
                                 );
                             }
                             _ => {
-                                self.pn.net.add_edge(
+                                self.net.add_edge(
                                     drop_node_t,
                                     *lock_node,
                                     PetriNetEdge { label: 10u32 },
@@ -418,7 +470,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LinkConstruct<'a, 'b, 'tcx> {
                         }
                     }
                     MutatingUseContext::Call => {
-                        let lock_node = self.pn.locks_counter.get(&lockguard_id).unwrap();
+                        let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
                         let genc_t = format!("{:?}", lockguard_id.instance_id)
                             + &String::from("genc")
                             + &format!("{:?}", lock_node.index());
@@ -427,30 +479,26 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LinkConstruct<'a, 'b, 'tcx> {
                             + &format!("{:?}", lock_node.index());
                         let genc_lock_t = Transition::new(format!("{:?}", genc_t), (0, 0), 1);
                         let genc_lock_p = Place::new(format!("{:?}", genc_p), 0);
-                        let genc_node_t = self.pn.net.add_node(PetriNetNode::T(genc_lock_t));
-                        let genc_node_p = self.pn.net.add_node(PetriNetNode::P(genc_lock_p));
+                        let genc_node_t = self.net.add_node(PetriNetNode::T(genc_lock_t));
+                        let genc_node_p = self.net.add_node(PetriNetNode::P(genc_lock_p));
 
-                        let prev_node = self.pn.function_vec.last().unwrap();
-                        self.pn
-                            .net
+                        let prev_node = self.function_vec.last().unwrap();
+                        self.net
                             .add_edge(*prev_node, genc_node_t, PetriNetEdge { label: 1u32 });
-                        self.pn.net.add_edge(
-                            genc_node_t,
-                            genc_node_p,
-                            PetriNetEdge { label: 1u32 },
-                        );
-                        match &self.pn.lock_info[&lockguard_id].lockguard_ty {
+                        self.net
+                            .add_edge(genc_node_t, genc_node_p, PetriNetEdge { label: 1u32 });
+                        match &self.lockguards[&lockguard_id].lockguard_ty {
                             LockGuardTy::StdMutex(_)
                             | LockGuardTy::ParkingLotMutex(_)
                             | LockGuardTy::SpinMutex(_) => {
-                                self.pn.net.add_edge(
+                                self.net.add_edge(
                                     *lock_node,
                                     genc_node_t,
                                     PetriNetEdge { label: 1u32 },
                                 );
                             }
                             _ => {
-                                self.pn.net.add_edge(
+                                self.net.add_edge(
                                     *lock_node,
                                     genc_node_t,
                                     PetriNetEdge { label: 10u32 },
@@ -473,59 +521,88 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LinkConstruct<'a, 'b, 'tcx> {
             let func_ty = func.ty(self.body, self.tcx);
 
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
-                let func_name = self.tcx.def_path_str(def_id);
-                let func_start_end = self.pn.function_counter.get(&def_id).unwrap();
-
-                if func_name == "std::mem::drop"
-                    || func_name == "std::ops::Deref::deref"
-                    || func_name == "std::ops::DerefMut::deref_mut"
-                    || func_name == "std::result::Result::<T, E>::unwrap"
+                if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
+                    .ok()
+                    .flatten()
                 {
-                    return;
+                    let func_name = self.tcx.def_path_str(def_id);
+                    println!("{:?}", def_id);
+                    let func_start_end = self.function_counter.get(&def_id);
+                    match func_start_end {
+                        Some(_) => {
+                            if func_name == "std::mem::drop"
+                                || func_name == "std::ops::Deref::deref"
+                                || func_name == "std::ops::DerefMut::deref_mut"
+                                || func_name == "std::result::Result::<T, E>::unwrap"
+                            {
+                                return;
+                            }
+                            if func_name == "std::thread::spawn" {
+                                // thread
+                                return;
+                            }
+                            let call = format!("{:?}", fn_span)
+                                + &String::from("call")
+                                + &format!("{:?}", def_id);
+                            let wait = format!("{:?}", fn_span)
+                                + &String::from("wait")
+                                + &format!("{:?}", def_id);
+                            let ret = format!("{:?}", fn_span)
+                                + &String::from("return")
+                                + &format!("{:?}", def_id);
+                            let called = format!("{:?}", fn_span)
+                                + &String::from("called")
+                                + &format!("{:?}", def_id);
+                            let call_t = Transition::new(call, (0, 0), 1);
+                            let wait_p = Place::new(wait, 0);
+                            let ret_t = Transition::new(ret, (0, 0), 1);
+                            let call_p = Place::new(called, 0);
+
+                            let call_node_t = self.net.add_node(PetriNetNode::T(call_t));
+                            let wait_node_p = self.net.add_node(PetriNetNode::P(wait_p));
+                            let ret_node_t = self.net.add_node(PetriNetNode::T(ret_t));
+                            let call_node_p = self.net.add_node(PetriNetNode::P(call_p));
+
+                            let prev_node = self.function_vec.last().unwrap();
+
+                            self.net.add_edge(
+                                *prev_node,
+                                call_node_t,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            self.net.add_edge(
+                                call_node_t,
+                                wait_node_p,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            self.net.add_edge(
+                                wait_node_p,
+                                ret_node_t,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            self.net.add_edge(
+                                ret_node_t,
+                                call_node_p,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            self.function_vec.push(call_node_t);
+                            self.function_vec.push(wait_node_p);
+                            self.function_vec.push(ret_node_t);
+                            self.function_vec.push(call_node_p);
+                            self.net.add_edge(
+                                call_node_t,
+                                func_start_end.unwrap().0,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            self.net.add_edge(
+                                func_start_end.unwrap().1,
+                                ret_node_t,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                        }
+                        _ => {}
+                    }
                 }
-                if func_name == "std::thread::spawn" {
-                    // thread
-                    return;
-                }
-                let call =
-                    format!("{:?}", fn_span) + &String::from("call") + &format!("{:?}", def_id);
-                let wait =
-                    format!("{:?}", fn_span) + &String::from("wait") + &format!("{:?}", def_id);
-                let ret =
-                    format!("{:?}", fn_span) + &String::from("return") + &format!("{:?}", def_id);
-                let called =
-                    format!("{:?}", fn_span) + &String::from("called") + &format!("{:?}", def_id);
-                let call_t = Transition::new(call, (0, 0), 1);
-                let wait_p = Place::new(wait, 0);
-                let ret_t = Transition::new(ret, (0, 0), 1);
-                let call_p = Place::new(called, 0);
-
-                let call_node_t = self.pn.net.add_node(PetriNetNode::T(call_t));
-                let wait_node_p = self.pn.net.add_node(PetriNetNode::P(wait_p));
-                let ret_node_t = self.pn.net.add_node(PetriNetNode::T(ret_t));
-                let call_node_p = self.pn.net.add_node(PetriNetNode::P(call_p));
-
-                let prev_node = self.pn.function_vec.last().unwrap();
-
-                self.pn
-                    .net
-                    .add_edge(*prev_node, call_node_t, PetriNetEdge { label: 1u32 });
-                self.pn
-                    .net
-                    .add_edge(call_node_t, wait_node_p, PetriNetEdge { label: 1u32 });
-                self.pn
-                    .net
-                    .add_edge(wait_node_p, ret_node_t, PetriNetEdge { label: 1u32 });
-                self.pn
-                    .net
-                    .add_edge(ret_node_t, call_node_p, PetriNetEdge { label: 1u32 });
-
-                self.pn
-                    .net
-                    .add_edge(call_node_t, func_start_end.0, PetriNetEdge { label: 1u32 });
-                self.pn
-                    .net
-                    .add_edge(func_start_end.1, ret_node_t, PetriNetEdge { label: 1u32 });
             }
         }
         self.super_terminator(terminator, location);

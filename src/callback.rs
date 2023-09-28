@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
+use crate::graph::petri_net::PetriNet;
 use crate::graph::pts_test_graph::PtsDetecter;
 use crate::options::{CrateNameList, Options};
 use log::debug;
@@ -120,5 +121,15 @@ impl PTACallbacks {
 
         // TODO: reduce callgraph
         pts_detecter.generate_petri_net(&callgraph);
+
+        // TODO: visit local recursive
+        let mut pn = PetriNet::new(tcx, param_env, &callgraph);
+        pn.construct(&mut alias_analysis);
+
+        use petgraph::dot::Dot;
+        use std::io::Write;
+        let dot = Dot::new(&pn.net);
+        let mut file = std::fs::File::create("pn.dot").unwrap();
+        write!(file, "{}", dot).unwrap();
     }
 }
