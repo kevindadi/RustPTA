@@ -9,6 +9,7 @@ pub mod memory;
 pub mod options;
 
 extern crate rustc_driver;
+extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;

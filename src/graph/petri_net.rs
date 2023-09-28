@@ -1,7 +1,26 @@
-use petgraph::dot::{Config, Dot};
-use petgraph::Graph;
+extern crate rustc_hash;
+use std::collections::HashMap;
 
-use super::state_graph::State;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::IntoNodeReferences;
+use petgraph::Graph;
+use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hir::def_id::DefId;
+use rustc_middle::{
+    mir::{
+        visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor},
+        Body, Local, Location, Terminator, TerminatorKind,
+    },
+    ty::{self, Instance, ParamEnv, TyCtxt},
+};
+
+use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use crate::{
+    analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
+    concurrency::locks::{
+        DeadlockPossibility, LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct Place {
@@ -51,7 +70,7 @@ impl std::fmt::Display for PetriNetNode {
 
 #[derive(Debug, Clone)]
 pub struct PetriNetEdge {
-    label: String,
+    label: u32,
 }
 
 impl std::fmt::Display for PetriNetEdge {
@@ -60,8 +79,16 @@ impl std::fmt::Display for PetriNetEdge {
     }
 }
 
-pub struct PetriNet {
+pub struct PetriNet<'a, 'tcx> {
+    tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    param_env: ParamEnv<'tcx>,
     net: Graph<PetriNetNode, PetriNetEdge>,
+    callgraph: &'a CallGraph<'tcx>,
+    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+    pub function_vec: Vec<NodeIndex>,
+    locks_counter: HashMap<LockGuardId, NodeIndex>,
+    lock_info: LockGuardMap<'tcx>,
+    // threads: VecDeque<Rc<Thread>>,
 }
 
 // impl std::fmt::Display for PetriNet {
@@ -78,11 +105,205 @@ pub struct PetriNet {
 //     }
 // }
 
-impl PetriNet {
-    pub fn new() -> Self {
+impl<'a, 'tcx> PetriNet<'a, 'tcx> {
+    pub fn new(
+        tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        callgraph: &'a CallGraph<'tcx>,
+    ) -> Self {
         Self {
+            tcx,
+            param_env,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
+            callgraph,
+            function_counter: HashMap::<DefId, (NodeIndex, NodeIndex)>::new(),
+            function_vec: Vec::<NodeIndex>::new(),
+            locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
+            lock_info: HashMap::default(),
         }
+    }
+
+    pub fn construct(&mut self) {
+        let (main_func, _) = self.tcx.entry_fn(()).expect("NO Main Function!");
+    }
+
+    // Construct Function Start and End Place by callgraph
+    pub fn construct_func(&mut self) {
+        let (main_func, _) = self.tcx.entry_fn(()).unwrap();
+        for node_idx in self.callgraph.graph.node_indices() {
+            // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
+            let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
+            let func_id = func_instance.instance().def_id();
+            if func_id == main_func {
+                let func_start = Place::new(format!("{}", func_instance.instance()), 1);
+                let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
+                let func_end = Place::new(format!("{}", func_instance.instance()), 0);
+                let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
+                self.function_counter
+                    .insert(func_id, (func_start_node_id, func_end_node_id));
+                self.function_vec.push(func_start_node_id);
+            } else {
+                let func_start = Place::new(format!("{}", func_instance.instance()), 0);
+                let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
+                let func_end = Place::new(format!("{}", func_instance.instance()), 0);
+                let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
+                self.function_counter
+                    .insert(func_id, (func_start_node_id, func_end_node_id));
+                self.function_vec.push(func_start_node_id);
+            }
+        }
+    }
+
+    // Construct lock for place
+    pub fn construct_lock(&mut self, alias_analysis: &mut AliasAnalysis) {
+        let lockguards = self.collect_lockguards();
+        // classify the lock point to the same memory location
+        let mut lockguard_relations = FxHashSet::<(LockGuardId, LockGuardId)>::default();
+        let mut info = FxHashMap::default();
+        for (_, map) in lockguards.clone().into_iter() {
+            info.extend(map.clone().into_iter());
+            self.lock_info.extend(map.into_iter());
+        }
+        for (k1, _) in info.iter() {
+            for (k2, _) in info.iter() {
+                lockguard_relations.insert((*k1, *k2));
+            }
+        }
+
+        let mut lock_map: HashMap<LockGuardId, u32> = HashMap::new();
+        let mut counter: u32 = 0;
+
+        for (a, b) in &lockguard_relations {
+            let possibility = self.deadlock_possibility(a, b, &info, alias_analysis);
+            match possibility {
+                DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                    if !lock_map.contains_key(a) && !lock_map.contains_key(b) {
+                        lock_map.insert(*a, counter);
+                        lock_map.insert(*b, counter);
+                        counter += 1;
+                    }
+                }
+                _ => {
+                    if lock_map.contains_key(a) {
+                        let value = *lock_map.get(a).unwrap();
+                        lock_map.insert(*b, value);
+                    } else if lock_map.contains_key(b) {
+                        let value = *lock_map.get(b).unwrap();
+                        lock_map.insert(*a, value);
+                    } else {
+                        lock_map.insert(*a, counter);
+                        counter += 1;
+                        lock_map.insert(*b, counter);
+                        counter += 1;
+                    }
+                }
+            }
+        }
+
+        let mut lock_id_map: HashMap<u32, Vec<LockGuardId>> = HashMap::new();
+        for (lock_id, value) in lock_map {
+            if lock_id_map.contains_key(&value) {
+                let vec = lock_id_map.get_mut(&value).unwrap();
+                vec.push(lock_id);
+            } else {
+                let mut vec = Vec::new();
+                vec.push(lock_id);
+                lock_id_map.insert(value, vec);
+            }
+        }
+
+        for (id, lock_vec) in lock_id_map {
+            match &info[&lock_vec[0]].lockguard_ty {
+                LockGuardTy::StdMutex(_)
+                | LockGuardTy::ParkingLotMutex(_)
+                | LockGuardTy::SpinMutex(_) => {
+                    let lock_name = String::from("Mutex") + &format!("{:?}", id);
+                    let lock_p = Place::new(format!("{:?}", lock_name), 1);
+                    let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
+                    for lock in lock_vec {
+                        self.locks_counter.insert(lock.clone(), lock_node);
+                    }
+                }
+                _ => {
+                    let lock_name = String::from("RwLock") + &format!("{:?}", id);
+                    let lock_p = Place::new(format!("{:?}", lock_name), 10);
+                    let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
+                    for lock in lock_vec {
+                        self.locks_counter.insert(lock.clone(), lock_node);
+                    }
+                }
+            }
+        }
+
+        // for (_, inner_map) in lockguards.iter() {
+        //     for (lock, _) in inner_map.iter() {
+        //         // find the same lock belong to the one
+
+        //         let lock_p = Place::new(format!("{:?}", lock.instance_id), 1);
+        //         let lock_id = self.net.add_node(PetriNetNode::P(lock_p));
+        //         self.locks_counter.insert(lock.clone(), lock_id);
+        //     }
+        // }
+    }
+
+    fn collect_lockguards(&self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
+        let mut lockguards = FxHashMap::default();
+        for (instance_id, node) in self.callgraph.graph.node_references() {
+            let instance = match node {
+                CallGraphNode::WithBody(instance) => instance,
+                _ => continue,
+            };
+            // Only analyze local fn with body
+            if !instance.def_id().is_local() {
+                continue;
+            }
+            let body = self.tcx.instance_mir(instance.def);
+            let mut lockguard_collector =
+                LockGuardCollector::new(instance_id, instance, body, self.tcx, self.param_env);
+            lockguard_collector.analyze();
+            if !lockguard_collector.lockguards.is_empty() {
+                lockguards.insert(instance_id, lockguard_collector.lockguards);
+            }
+        }
+        lockguards
+    }
+
+    fn deadlock_possibility(
+        &self,
+        a: &LockGuardId,
+        b: &LockGuardId,
+        lockguards: &LockGuardMap<'tcx>,
+        alias_analysis: &mut AliasAnalysis,
+    ) -> DeadlockPossibility {
+        let a_ty = &lockguards[a].lockguard_ty;
+        let b_ty = &lockguards[b].lockguard_ty;
+        if let (LockGuardTy::ParkingLotRead(_), LockGuardTy::ParkingLotRead(_)) = (a_ty, b_ty) {
+            if lockguards[b].is_gen_only_by_recursive() {
+                return DeadlockPossibility::Unlikely;
+            }
+        }
+        // Assume that a lock in a loop or recursive functions will not deadlock with itself,
+        // in which case the lock spans of the two locks are the same.
+        // This may miss some bugs but can reduce many FPs.
+        if lockguards[a].span == lockguards[b].span {
+            return DeadlockPossibility::Unlikely;
+        }
+        let possibility = match a_ty.deadlock_with(b_ty) {
+            DeadlockPossibility::Probably => match alias_analysis.alias((*a).into(), (*b).into()) {
+                ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
+                ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
+                ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
+                ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
+            },
+            DeadlockPossibility::Possibly => match alias_analysis.alias((*a).into(), (*b).into()) {
+                ApproximateAliasKind::Probably => DeadlockPossibility::Possibly,
+                ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
+                ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
+                ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
+            },
+            _ => DeadlockPossibility::Unlikely,
+        };
+        possibility
     }
 
     // Get initial state of Petri net.
@@ -106,4 +327,207 @@ impl PetriNet {
 
     // Generate state graph for Petri net
     pub fn generate_state_graph(&mut self) {}
+
+    // Check Deadlock
+    pub fn check_deadlock(&self) {}
+}
+
+/// Collect lockguard info.
+pub struct LinkConstruct<'a, 'b, 'tcx> {
+    instance_id: InstanceId,
+    instance: &'a Instance<'tcx>,
+    body: &'b Body<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    param_env: ParamEnv<'tcx>,
+    pub pn: PetriNet<'a, 'tcx>,
+    pub lockguards: LockGuardMap<'tcx>,
+}
+
+impl<'a, 'b, 'tcx> LinkConstruct<'a, 'b, 'tcx> {
+    pub fn new(
+        instance_id: InstanceId,
+        instance: &'a Instance<'tcx>,
+        body: &'b Body<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        pn: PetriNet<'a, 'tcx>,
+        lockguards: LockGuardMap<'tcx>,
+    ) -> Self {
+        Self {
+            instance_id,
+            instance,
+            body,
+            tcx,
+            param_env,
+            pn,
+            lockguards,
+        }
+    }
+
+    pub fn analyze(&mut self) {
+        self.visit_body(self.body);
+    }
+}
+
+impl<'a, 'b, 'tcx> Visitor<'tcx> for LinkConstruct<'a, 'b, 'tcx> {
+    fn visit_local(&mut self, local: Local, context: PlaceContext, location: Location) {
+        let lockguard_id = LockGuardId::new(self.instance_id, local);
+        // local is lockguard
+        if let Some(info) = self.lockguards.get_mut(&lockguard_id) {
+            match context {
+                PlaceContext::MutatingUse(context) => match context {
+                    MutatingUseContext::Drop => {
+                        let lock_node = self.pn.locks_counter.get(&lockguard_id).unwrap();
+                        let drop_t = format!("{:?}", lockguard_id.instance_id)
+                            + &String::from("drop")
+                            + &format!("{:?}", lock_node.index());
+                        let drop_p = format!("{:?}", lockguard_id.instance_id)
+                            + &String::from("dropped")
+                            + &format!("{:?}", lock_node.index());
+                        let drop_lock_t = Transition::new(format!("{:?}", drop_t), (0, 0), 1);
+                        let drop_lock_p = Place::new(format!("{:?}", drop_p), 0);
+                        let drop_node_t = self.pn.net.add_node(PetriNetNode::T(drop_lock_t));
+                        let drop_node_p = self.pn.net.add_node(PetriNetNode::P(drop_lock_p));
+
+                        let prev_node = self.pn.function_vec.last().unwrap();
+                        self.pn
+                            .net
+                            .add_edge(*prev_node, drop_node_t, PetriNetEdge { label: 1u32 });
+                        self.pn.net.add_edge(
+                            drop_node_t,
+                            drop_node_p,
+                            PetriNetEdge { label: 1u32 },
+                        );
+                        match &self.pn.lock_info[&lockguard_id].lockguard_ty {
+                            LockGuardTy::StdMutex(_)
+                            | LockGuardTy::ParkingLotMutex(_)
+                            | LockGuardTy::SpinMutex(_) => {
+                                self.pn.net.add_edge(
+                                    drop_node_t,
+                                    *lock_node,
+                                    PetriNetEdge { label: 1u32 },
+                                );
+                            }
+                            _ => {
+                                self.pn.net.add_edge(
+                                    drop_node_t,
+                                    *lock_node,
+                                    PetriNetEdge { label: 10u32 },
+                                );
+                            }
+                        }
+                    }
+                    MutatingUseContext::Call => {
+                        let lock_node = self.pn.locks_counter.get(&lockguard_id).unwrap();
+                        let genc_t = format!("{:?}", lockguard_id.instance_id)
+                            + &String::from("genc")
+                            + &format!("{:?}", lock_node.index());
+                        let genc_p = format!("{:?}", lockguard_id.instance_id)
+                            + &String::from("locked")
+                            + &format!("{:?}", lock_node.index());
+                        let genc_lock_t = Transition::new(format!("{:?}", genc_t), (0, 0), 1);
+                        let genc_lock_p = Place::new(format!("{:?}", genc_p), 0);
+                        let genc_node_t = self.pn.net.add_node(PetriNetNode::T(genc_lock_t));
+                        let genc_node_p = self.pn.net.add_node(PetriNetNode::P(genc_lock_p));
+
+                        let prev_node = self.pn.function_vec.last().unwrap();
+                        self.pn
+                            .net
+                            .add_edge(*prev_node, genc_node_t, PetriNetEdge { label: 1u32 });
+                        self.pn.net.add_edge(
+                            genc_node_t,
+                            genc_node_p,
+                            PetriNetEdge { label: 1u32 },
+                        );
+                        match &self.pn.lock_info[&lockguard_id].lockguard_ty {
+                            LockGuardTy::StdMutex(_)
+                            | LockGuardTy::ParkingLotMutex(_)
+                            | LockGuardTy::SpinMutex(_) => {
+                                self.pn.net.add_edge(
+                                    *lock_node,
+                                    genc_node_t,
+                                    PetriNetEdge { label: 1u32 },
+                                );
+                            }
+                            _ => {
+                                self.pn.net.add_edge(
+                                    *lock_node,
+                                    genc_node_t,
+                                    PetriNetEdge { label: 10u32 },
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
+    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+        if let TerminatorKind::Call {
+            ref func, fn_span, ..
+        } = terminator.kind
+        {
+            let func_ty = func.ty(self.body, self.tcx);
+
+            if let ty::FnDef(def_id, substs) = *func_ty.kind() {
+                let func_name = self.tcx.def_path_str(def_id);
+                let func_start_end = self.pn.function_counter.get(&def_id).unwrap();
+
+                if func_name == "std::mem::drop"
+                    || func_name == "std::ops::Deref::deref"
+                    || func_name == "std::ops::DerefMut::deref_mut"
+                    || func_name == "std::result::Result::<T, E>::unwrap"
+                {
+                    return;
+                }
+                if func_name == "std::thread::spawn" {
+                    // thread
+                    return;
+                }
+                let call =
+                    format!("{:?}", fn_span) + &String::from("call") + &format!("{:?}", def_id);
+                let wait =
+                    format!("{:?}", fn_span) + &String::from("wait") + &format!("{:?}", def_id);
+                let ret =
+                    format!("{:?}", fn_span) + &String::from("return") + &format!("{:?}", def_id);
+                let called =
+                    format!("{:?}", fn_span) + &String::from("called") + &format!("{:?}", def_id);
+                let call_t = Transition::new(call, (0, 0), 1);
+                let wait_p = Place::new(wait, 0);
+                let ret_t = Transition::new(ret, (0, 0), 1);
+                let call_p = Place::new(called, 0);
+
+                let call_node_t = self.pn.net.add_node(PetriNetNode::T(call_t));
+                let wait_node_p = self.pn.net.add_node(PetriNetNode::P(wait_p));
+                let ret_node_t = self.pn.net.add_node(PetriNetNode::T(ret_t));
+                let call_node_p = self.pn.net.add_node(PetriNetNode::P(call_p));
+
+                let prev_node = self.pn.function_vec.last().unwrap();
+
+                self.pn
+                    .net
+                    .add_edge(*prev_node, call_node_t, PetriNetEdge { label: 1u32 });
+                self.pn
+                    .net
+                    .add_edge(call_node_t, wait_node_p, PetriNetEdge { label: 1u32 });
+                self.pn
+                    .net
+                    .add_edge(wait_node_p, ret_node_t, PetriNetEdge { label: 1u32 });
+                self.pn
+                    .net
+                    .add_edge(ret_node_t, call_node_p, PetriNetEdge { label: 1u32 });
+
+                self.pn
+                    .net
+                    .add_edge(call_node_t, func_start_end.0, PetriNetEdge { label: 1u32 });
+                self.pn
+                    .net
+                    .add_edge(func_start_end.1, ret_node_t, PetriNetEdge { label: 1u32 });
+            }
+        }
+        self.super_terminator(terminator, location);
+    }
 }
