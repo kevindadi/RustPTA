@@ -1,8 +1,13 @@
 extern crate rustc_hash;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::VecDeque;
 
 use petgraph::graph::NodeIndex;
+use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
+use petgraph::Direction;
 use petgraph::Graph;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -15,6 +20,7 @@ use rustc_middle::{
 };
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use super::state_graph::{StateGraph, StateNode};
 use crate::{
     analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
     concurrency::locks::{
@@ -23,14 +29,27 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+pub enum Shape {
+    Circle,
+    Box,
+}
+
+#[derive(Debug, Clone)]
 pub struct Place {
     name: String,
-    token: u32,
+    tokens: RefCell<u32>,
+    capacity: u32,
+    shape: Shape,
 }
 
 impl Place {
     pub fn new(name: String, token: u32) -> Self {
-        Self { name, token }
+        Self {
+            name,
+            tokens: RefCell::new(token),
+            capacity: token,
+            shape: Shape::Circle,
+        }
     }
 }
 
@@ -45,11 +64,17 @@ pub struct Transition {
     name: String,
     time: (u32, u32),
     weight: u32,
+    shape: Shape,
 }
 
 impl Transition {
     pub fn new(name: String, time: (u32, u32), weight: u32) -> Self {
-        Self { name, time, weight }
+        Self {
+            name,
+            time,
+            weight,
+            shape: Shape::Box,
+        }
     }
 }
 
@@ -341,16 +366,179 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     // }
 
     // Get all enabled transitions at current state
-    pub fn get_sched_transitions(&self) {}
+    pub fn get_sched_transitions(&self) -> Vec<NodeIndex> {
+        let mut sched_transiton = Vec::<NodeIndex>::new();
+        for node_index in self.net.node_indices() {
+            let node_weight = self.net.node_weight(node_index);
+            match node_weight {
+                Some(node) => match node {
+                    PetriNetNode::P(_) => {
+                        continue;
+                    }
+                    PetriNetNode::T(_) => {
+                        let mut enabled = true;
+                        for edge in self.net.edges_directed(node_index, Direction::Incoming) {
+                            let place_node = self.net.node_weight(edge.source()).unwrap();
+                            match place_node {
+                                PetriNetNode::P(place) => {
+                                    if *place.tokens.borrow() < edge.weight().label {
+                                        enabled = false;
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        if enabled {
+                            sched_transiton.push(node_index);
+                        }
+                    }
+                },
+                None => println!("Node {}: no weight", node_index.index()),
+            }
+        }
+        sched_transiton
+    }
 
     // Choose a transition to fire
-    pub fn fire_transition(&mut self) {}
+    pub fn fire_transition(
+        &mut self,
+        transition: NodeIndex,
+        mark: HashSet<NodeIndex>,
+    ) -> HashSet<NodeIndex> {
+        let mut new_state = HashSet::<NodeIndex>::new();
+        self.set_current_mark(mark);
+
+        // 从输入库所中减去token
+        for edge in self.net.edges_directed(transition, Direction::Incoming) {
+            let place_node = self.net.node_weight(edge.source()).unwrap();
+            match place_node {
+                PetriNetNode::P(place) => {
+                    *place.tokens.borrow_mut() = *place.tokens.borrow_mut() - edge.weight().label;
+                }
+                PetriNetNode::T(_) => {
+                    println!("{}", "this error!");
+                }
+            }
+        }
+
+        // 将token添加到输出库所中
+        for edge in self.net.edges_directed(transition, Direction::Outgoing) {
+            let place_node = self.net.node_weight(edge.target()).unwrap();
+            match place_node {
+                PetriNetNode::P(place) => {
+                    *place.tokens.borrow_mut() = *place.tokens.borrow_mut() + edge.weight().label;
+                }
+                PetriNetNode::T(_) => {
+                    println!("{}", "this error!");
+                }
+            }
+        }
+
+        for node in self.net.node_indices() {
+            match &self.net[node] {
+                PetriNetNode::P(place) => {
+                    if *place.tokens.borrow() > 0 {
+                        new_state.insert(node);
+                    }
+                }
+                PetriNetNode::T(_) => {
+                    println!("{}", "no record");
+                }
+            }
+        }
+
+        new_state
+    }
+
+    pub fn add_token(&mut self, place_index: NodeIndex, weight: u32) {
+        match &mut self.net[place_index] {
+            PetriNetNode::P(place) => {
+                *place.tokens.borrow_mut() = *place.tokens.borrow_mut() - weight;
+            }
+            PetriNetNode::T(_) => {
+                println!("{}", "this error!");
+            }
+        }
+    }
 
     // Generate state graph for Petri net
-    pub fn generate_state_graph(&mut self) {}
+    pub fn generate_state_graph(&mut self) -> StateGraph {
+        let mut state_graph = StateGraph::new();
+        let mut queue = VecDeque::<HashSet<NodeIndex>>::new();
+
+        let init_mark = self.get_current_mark();
+        let init_index = state_graph
+            .graph
+            .add_node(StateNode::new(init_mark.clone()));
+        let init_usize = init_mark.iter().map(|node| node.index()).collect();
+        queue.push_back(init_mark);
+        let mut all_state = HashSet::<Vec<usize>>::new();
+        all_state.insert(init_usize);
+
+        while let Some(current_state_index) = queue.pop_front() {
+            self.set_current_mark(current_state_index.clone());
+
+            let current_sched_transition = self.get_sched_transitions();
+
+            for t in current_sched_transition {
+                let new_state = self.fire_transition(t, current_state_index.clone());
+                let new_state_uszie: Vec<usize> =
+                    new_state.clone().iter().map(|node| node.index()).collect();
+
+                if all_state.insert(new_state_uszie) {
+                    queue.push_back(new_state);
+                }
+            }
+        }
+
+        state_graph
+    }
 
     // Check Deadlock
     pub fn check_deadlock(&self) {}
+
+    // Set the current marking
+    pub fn set_current_mark(&mut self, mark: HashSet<NodeIndex>) {
+        for node in self.net.node_indices() {
+            match &mut self.net[node] {
+                PetriNetNode::P(place) => {
+                    *place.tokens.borrow_mut() = 0;
+                }
+                PetriNetNode::T(_) => {
+                    println!("{}", "this error!");
+                }
+            }
+        }
+        for m in mark {
+            match &mut self.net[m] {
+                PetriNetNode::P(place) => {
+                    *place.tokens.borrow_mut() = place.capacity;
+                }
+                PetriNetNode::T(_) => {
+                    println!("{}", "this error!");
+                }
+            }
+        }
+    }
+
+    // Get the current marking
+    pub fn get_current_mark(&self) -> HashSet<NodeIndex> {
+        let mut current_mark = HashSet::<NodeIndex>::new();
+        for node in self.net.node_indices() {
+            match &self.net[node] {
+                PetriNetNode::P(place) => {
+                    if *place.tokens.borrow() != 0 {
+                        current_mark.insert(node.clone());
+                    }
+                }
+                PetriNetNode::T(_) => {
+                    println!("{}", "this error!");
+                }
+            }
+        }
+        current_mark
+    }
 }
 
 /// Collect lockguard info.

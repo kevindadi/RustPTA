@@ -128,6 +128,7 @@ impl PTACallbacks {
 
         use petgraph::dot::Dot;
         use std::io::Write;
+        // let graph = pn.net.take();
         let dot = Dot::new(&pn.net);
         let mut file = std::fs::File::create("pn.dot").unwrap();
         write!(file, "{}", dot).unwrap();
