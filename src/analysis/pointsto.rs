@@ -17,7 +17,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
-    Body, Constant, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef,
+    Body, Const, ConstOperand, Local, Location, Operand, Place, PlaceElem, PlaceRef,
     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{Instance, TyCtxt, TyKind};
@@ -156,8 +156,8 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
 pub enum ConstraintNode<'tcx> {
     Alloc(PlaceRef<'tcx>),
     Place(PlaceRef<'tcx>),
-    Constant(ConstantKind<'tcx>),
-    ConstantDeref(ConstantKind<'tcx>),
+    Constant(Const<'tcx>),
+    ConstantDeref(Const<'tcx>),
 }
 
 /// The assignments in MIR with default `mir-opt-level` (level 1) are simplified
@@ -190,7 +190,7 @@ enum AccessPattern<'tcx> {
     Ref(PlaceRef<'tcx>),
     Indirect(PlaceRef<'tcx>),
     Direct(PlaceRef<'tcx>),
-    Constant(ConstantKind<'tcx>),
+    Constant(Const<'tcx>),
 }
 
 #[derive(Default)]
@@ -222,7 +222,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Address);
     }
 
-    fn add_constant(&mut self, constant: ConstantKind<'tcx>) {
+    fn add_constant(&mut self, constant: Const<'tcx>) {
         let lhs = ConstraintNode::Constant(constant);
         let rhs = ConstraintNode::ConstantDeref(constant);
         let lhs = self.get_or_insert_node(lhs);
@@ -249,7 +249,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Copy);
     }
 
-    fn add_copy_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: ConstantKind<'tcx>) {
+    fn add_copy_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: Const<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Constant(rhs);
         let lhs = self.get_or_insert_node(lhs);
@@ -273,7 +273,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Store);
     }
 
-    fn add_store_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: ConstantKind<'tcx>) {
+    fn add_store_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: Const<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Constant(rhs);
         let lhs = self.get_or_insert_node(lhs);
@@ -477,10 +477,10 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     Operand::Move(place) | Operand::Copy(place) => {
                         Some(AccessPattern::Direct(place.as_ref()))
                     }
-                    Operand::Constant(box Constant {
+                    Operand::Constant(box ConstOperand {
                         span: _,
                         user_ty: _,
-                        literal,
+                        const_: literal,
                     }) => Some(AccessPattern::Constant(*literal)),
                 }
             }

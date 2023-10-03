@@ -202,7 +202,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
         if let TerminatorKind::Call { ref func, .. } = terminator.kind {
             let func_ty = func.ty(self.body, self.tcx);
             // Only after monomorphizing can Instance::resolve work
-            let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
+            let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
                 self.param_env,
                 ty::EarlyBinder::bind(self.caller.ty(self.tcx, self.param_env)),
@@ -228,7 +228,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
     /// _20 is of type Closure, but it is actually the arg that captures
     /// the variables in the defining function.
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
-        let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
+        let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,
             self.param_env,
             ty::EarlyBinder::bind(local_decl.ty),

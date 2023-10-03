@@ -115,17 +115,19 @@ impl PTACallbacks {
 
         // TODO: 基于调用图构造指针分析框架
         let mut alias_analysis = AliasAnalysis::new(tcx, &callgraph);
-        let mut pts_detecter = PtsDetecter::new(tcx, param_env);
-        pts_detecter.output_pts(&callgraph, &mut alias_analysis);
+
         // TODO: 遍历所有的锁,判断其指向关系
 
         // TODO: reduce callgraph
-        pts_detecter.generate_petri_net(&callgraph);
+        let mut pts_detecter = PtsDetecter::new(tcx, param_env);
+        pts_detecter.output_pts(&callgraph, &mut alias_analysis);
+        // pts_detecter.generate_petri_net(&callgraph);
 
         // TODO: visit local recursive
         let mut pn = PetriNet::new(tcx, param_env, &callgraph);
         pn.construct(&mut alias_analysis);
-
+        let stategraph = pn.generate_state_graph();
+        pn.check_deadlock();
         use petgraph::dot::Dot;
         use std::io::Write;
         // let graph = pn.net.take();

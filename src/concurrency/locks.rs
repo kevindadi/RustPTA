@@ -243,7 +243,7 @@ impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
 
     pub fn analyze(&mut self) {
         for (local, local_decl) in self.body.local_decls.iter_enumerated() {
-            let local_ty = self.instance.subst_mir_and_normalize_erasing_regions(
+            let local_ty = self.instance.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
                 self.param_env,
                 ty::EarlyBinder::bind(local_decl.ty),
@@ -281,7 +281,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LockGuardCollector<'a, 'b, 'tcx> {
                                 let func_ty = func.ty(self.body, self.tcx);
                                 // Only after monomorphizing can Instance::resolve work
                                 let func_ty =
-                                    self.instance.subst_mir_and_normalize_erasing_regions(
+                                    self.instance.instantiate_mir_and_normalize_erasing_regions(
                                         self.tcx,
                                         self.param_env,
                                         ty::EarlyBinder::bind(
