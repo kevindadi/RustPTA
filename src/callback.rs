@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::petri_net::PetriNet;
+use crate::graph::petri_net::{PetriNet, PetriNetNode, Shape};
 use crate::graph::pts_test_graph::PtsDetecter;
 use crate::options::{CrateNameList, Options};
 use log::debug;
@@ -128,10 +128,31 @@ impl PTACallbacks {
         pn.construct(&mut alias_analysis);
         let stategraph = pn.generate_state_graph();
         pn.check_deadlock();
+        use petgraph::dot::Config;
         use petgraph::dot::Dot;
+        use petgraph::graph::{GraphIndex, NodeIndex};
         use std::io::Write;
         // let graph = pn.net.take();
-        let dot = Dot::new(&pn.net);
+
+        let dot = Dot::with_attr_getters(
+            &pn.net,
+            &[],
+            &|_, _| "arrowhead = vee".to_string(),
+            &|_, nr| {
+                format!(
+                    "shape = {}",
+                    match nr.1 {
+                        PetriNetNode::P(_) => {
+                            "circle"
+                        }
+                        PetriNetNode::T(_) => {
+                            "box"
+                        }
+                    }
+                )
+                .to_string()
+            },
+        );
         let mut file = std::fs::File::create("pn.dot").unwrap();
         write!(file, "{}", dot).unwrap();
     }

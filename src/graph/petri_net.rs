@@ -22,6 +22,7 @@ use rustc_middle::{
 };
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use super::function_pn::FunctionPN;
 use super::state_graph::{StateGraph, StateNode};
 use crate::{
     analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
@@ -97,7 +98,7 @@ impl std::fmt::Display for PetriNetNode {
 
 #[derive(Debug, Clone)]
 pub struct PetriNetEdge {
-    label: u32,
+    pub label: u32,
 }
 
 impl std::fmt::Display for PetriNetEdge {
@@ -111,7 +112,7 @@ pub struct PetriNet<'a, 'tcx> {
     param_env: ParamEnv<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'a CallGraph<'tcx>,
-    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+    function_counter: HashMap<DefId, (NodeIndex, NodeIndex, NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
@@ -144,7 +145,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             param_env,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
             callgraph,
-            function_counter: HashMap::<DefId, (NodeIndex, NodeIndex)>::new(),
+            function_counter: HashMap::<DefId, (NodeIndex, NodeIndex, NodeIndex, NodeIndex)>::new(),
             function_vec: HashMap::<DefId, Vec<NodeIndex>>::new(),
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
@@ -162,21 +163,21 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 continue;
             }
             let lock_infos = self.lock_info.clone();
-            let mut link_construct = LinkConstruct::new(
-                node,
-                caller.instance(),
-                body,
-                self.tcx,
-                self.param_env,
-                &mut self.net,
-                lock_infos.clone(),
-                &self.function_counter,
-                &mut self.function_vec,
-                &self.locks_counter,
-            );
-            link_construct.visit_body(body);
+            // let mut link_construct = LinkConstruct::new(
+            //     node,
+            //     caller.instance(),
+            //     body,
+            //     self.tcx,
+            //     self.param_env,
+            //     &mut self.net,
+            //     lock_infos.clone(),
+            //     &self.function_counter,
+            //     &mut self.function_vec,
+            //     &self.locks_counter,
+            // );
+            // link_construct.visit_body(body);
 
-            let mut func_construct = FunctionConstruct::new(
+            let mut func_construct = FunctionPN::new(
                 node,
                 caller.instance(),
                 body,
@@ -184,7 +185,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 self.param_env,
                 &mut self.net,
                 lock_infos,
-                &mut self.function_vec,
+                &self.function_counter,
                 &self.locks_counter,
             );
             func_construct.visit_body(body);
@@ -205,21 +206,43 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 continue;
             }
             if func_id == main_func {
-                let func_start = Place::new(format!("{}", func_instance.instance()), 1);
+                let func_start = Place::new(format!("{}", func_name) + "start", 1);
                 let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                let func_end = Place::new(format!("{}", func_instance.instance()), 0);
+                let func_end = Place::new(format!("{}", func_name) + "end", 0);
                 let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                self.function_counter
-                    .insert(func_id, (func_start_node_id, func_end_node_id));
+                let func_panic = Place::new(format!("{}", func_name) + "panic", 1);
+                let func_panic_node_id = self.net.add_node(PetriNetNode::P(func_panic));
+                let func_unwind = Place::new(format!("{}", func_name) + "unwind", 0);
+                let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
+                self.function_counter.insert(
+                    func_id,
+                    (
+                        func_start_node_id,
+                        func_end_node_id,
+                        func_panic_node_id,
+                        func_unwind_node_id,
+                    ),
+                );
                 // self.function_vec.push(func_start_node_id);
                 self.function_vec.insert(func_id, vec![func_start_node_id]);
             } else {
-                let func_start = Place::new(format!("{}", func_instance.instance()), 0);
+                let func_start = Place::new(format!("{}", func_name) + "start", 0);
                 let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                let func_end = Place::new(format!("{}", func_instance.instance()), 0);
+                let func_end = Place::new(format!("{}", func_name) + "end", 0);
                 let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                self.function_counter
-                    .insert(func_id, (func_start_node_id, func_end_node_id));
+                let func_panic = Place::new(format!("{}", func_name) + "panic", 1);
+                let func_panic_node_id = self.net.add_node(PetriNetNode::P(func_panic));
+                let func_unwind = Place::new(format!("{}", func_name) + "unwind", 0);
+                let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
+                self.function_counter.insert(
+                    func_id,
+                    (
+                        func_start_node_id,
+                        func_end_node_id,
+                        func_panic_node_id,
+                        func_unwind_node_id,
+                    ),
+                );
                 self.function_vec.insert(func_id, vec![func_start_node_id]);
             }
         }
@@ -873,62 +896,5 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
             }
         }
         self.super_terminator(terminator, location);
-    }
-}
-
-// Constructing Subsequent Graph based on function's CFG
-pub struct FunctionConstruct<'b, 'tcx> {
-    instance_id: InstanceId,
-    instance: &'b Instance<'tcx>,
-    body: &'b Body<'tcx>,
-    tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
-    pub net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
-    pub lockguards: LockGuardMap<'tcx>,
-    pub function_vec: &'b mut HashMap<DefId, Vec<NodeIndex>>,
-    locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
-}
-
-impl<'b, 'tcx> FunctionConstruct<'b, 'tcx> {
-    pub fn new(
-        instance_id: InstanceId,
-        instance: &'b Instance<'tcx>,
-        body: &'b Body<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-        net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
-        lockguards: LockGuardMap<'tcx>,
-        function_vec: &'b mut HashMap<DefId, Vec<NodeIndex>>,
-        locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
-    ) -> Self {
-        Self {
-            instance_id,
-            instance,
-            body,
-            tcx,
-            param_env,
-            net,
-            lockguards,
-            function_vec,
-            locks_counter,
-        }
-    }
-
-    pub fn analyze(&mut self) {
-        self.visit_body(self.body);
-    }
-}
-
-impl<'b, 'tcx> Visitor<'tcx> for FunctionConstruct<'b, 'tcx> {
-    fn visit_body(&mut self, body: &Body<'tcx>) {
-        for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
-            // println!("basic block: {:?}", bb_idx);
-            // for stmt in &bb.statements {
-            //     println!("  statement: {:?}", stmt);
-            // }
-            // if let Some(ref term) = bb.terminator {
-            //     println!("  terminator: {:?}", term);
-            // }
-        }
     }
 }
