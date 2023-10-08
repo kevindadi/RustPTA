@@ -38,6 +38,7 @@ impl PTACallbacks {
 impl rustc_driver::Callbacks for PTACallbacks {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
         self.file_name = config.input.source_name().prefer_remapped().to_string();
+
         debug!("Processing input file: {}", self.file_name);
         if config.opts.test {
             debug!("in test only mode");
@@ -86,6 +87,7 @@ impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         // Skip crates by names (white or black list).
         let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
+
         match &self.options.crate_name_list {
             CrateNameList::White(crates) if !crates.is_empty() && !crates.contains(&crate_name) => {
                 return

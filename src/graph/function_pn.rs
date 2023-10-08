@@ -69,12 +69,19 @@ impl<'b, 'tcx> FunctionPN<'b, 'tcx> {
 impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
         let fn_id = self.instance.def_id();
+
         let fn_name = self.tcx.def_path_str(fn_id);
-        if fn_name.contains("core") || fn_name.contains("std") {
+        if fn_name.contains("core")
+            || fn_name.contains("std")
+            || fn_name.contains("alloc")
+            || fn_name.contains("parking_lot::")
+            || fn_name.contains("spin::")
+            || fn_name.contains("::new")
+        {
         } else {
             for (bb_idx, _) in body.basic_blocks.iter_enumerated() {
-                let bb_name = fn_name.clone() + &format!("bb{:?}", bb_idx);
-                let bb_start_place = Place::new(bb_name, 0);
+                let bb_name = fn_name.clone() + &format!("{:?}", bb_idx);
+                let bb_start_place = Place::new_with_no_token(bb_name);
                 let bb_start = self.net.add_node(PetriNetNode::P(bb_start_place));
                 self.bb_node_start_end
                     .insert(bb_idx.clone(), bb_start.clone());
@@ -84,6 +91,22 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                 // for stmt in &bb.statements {
                 //     println!("  statement: {:?}", stmt);
                 // }
+                if bb_idx.index() == 0 {
+                    let bb_start_name = fn_name.clone() + &format!("{:?}", bb_idx) + "start";
+                    let bb_start_transition = Transition::new(bb_start_name, (0, 0), 1);
+                    let bb_start = self.net.add_node(PetriNetNode::T(bb_start_transition));
+
+                    self.net.add_edge(
+                        self.function_counter.get(&fn_id).unwrap().0,
+                        bb_start,
+                        PetriNetEdge { label: 1u32 },
+                    );
+                    self.net.add_edge(
+                        bb_start,
+                        *self.bb_node_start_end.get(&bb_idx).unwrap(),
+                        PetriNetEdge { label: 1u32 },
+                    );
+                }
                 if let Some(ref term) = bb.terminator {
                     match &term.kind {
                         TerminatorKind::Goto { target } => {
@@ -218,6 +241,14 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                             let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                             let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
+                            let bb_wait_name = fn_name.clone() + &format!("{:?}", bb_idx) + "wait";
+                            let bb_wait_place = Place::new_with_no_token(bb_wait_name);
+                            let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
+
+                            let bb_ret_name = fn_name.clone() + &format!("{:?}", bb_idx) + "return";
+                            let bb_ret_transition = Transition::new(bb_ret_name, (0, 0), 1);
+                            let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
+
                             let bb_unwind_name =
                                 fn_name.clone() + &format!("{:?}", bb_idx) + "unwind";
                             let bb_unwind_transition = Transition::new(bb_unwind_name, (0, 0), 1);
@@ -229,11 +260,13 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 bb_end,
                                 PetriNetEdge { label: 1u32 },
                             );
-                            self.net.add_edge(
-                                *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
-                                bb_unwind,
-                                PetriNetEdge { label: 1u32 },
-                            );
+
+                            self.net
+                                .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1u32 });
+                            self.net
+                                .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1u32 });
+                            self.net
+                                .add_edge(bb_wait, bb_unwind, PetriNetEdge { label: 1u32 });
 
                             self.bb_node_vec
                                 .get_mut(&bb_idx)
@@ -247,14 +280,14 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                     | LockGuardTy::SpinMutex(_) => {
                                         self.net.add_edge(
                                             *lock_node,
-                                            bb_end,
+                                            bb_ret,
                                             PetriNetEdge { label: 1u32 },
                                         );
                                     }
                                     _ => {
                                         self.net.add_edge(
                                             *lock_node,
-                                            bb_end,
+                                            bb_ret,
                                             PetriNetEdge { label: 10u32 },
                                         );
                                     }
@@ -262,19 +295,19 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 match (target, unwind) {
                                     (Some(return_block), UnwindAction::Continue) => {
                                         self.net.add_edge(
-                                            bb_end,
+                                            bb_ret,
                                             *self.bb_node_start_end.get(return_block).unwrap(),
                                             PetriNetEdge { label: 1u32 },
                                         );
                                         self.net.add_edge(
                                             bb_unwind,
-                                            self.function_counter.get(&fn_id).unwrap().2,
+                                            self.function_counter.get(&fn_id).unwrap().3,
                                             PetriNetEdge { label: 1u32 },
                                         );
                                     }
                                     (Some(return_block), UnwindAction::Terminate(_)) => {
                                         self.net.add_edge(
-                                            bb_end,
+                                            bb_ret,
                                             *self.bb_node_start_end.get(return_block).unwrap(),
                                             PetriNetEdge { label: 1u32 },
                                         );
@@ -286,7 +319,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                     }
                                     (Some(return_block), UnwindAction::Cleanup(bb_clean)) => {
                                         self.net.add_edge(
-                                            bb_end,
+                                            bb_ret,
                                             *self.bb_node_start_end.get(return_block).unwrap(),
                                             PetriNetEdge { label: 1u32 },
                                         );
@@ -299,7 +332,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                     (None, UnwindAction::Continue) => {
                                         self.net.add_edge(
                                             bb_unwind,
-                                            self.function_counter.get(&fn_id).unwrap().2,
+                                            self.function_counter.get(&fn_id).unwrap().3,
                                             PetriNetEdge { label: 1u32 },
                                         );
                                     }
@@ -356,6 +389,11 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                                 PetriNetEdge { label: 1u32 },
                                             );
                                             self.net.add_edge(
+                                                bb_ret,
+                                                *self.bb_node_start_end.get(return_block).unwrap(),
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
                                                 *callee_unwind,
                                                 bb_unwind,
                                                 PetriNetEdge { label: 1u32 },
@@ -373,6 +411,11 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                                 PetriNetEdge { label: 1u32 },
                                             );
                                             self.net.add_edge(
+                                                bb_ret,
+                                                *self.bb_node_start_end.get(return_block).unwrap(),
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
                                                 *callee_panic,
                                                 bb_unwind,
                                                 PetriNetEdge { label: 1u32 },
@@ -386,11 +429,21 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                         (Some(return_block), UnwindAction::Cleanup(bb_clean)) => {
                                             self.net.add_edge(
                                                 *callee_end,
+                                                bb_ret,
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
+                                                bb_ret,
                                                 *self.bb_node_start_end.get(return_block).unwrap(),
                                                 PetriNetEdge { label: 1u32 },
                                             );
                                             self.net.add_edge(
-                                                *callee_end,
+                                                *callee_unwind,
+                                                bb_unwind,
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
+                                                bb_unwind,
                                                 *self.bb_node_start_end.get(bb_clean).unwrap(),
                                                 PetriNetEdge { label: 1u32 },
                                             );
@@ -398,20 +451,25 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                         (None, UnwindAction::Continue) => {
                                             self.net.add_edge(
                                                 *callee_unwind,
-                                                self.function_counter.get(&fn_id).unwrap().2,
+                                                bb_unwind,
                                                 PetriNetEdge { label: 1u32 },
                                             );
                                         }
                                         (None, UnwindAction::Terminate(_)) => {
                                             self.net.add_edge(
                                                 *callee_panic,
+                                                bb_unwind,
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
+                                                bb_unwind,
                                                 self.function_counter.get(&fn_id).unwrap().2,
                                                 PetriNetEdge { label: 1u32 },
                                             );
                                         }
                                         (None, UnwindAction::Cleanup(bb_clean)) => {
                                             self.net.add_edge(
-                                                *callee_end,
+                                                *callee_unwind,
                                                 *self.bb_node_start_end.get(bb_clean).unwrap(),
                                                 PetriNetEdge { label: 1u32 },
                                             );
@@ -420,10 +478,60 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                     }
                                 } else {
                                     match (target, unwind) {
-                                        (Some(return_block), _) => {
+                                        (Some(return_block), UnwindAction::Continue) => {
                                             self.net.add_edge(
-                                                bb_end,
+                                                bb_ret,
                                                 *self.bb_node_start_end.get(return_block).unwrap(),
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
+                                                bb_unwind,
+                                                self.function_counter.get(&fn_id).unwrap().3,
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                        }
+                                        (Some(return_block), UnwindAction::Terminate(_)) => {
+                                            self.net.add_edge(
+                                                bb_ret,
+                                                *self.bb_node_start_end.get(return_block).unwrap(),
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
+                                                bb_unwind,
+                                                self.function_counter.get(&fn_id).unwrap().2,
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                        }
+                                        (Some(return_block), UnwindAction::Cleanup(bb_clean)) => {
+                                            self.net.add_edge(
+                                                bb_ret,
+                                                *self.bb_node_start_end.get(return_block).unwrap(),
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                            self.net.add_edge(
+                                                bb_unwind,
+                                                *self.bb_node_start_end.get(bb_clean).unwrap(),
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                        }
+                                        (None, UnwindAction::Continue) => {
+                                            self.net.add_edge(
+                                                bb_unwind,
+                                                self.function_counter.get(&fn_id).unwrap().3,
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                        }
+                                        (None, UnwindAction::Terminate(_)) => {
+                                            self.net.add_edge(
+                                                bb_unwind,
+                                                self.function_counter.get(&fn_id).unwrap().2,
+                                                PetriNetEdge { label: 1u32 },
+                                            );
+                                        }
+                                        (None, UnwindAction::Cleanup(bb_clean)) => {
+                                            self.net.add_edge(
+                                                bb_unwind,
+                                                *self.bb_node_start_end.get(bb_clean).unwrap(),
                                                 PetriNetEdge { label: 1u32 },
                                             );
                                         }
@@ -442,9 +550,20 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                             let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                             let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
+                            let bb_unwind_name =
+                                fn_name.clone() + &format!("{:?}", bb_idx) + "unwind";
+                            let bb_unwind_transition = Transition::new(bb_unwind_name, (0, 0), 1);
+                            let bb_unwind =
+                                self.net.add_node(PetriNetNode::T(bb_unwind_transition));
+
                             self.net.add_edge(
                                 *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
                                 bb_end,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            self.net.add_edge(
+                                *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
+                                bb_unwind,
                                 PetriNetEdge { label: 1u32 },
                             );
                             self.bb_node_vec
@@ -475,11 +594,46 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 }
                             }
 
-                            self.net.add_edge(
-                                bb_end,
-                                *self.bb_node_start_end.get(target).unwrap(),
-                                PetriNetEdge { label: 1u32 },
-                            );
+                            match (target, unwind) {
+                                (return_block, UnwindAction::Continue) => {
+                                    self.net.add_edge(
+                                        bb_end,
+                                        *self.bb_node_start_end.get(return_block).unwrap(),
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                    self.net.add_edge(
+                                        bb_unwind,
+                                        self.function_counter.get(&fn_id).unwrap().3,
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                }
+                                (return_block, UnwindAction::Terminate(_)) => {
+                                    self.net.add_edge(
+                                        bb_end,
+                                        *self.bb_node_start_end.get(return_block).unwrap(),
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                    self.net.add_edge(
+                                        bb_unwind,
+                                        self.function_counter.get(&fn_id).unwrap().2,
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                }
+                                (return_block, UnwindAction::Cleanup(bb_clean)) => {
+                                    self.net.add_edge(
+                                        bb_end,
+                                        *self.bb_node_start_end.get(return_block).unwrap(),
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                    self.net.add_edge(
+                                        bb_unwind,
+                                        *self.bb_node_start_end.get(bb_clean).unwrap(),
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                }
+
+                                _ => {}
+                            }
                         }
                         TerminatorKind::Yield { .. } => {
                             unimplemented!("TerminatorKind::Yield not implemented yet")
