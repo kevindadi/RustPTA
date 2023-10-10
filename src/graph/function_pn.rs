@@ -168,7 +168,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 .get_mut(&bb_idx)
                                 .unwrap()
                                 .push(bb_end.clone());
-                            let resume_node = self.function_counter.get(&fn_id).unwrap().2;
+                            let resume_node = self.function_counter.get(&fn_id).unwrap().3;
                             self.net
                                 .add_edge(bb_end, resume_node, PetriNetEdge { label: 1u32 });
                         }
@@ -186,7 +186,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 .get_mut(&bb_idx)
                                 .unwrap()
                                 .push(bb_end.clone());
-                            let panic_node = self.function_counter.get(&fn_id).unwrap().3;
+                            let panic_node = self.function_counter.get(&fn_id).unwrap().2;
                             self.net
                                 .add_edge(bb_end, panic_node, PetriNetEdge { label: 1u32 });
                         }
@@ -209,21 +209,58 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 .add_edge(bb_end, return_node, PetriNetEdge { label: 1u32 });
                         }
                         TerminatorKind::Unreachable => {}
-                        TerminatorKind::Assert { target, .. } => {
+                        TerminatorKind::Assert { target, unwind, .. } => {
                             let bb_term_name =
                                 fn_name.clone() + &format!("{:?}", bb_idx) + "assert";
                             let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                             let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
+                            let bb_unwind_name =
+                                fn_name.clone() + &format!("{:?}", bb_idx) + "unwind";
+                            let bb_unwind_transition = Transition::new(bb_unwind_name, (0, 0), 1);
+                            let bb_unwind =
+                                self.net.add_node(PetriNetNode::T(bb_unwind_transition));
+
                             self.net.add_edge(
-                                *self.bb_node_vec.get(target).unwrap().last().unwrap(),
+                                *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
                                 bb_end,
                                 PetriNetEdge { label: 1u32 },
                             );
-                            self.bb_node_vec
-                                .get_mut(&bb_idx)
-                                .unwrap()
-                                .push(bb_end.clone());
+                            self.net.add_edge(
+                                *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
+                                bb_unwind,
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            self.net.add_edge(
+                                bb_end,
+                                *self.bb_node_start_end.get(target).unwrap(),
+                                PetriNetEdge { label: 1u32 },
+                            );
+                            match unwind {
+                                UnwindAction::Continue => {
+                                    self.net.add_edge(
+                                        bb_unwind,
+                                        self.function_counter.get(&fn_id).unwrap().3,
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                }
+                                UnwindAction::Terminate(_) => {
+                                    self.net.add_edge(
+                                        bb_unwind,
+                                        self.function_counter.get(&fn_id).unwrap().2,
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                }
+                                UnwindAction::Cleanup(bb_clean) => {
+                                    self.net.add_edge(
+                                        bb_unwind,
+                                        *self.bb_node_start_end.get(&bb_clean).unwrap(),
+                                        PetriNetEdge { label: 1u32 },
+                                    );
+                                }
+
+                                _ => {}
+                            }
                         }
                         TerminatorKind::Call {
                             func,
@@ -277,7 +314,10 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 match &self.lockguards[&lockguard_id].lockguard_ty {
                                     LockGuardTy::StdMutex(_)
                                     | LockGuardTy::ParkingLotMutex(_)
-                                    | LockGuardTy::SpinMutex(_) => {
+                                    | LockGuardTy::SpinMutex(_)
+                                    | LockGuardTy::StdRwLockRead(_)
+                                    | LockGuardTy::ParkingLotRead(_)
+                                    | LockGuardTy::SpinRead(_) => {
                                         self.net.add_edge(
                                             *lock_node,
                                             bb_ret,
@@ -577,9 +617,17 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                 match &self.lockguards[&lockguard_id].lockguard_ty {
                                     LockGuardTy::StdMutex(_)
                                     | LockGuardTy::ParkingLotMutex(_)
-                                    | LockGuardTy::SpinMutex(_) => {
+                                    | LockGuardTy::SpinMutex(_)
+                                    | LockGuardTy::StdRwLockRead(_)
+                                    | LockGuardTy::ParkingLotRead(_)
+                                    | LockGuardTy::SpinRead(_) => {
                                         self.net.add_edge(
                                             bb_end,
+                                            *lock_node,
+                                            PetriNetEdge { label: 1u32 },
+                                        );
+                                        self.net.add_edge(
+                                            bb_unwind,
                                             *lock_node,
                                             PetriNetEdge { label: 1u32 },
                                         );
@@ -589,6 +637,11 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                             bb_end,
                                             *lock_node,
                                             PetriNetEdge { label: 10u32 },
+                                        );
+                                        self.net.add_edge(
+                                            bb_unwind,
+                                            *lock_node,
+                                            PetriNetEdge { label: 1u32 },
                                         );
                                     }
                                 }
