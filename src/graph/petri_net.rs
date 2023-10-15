@@ -177,7 +177,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
 
     pub fn construct(&mut self, alias_analysis: &mut AliasAnalysis) {
         self.construct_func();
-        self.construct_lock(alias_analysis);
+        self.construct_lock_with_dfs(alias_analysis);
         for (node, caller) in self.callgraph.graph.node_references() {
             let body = self.tcx.instance_mir(caller.instance().def);
             // Skip promoted src
@@ -442,16 +442,87 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
             }
         }
+    }
 
-        // for (_, inner_map) in lockguards.iter() {
-        //     for (lock, _) in inner_map.iter() {
-        //         // find the same lock belong to the one
+    pub fn construct_lock_with_dfs(&mut self, alias_analysis: &mut AliasAnalysis) {
+        let lockguards = self.collect_lockguards();
+        let mut info = FxHashMap::default();
 
-        //         let lock_p = Place::new(format!("{:?}", lock.instance_id), 1);
-        //         let lock_id = self.net.add_node(PetriNetNode::P(lock_p));
-        //         self.locks_counter.insert(lock.clone(), lock_id);
-        //     }
-        // }
+        for (_, map) in lockguards.clone().into_iter() {
+            info.extend(map.clone().into_iter());
+            self.lock_info.extend(map.into_iter());
+        }
+
+        let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
+        let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect::<Vec<LockGuardId>>();
+        println!("{:?}", lockid_vec);
+        for i in 0..lockid_vec.len() {
+            for j in i + 1..lockid_vec.len() {
+                match self.deadlock_possibility(
+                    &lockid_vec[i],
+                    &lockid_vec[j],
+                    &info,
+                    alias_analysis,
+                ) {
+                    DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                        adj_list.entry(i).or_insert_with(Vec::new).push(j);
+                        adj_list.entry(j).or_insert_with(Vec::new).push(i);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        println!("{:?}", adj_list);
+        let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
+        let mut group_id = 0;
+        let mut groups: HashMap<usize, Vec<LockGuardId>> = HashMap::new();
+
+        for i in 0..lockid_vec.len() {
+            if !visited[i] {
+                let mut stack: VecDeque<usize> = VecDeque::new();
+                stack.push_back(i);
+                visited[i] = true;
+                while let Some(node) = stack.pop_front() {
+                    groups
+                        .entry(group_id)
+                        .or_insert_with(Vec::new)
+                        .push(lockid_vec[node].clone());
+                    if let Some(neighbors) = adj_list.get(&node) {
+                        for &neighbor in neighbors {
+                            if !visited[neighbor] {
+                                stack.push_back(neighbor);
+                                visited[neighbor] = true;
+                            }
+                        }
+                    }
+                }
+                group_id += 1;
+            }
+        }
+
+        for (id, lock_vec) in groups {
+            match &info[&lock_vec[0]].lockguard_ty {
+                LockGuardTy::StdMutex(_)
+                | LockGuardTy::ParkingLotMutex(_)
+                | LockGuardTy::SpinMutex(_) => {
+                    let lock_name = String::from("Mutex") + &format!("{:?}", id);
+
+                    let lock_p = Place::new(format!("{:?}", lock_name), 1);
+                    let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
+                    for lock in lock_vec {
+                        self.locks_counter.insert(lock.clone(), lock_node);
+                    }
+                }
+                _ => {
+                    let lock_name = String::from("RwLock") + &format!("{:?}", id);
+                    let lock_p = Place::new(format!("{:?}", lock_name), 10);
+                    let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
+                    for lock in lock_vec {
+                        self.locks_counter.insert(lock.clone(), lock_node);
+                    }
+                }
+            }
+        }
     }
 
     fn deal_post_function(&mut self) {

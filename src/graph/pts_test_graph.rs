@@ -109,6 +109,7 @@ impl<'tcx> PtsDetecter<'tcx> {
         use std::rc::Rc;
         let lock_node = Rc::new(RefCell::new(FxHashMap::<LockGuardId, NodeIndex>::default()));
         let mut pts_map = Graph::<String, String>::new();
+        // let record_lock = FxHashMap::<String, bool>::default();
         for (a, b) in &self.lockguard_relations {
             let possibility = deadlock_possibility(a, b, &info, alias_analysis);
             match possibility {
@@ -158,7 +159,21 @@ impl<'tcx> PtsDetecter<'tcx> {
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                    let a_info = &info[a];
+                    let b_info = &info[b];
+                    let a_str =
+                        format!("{:?}", a_info.lockguard_ty) + &format!("{:?}", a_info.span);
+                    let b_str =
+                        format!("{:?}", b_info.lockguard_ty) + &format!("{:?}", b_info.span);
+                    if lock_node.borrow().get(a).is_none() {
+                        let a_node = pts_map.add_node(a_str);
+                        lock_node.borrow_mut().insert(*a, a_node);
+                    } else if lock_node.borrow().get(a).is_none() {
+                        let b_node = pts_map.add_node(b_str);
+                        lock_node.borrow_mut().insert(*b, b_node);
+                    }
+                }
             }
         }
         use std::io::Write;
