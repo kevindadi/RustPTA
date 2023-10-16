@@ -761,8 +761,8 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         self.deadlock_marks.retain(|v| {
             v.iter().all(|m| match &self.net[node_index(*m)] {
                 PetriNetNode::P(p) => {
-                    if p.name.contains("mainpanic")
-                        // || p.name.contains("mainunwind")
+                    if p.name.contains("panic")
+                        || p.name.contains("mainunwind")
                         || p.name.contains("mainend")
                     {
                         false

@@ -24,7 +24,7 @@ pub type InstanceId = NodeIndex;
 /// The location where caller calls callee.
 /// Support direct call for now, where callee resolves to FnDef.
 /// Also support tracking the parameter of a closure (pointed to by upvars)
-/// TODO(boqin): Add support for FnPtr.
+/// Add support for FnPtr.
 #[derive(Copy, Clone, Debug)]
 pub enum CallSiteLocation {
     Direct(Location),
