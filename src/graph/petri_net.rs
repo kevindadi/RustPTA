@@ -652,9 +652,9 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     pub fn fire_transition(
         &mut self,
         transition: NodeIndex,
-        mark: HashSet<NodeIndex>,
-    ) -> HashSet<NodeIndex> {
-        let mut new_state = HashSet::<NodeIndex>::new();
+        mark: HashSet<(NodeIndex, usize)>,
+    ) -> HashSet<(NodeIndex, usize)> {
+        let mut new_state = HashSet::<(NodeIndex, usize)>::new();
         self.set_current_mark(mark);
 
         // 从输入库所中减去token
@@ -687,7 +687,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             match &self.net[node] {
                 PetriNetNode::P(place) => {
                     if *place.tokens.borrow() > 0 {
-                        new_state.insert(node);
+                        new_state.insert((node, *place.tokens.borrow() as usize));
                     }
                 }
                 PetriNetNode::T(_) => {
@@ -714,13 +714,13 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     // #[cfg(not(feature = "multi-threaded"))]
     pub fn generate_state_graph(&mut self) -> StateGraph {
         let mut state_graph = StateGraph::new();
-        let mut queue = VecDeque::<HashSet<NodeIndex>>::new();
+        let mut queue = VecDeque::<HashSet<(NodeIndex, usize)>>::new();
 
         let init_mark = self.get_current_mark();
-        let init_index = state_graph
-            .graph
-            .add_node(StateNode::new(init_mark.clone()));
-        let init_usize = init_mark.iter().map(|node| node.index()).collect();
+        // let init_index = state_graph
+        //     .graph
+        //     .add_node(StateNode::new(init_mark.clone()));
+        let init_usize = init_mark.iter().map(|node| node.0.index()).collect();
         queue.push_back(init_mark);
         let mut all_state = HashSet::<Vec<usize>>::new();
         all_state.insert(init_usize);
@@ -734,15 +734,18 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 // println!("No transitions scheduled");
                 let current_state_uszie: Vec<usize> = current_state_index
                     .iter()
-                    .map(|node| node.index())
+                    .map(|node| node.0.index())
                     .collect();
                 self.deadlock_marks.insert(current_state_uszie);
                 continue;
             } else {
                 for t in current_sched_transition {
                     let new_state = self.fire_transition(t, current_state_index.clone());
-                    let new_state_uszie: Vec<usize> =
-                        new_state.clone().iter().map(|node| node.index()).collect();
+                    let new_state_uszie: Vec<usize> = new_state
+                        .clone()
+                        .iter()
+                        .map(|node| node.0.index())
+                        .collect();
 
                     if all_state.insert(new_state_uszie) {
                         queue.push_back(new_state.clone());
@@ -795,7 +798,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     }
 
     // Set the current marking
-    pub fn set_current_mark(&mut self, mark: HashSet<NodeIndex>) {
+    pub fn set_current_mark(&mut self, mark: HashSet<(NodeIndex, usize)>) {
         for node in self.net.node_indices() {
             match &mut self.net[node] {
                 PetriNetNode::P(place) => {
@@ -806,10 +809,10 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
             }
         }
-        for m in mark {
+        for (m, n) in mark {
             match &mut self.net[m] {
                 PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() = place.capacity;
+                    *place.tokens.borrow_mut() = n as u32;
                 }
                 PetriNetNode::T(_) => {
                     debug!("{}", "this error!");
@@ -819,13 +822,13 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     }
 
     // Get the current marking
-    pub fn get_current_mark(&self) -> HashSet<NodeIndex> {
-        let mut current_mark = HashSet::<NodeIndex>::new();
+    pub fn get_current_mark(&self) -> HashSet<(NodeIndex, usize)> {
+        let mut current_mark = HashSet::<(NodeIndex, usize)>::new();
         for node in self.net.node_indices() {
             match &self.net[node] {
                 PetriNetNode::P(place) => {
                     if *place.tokens.borrow() != 0 {
-                        current_mark.insert(node.clone());
+                        current_mark.insert((node.clone(), *place.tokens.borrow() as usize));
                     }
                 }
                 PetriNetNode::T(_) => {
