@@ -134,11 +134,12 @@ pub struct PetriNet<'a, 'tcx> {
     param_env: ParamEnv<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'a CallGraph<'tcx>,
-    function_counter: HashMap<DefId, (NodeIndex, NodeIndex, NodeIndex, NodeIndex)>,
+    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
     deadlock_marks: HashSet<Vec<usize>>,
+    program_panic: NodeIndex,
     // threads: VecDeque<Rc<Thread>>,
 }
 
@@ -167,11 +168,12 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             param_env,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
             callgraph,
-            function_counter: HashMap::<DefId, (NodeIndex, NodeIndex, NodeIndex, NodeIndex)>::new(),
+            function_counter: HashMap::<DefId, (NodeIndex, NodeIndex)>::new(),
             function_vec: HashMap::<DefId, Vec<NodeIndex>>::new(),
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
             deadlock_marks: HashSet::<Vec<usize>>::new(),
+            program_panic: NodeIndex::new(0),
         }
     }
 
@@ -209,6 +211,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 lock_infos,
                 &self.function_counter,
                 &self.locks_counter,
+                self.program_panic,
             );
             func_construct.visit_body(body);
         }
@@ -240,15 +243,16 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
                     let func_panic = Place::new_with_no_token(format!("{}", func_name) + "panic");
                     let func_panic_node_id = self.net.add_node(PetriNetNode::P(func_panic));
-                    let func_unwind = Place::new_with_no_token(format!("{}", func_name) + "unwind");
-                    let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
+                    // let func_unwind = Place::new_with_no_token(format!("{}", func_name) + "unwind");
+                    // let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
+                    self.program_panic = func_panic_node_id.clone();
                     self.function_counter.insert(
                         func_id,
                         (
                             func_start_node_id,
                             func_end_node_id,
-                            func_panic_node_id,
-                            func_unwind_node_id,
+                            // func_panic_node_id,
+                            // func_unwind_node_id,
                         ),
                     );
                     // self.function_vec.push(func_start_node_id);
@@ -258,17 +262,17 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
                     let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                    let func_panic = Place::new_with_no_token(format!("{}", func_name) + "panic");
-                    let func_panic_node_id = self.net.add_node(PetriNetNode::P(func_panic));
-                    let func_unwind = Place::new_with_no_token(format!("{}", func_name) + "unwind");
-                    let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
+                    // let func_panic = Place::new_with_no_token(format!("{}", func_name) + "panic");
+                    // let func_panic_node_id = self.net.add_node(PetriNetNode::P(func_panic));
+                    // let func_unwind = Place::new_with_no_token(format!("{}", func_name) + "unwind");
+                    // let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
                     self.function_counter.insert(
                         func_id,
                         (
                             func_start_node_id,
                             func_end_node_id,
-                            func_panic_node_id,
-                            func_unwind_node_id,
+                            // func_panic_node_id,
+                            // func_unwind_node_id,
                         ),
                     );
                     self.function_vec.insert(func_id, vec![func_start_node_id]);
@@ -293,17 +297,17 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
                 let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
                 let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                let func_panic = Place::new_with_no_token(format!("{}", func_name) + "panic");
-                let func_panic_node_id = self.net.add_node(PetriNetNode::P(func_panic));
-                let func_unwind = Place::new_with_no_token(format!("{}", func_name) + "unwind");
-                let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
+                // let func_panic = Place::new_with_no_token(format!("{}", func_name) + "panic");
+                // let func_panic_node_id = self.net.add_node(PetriNetNode::P(func_panic));
+                // let func_unwind = Place::new_with_no_token(format!("{}", func_name) + "unwind");
+                // let func_unwind_node_id = self.net.add_node(PetriNetNode::P(func_unwind));
                 self.function_counter.insert(
                     func_id,
                     (
                         func_start_node_id,
                         func_end_node_id,
-                        func_panic_node_id,
-                        func_unwind_node_id,
+                        // func_panic_node_id,
+                        // func_unwind_node_id,
                     ),
                 );
                 self.function_vec.insert(func_id, vec![func_start_node_id]);
@@ -626,8 +630,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     PetriNetNode::T(_) => {
                         let mut enabled = true;
                         for edge in self.net.edges_directed(node_index, Direction::Incoming) {
-                            let place_node = self.net.node_weight(edge.source()).unwrap();
-                            match place_node {
+                            match self.net.node_weight(edge.source()).unwrap() {
                                 PetriNetNode::P(place) => {
                                     if *place.tokens.borrow() < edge.weight().label {
                                         enabled = false;
@@ -659,8 +662,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
 
         // 从输入库所中减去token
         for edge in self.net.edges_directed(transition, Direction::Incoming) {
-            let place_node = self.net.node_weight(edge.source()).unwrap();
-            match place_node {
+            match self.net.node_weight(edge.source()).unwrap() {
                 PetriNetNode::P(place) => {
                     *place.tokens.borrow_mut() -= edge.weight().label;
                 }
@@ -676,6 +678,9 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             match place_node {
                 PetriNetNode::P(place) => {
                     *place.tokens.borrow_mut() += edge.weight().label;
+                    if *place.tokens.borrow() > place.capacity {
+                        println!("error")
+                    }
                 }
                 PetriNetNode::T(_) => {
                     println!("{}", "this error!");
@@ -720,9 +725,10 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         // let init_index = state_graph
         //     .graph
         //     .add_node(StateNode::new(init_mark.clone()));
-        let init_usize = init_mark.iter().map(|node| node.0.index()).collect();
+        let mut init_usize: Vec<usize> = init_mark.iter().map(|node| node.0.index()).collect();
         queue.push_back(init_mark);
         let mut all_state = HashSet::<Vec<usize>>::new();
+        init_usize.sort();
         all_state.insert(init_usize);
 
         while let Some(current_state_index) = queue.pop_front() {
@@ -741,12 +747,12 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             } else {
                 for t in current_sched_transition {
                     let new_state = self.fire_transition(t, current_state_index.clone());
-                    let new_state_uszie: Vec<usize> = new_state
+                    let mut new_state_uszie: Vec<usize> = new_state
                         .clone()
                         .iter()
                         .map(|node| node.0.index())
                         .collect();
-
+                    new_state_uszie.sort();
                     if all_state.insert(new_state_uszie) {
                         queue.push_back(new_state.clone());
                     }
@@ -764,10 +770,8 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         self.deadlock_marks.retain(|v| {
             v.iter().all(|m| match &self.net[node_index(*m)] {
                 PetriNetNode::P(p) => {
-                    if p.name.contains("panic")
-                        || p.name.contains("mainunwind")
-                        || p.name.contains("mainend")
-                    {
+                    // p.name.contains("mainpanic") ||
+                    if p.name.contains("mainend") {
                         false
                     } else {
                         true
