@@ -1,11 +1,5 @@
 extern crate rustc_hash;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::VecDeque;
-
 use log::debug;
-use log::info;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
@@ -20,6 +14,11 @@ use rustc_middle::{
     },
     ty::{self, Instance, ParamEnv, TyCtxt},
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::VecDeque;
+use std::hash::Hash;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::function_pn::FunctionPN;
@@ -40,18 +39,18 @@ pub enum Shape {
 #[derive(Debug, Clone)]
 pub struct Place {
     name: String,
-    tokens: RefCell<u32>,
-    capacity: u32,
+    tokens: RefCell<usize>,
+    capacity: usize,
     shape: Shape,
     terminal_mark: bool,
 }
 
 impl Place {
-    pub fn new(name: String, token: u32) -> Self {
+    pub fn new(name: String, token: usize) -> Self {
         Self {
             name,
             tokens: RefCell::new(token),
-            capacity: 1u32,
+            capacity: 1usize,
             shape: Shape::Circle,
             terminal_mark: false,
         }
@@ -60,18 +59,18 @@ impl Place {
     pub fn new_with_no_token(name: String) -> Self {
         Self {
             name,
-            tokens: RefCell::new(0u32),
-            capacity: 1u32,
+            tokens: RefCell::new(0usize),
+            capacity: 1usize,
             shape: Shape::Circle,
             terminal_mark: false,
         }
     }
 
-    pub fn new_with_terminal_mark(name: String, token: u32, terminal_mark: bool) -> Self {
+    pub fn new_with_terminal_mark(name: String, token: usize, terminal_mark: bool) -> Self {
         Self {
             name,
             tokens: RefCell::new(token),
-            capacity: 1u32,
+            capacity: 1,
             shape: Shape::Circle,
             terminal_mark,
         }
@@ -120,13 +119,23 @@ impl std::fmt::Display for PetriNetNode {
 
 #[derive(Debug, Clone)]
 pub struct PetriNetEdge {
-    pub label: u32,
+    pub label: usize,
 }
 
 impl std::fmt::Display for PetriNetEdge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.label)
     }
+}
+
+fn insert_with_comparison<T: Eq + Hash>(set: &mut HashSet<T>, value: T) -> bool {
+    for existing_value in set.iter() {
+        if existing_value == &value {
+            return false;
+        }
+    }
+    set.insert(value);
+    return true;
 }
 
 pub struct PetriNet<'a, 'tcx> {
@@ -637,7 +646,9 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                                         break;
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    println!("The predecessor set of transition is not place");
+                                }
                             }
                         }
                         if enabled {
@@ -679,7 +690,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 PetriNetNode::P(place) => {
                     *place.tokens.borrow_mut() += edge.weight().label;
                     if *place.tokens.borrow() > place.capacity {
-                        println!("error")
+                        *place.tokens.borrow_mut() = place.capacity;
                     }
                 }
                 PetriNetNode::T(_) => {
@@ -704,7 +715,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         new_state
     }
 
-    pub fn add_token(&mut self, place_index: NodeIndex, weight: u32) {
+    pub fn add_token(&mut self, place_index: NodeIndex, weight: usize) {
         match &mut self.net[place_index] {
             PetriNetNode::P(place) => {
                 *place.tokens.borrow_mut() = *place.tokens.borrow_mut() - weight;
@@ -725,10 +736,14 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         // let init_index = state_graph
         //     .graph
         //     .add_node(StateNode::new(init_mark.clone()));
-        let mut init_usize: Vec<usize> = init_mark.iter().map(|node| node.0.index()).collect();
+        let mut init_usize: Vec<(usize, usize)> = init_mark
+            .iter()
+            .map(|node| (node.0.index(), node.1))
+            .collect();
         queue.push_back(init_mark);
-        let mut all_state = HashSet::<Vec<usize>>::new();
+        let mut all_state = HashSet::<Vec<(usize, usize)>>::new();
         init_usize.sort();
+
         all_state.insert(init_usize);
 
         while let Some(current_state_index) = queue.pop_front() {
@@ -747,13 +762,14 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             } else {
                 for t in current_sched_transition {
                     let new_state = self.fire_transition(t, current_state_index.clone());
-                    let mut new_state_uszie: Vec<usize> = new_state
+                    let mut new_state_uszie: Vec<(usize, usize)> = new_state
                         .clone()
                         .iter()
-                        .map(|node| node.0.index())
+                        .map(|node| (node.0.index(), node.1))
                         .collect();
                     new_state_uszie.sort();
-                    if all_state.insert(new_state_uszie) {
+                    // TODO: Implement for State Graph
+                    if insert_with_comparison(&mut all_state, new_state_uszie) {
                         queue.push_back(new_state.clone());
                     }
                 }
@@ -771,7 +787,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             v.iter().all(|m| match &self.net[node_index(*m)] {
                 PetriNetNode::P(p) => {
                     // p.name.contains("mainpanic") ||
-                    if p.name.contains("mainend") {
+                    if p.name.contains("mainpanic") || p.name.contains("mainend") {
                         false
                     } else {
                         true
@@ -816,7 +832,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         for (m, n) in mark {
             match &mut self.net[m] {
                 PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() = n as u32;
+                    *place.tokens.borrow_mut() = n;
                 }
                 PetriNetNode::T(_) => {
                     debug!("{}", "this error!");
@@ -831,7 +847,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         for node in self.net.node_indices() {
             match &self.net[node] {
                 PetriNetNode::P(place) => {
-                    if *place.tokens.borrow() != 0 {
+                    if *place.tokens.borrow() > 0 {
                         current_mark.insert((node.clone(), *place.tokens.borrow() as usize));
                     }
                 }
@@ -941,9 +957,9 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
 
                         let prev_node = self.function_vec[&self.instance.def_id()].last().unwrap();
                         self.net
-                            .add_edge(*prev_node, drop_node_t, PetriNetEdge { label: 1u32 });
+                            .add_edge(*prev_node, drop_node_t, PetriNetEdge { label: 1usize });
                         self.net
-                            .add_edge(drop_node_t, drop_node_p, PetriNetEdge { label: 1u32 });
+                            .add_edge(drop_node_t, drop_node_p, PetriNetEdge { label: 1usize });
                         match &self.lockguards[&lockguard_id].lockguard_ty {
                             LockGuardTy::StdMutex(_)
                             | LockGuardTy::ParkingLotMutex(_)
@@ -951,14 +967,14 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                                 self.net.add_edge(
                                     drop_node_t,
                                     *lock_node,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                             }
                             _ => {
                                 self.net.add_edge(
                                     drop_node_t,
                                     *lock_node,
-                                    PetriNetEdge { label: 10u32 },
+                                    PetriNetEdge { label: 10usize },
                                 );
                             }
                         }
@@ -978,9 +994,9 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
 
                         let prev_node = self.function_vec[&self.instance.def_id()].last().unwrap();
                         self.net
-                            .add_edge(*prev_node, genc_node_t, PetriNetEdge { label: 1u32 });
+                            .add_edge(*prev_node, genc_node_t, PetriNetEdge { label: 1usize });
                         self.net
-                            .add_edge(genc_node_t, genc_node_p, PetriNetEdge { label: 1u32 });
+                            .add_edge(genc_node_t, genc_node_p, PetriNetEdge { label: 1usize });
                         match &self.lockguards[&lockguard_id].lockguard_ty {
                             LockGuardTy::StdMutex(_)
                             | LockGuardTy::ParkingLotMutex(_)
@@ -988,14 +1004,14 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                                 self.net.add_edge(
                                     *lock_node,
                                     genc_node_t,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                             }
                             _ => {
                                 self.net.add_edge(
                                     *lock_node,
                                     genc_node_t,
-                                    PetriNetEdge { label: 10u32 },
+                                    PetriNetEdge { label: 10usize },
                                 );
                             }
                         }
@@ -1072,22 +1088,22 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                                 self.net.add_edge(
                                     *prev_node,
                                     call_node_t,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                                 self.net.add_edge(
                                     call_node_t,
                                     wait_node_p,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                                 self.net.add_edge(
                                     wait_node_p,
                                     ret_node_t,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                                 self.net.add_edge(
                                     ret_node_t,
                                     call_node_p,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                                 self.function_vec
                                     .get_mut(&def_id)
@@ -1105,12 +1121,12 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                                 self.net.add_edge(
                                     call_node_t,
                                     func_start_end.unwrap().0,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                                 self.net.add_edge(
                                     func_start_end.unwrap().1,
                                     ret_node_t,
-                                    PetriNetEdge { label: 1u32 },
+                                    PetriNetEdge { label: 1usize },
                                 );
                             }
                             _ => {}

@@ -3,6 +3,8 @@ use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
 use std::collections::HashSet;
+use std::hash::Hash;
+use std::hash::Hasher;
 
 #[derive(Debug, Clone)]
 pub struct StateEdge {
@@ -16,9 +18,16 @@ impl StateEdge {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StateNode {
-    pub mark: HashSet<NodeIndex>,
+    pub mark: Vec<(NodeIndex, usize)>,
+}
+
+impl Hash for StateNode {
+    fn hash<H: Hasher>(&self, state_node: &mut H) {
+        // self.mark.sort();
+        self.mark.hash(state_node);
+    }
 }
 
 // impl std::fmt::Display for StateNode {
@@ -34,7 +43,7 @@ pub struct StateNode {
 // }
 
 impl StateNode {
-    pub fn new(mark: HashSet<NodeIndex>) -> Self {
+    pub fn new(mark: Vec<(NodeIndex, usize)>) -> Self {
         Self { mark }
     }
 }

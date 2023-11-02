@@ -37,7 +37,11 @@ impl PTACallbacks {
 
 impl rustc_driver::Callbacks for PTACallbacks {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
-        self.file_name = config.input.source_name().prefer_remapped().to_string();
+        self.file_name = config
+            .input
+            .source_name()
+            .prefer_remapped_unconditionaly()
+            .to_string();
 
         debug!("Processing input file: {}", self.file_name);
         if config.opts.test {
