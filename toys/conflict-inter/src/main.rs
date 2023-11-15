@@ -44,6 +44,5 @@ fn main() {
         foo1.std_mutex_1();
     });
     foo.std_rw_1();
-    // foo.std_mutex_1();
     th.join().unwrap();
 }

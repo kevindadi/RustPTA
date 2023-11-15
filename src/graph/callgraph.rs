@@ -7,6 +7,7 @@
 //! We also track where a closure is defined rather than called
 //! to record the defined function and the parameter of the closure,
 //! which is pointed to by upvars.
+extern crate rustc_abi;
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::{NodeIndex, Node};
@@ -16,8 +17,10 @@ use petgraph::Direction::{Incoming, Outgoing};
 use petgraph::{Directed, Graph};
 
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind,Place};
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind};
+use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind,Place,PlaceElem};
+use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind,List,Ty};
+use rustc_abi::FieldIdx;
+
 use std::fs::File;
 use std::io::Write;
 
@@ -112,6 +115,55 @@ impl<'tcx> CallGraph<'tcx> {
             }
         }
                  
+    }
+    pub fn getClosureArg(
+        &self,
+        callGraphNode:&CallGraphNode<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        ty:Ty<'tcx>,
+    )-> Vec<Place<'tcx>>{
+        let mut formal_para_vec = Vec::new();
+        match callGraphNode {
+            CallGraphNode::WithBody(inst)| CallGraphNode::WithoutBody(inst) =>{
+                
+                let closure_body = tcx.instance_mir(inst.def);
+                for (local, local_ty) in closure_body.local_decls.iter_enumerated(){
+                    // println!("closure_local{:?},closure_local_ty{:?}",local,local_ty);
+                    if local_ty.ty.contains(ty) {
+                        // 找到了匹配的局部变量?? 不准确
+                        let p = Place::from(local); //
+                        formal_para_vec.push(p);
+                    }
+                }
+                formal_para_vec
+                // let iter =closure_body.args_iter();
+                // for i in iter{
+                //     let place_elem = PlaceElem::Field(FieldIdx::from_u32(0),ty);
+                //     let mut projection = List::empty();
+                //     projection.push(place_elem);
+                //     let place = Place {
+                //         local: i,
+                //         projection: &projection,  
+                //     };
+                // }   
+            },
+        }
+    }
+    pub fn getReturn( 
+        &self,
+        callGraphNode:&CallGraphNode<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) {
+        match callGraphNode {
+            CallGraphNode::WithBody(inst) =>{
+                
+                // let callee_body = tcx.instance_mir(inst.def);
+                // let ret_ty = callee_body.return_ty();
+                // println!("{:?}",ret_ty);
+                
+            },
+           _ =>{}
+        }
     }
     /// Search for the InstanceId of a given instance in CallGraph.
     pub fn instance_to_index(&self, instance: &Instance<'tcx>) -> Option<InstanceId> {

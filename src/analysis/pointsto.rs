@@ -127,14 +127,14 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
         
         //
         //print PointsToMap 0927
-        for (a, b) in self.pts.iter() {
-            print!("\nNode: {:?}", a);
-            print!(" NodeIndex: {:?}\n", graph.get_node(a));
-            for i in b.iter() {
-                print!("{:?}", i);
-                print!(" NodeIndex: {:?}\n", graph.get_node(i));
-            }
-        }
+        // for (a, b) in self.pts.iter() {
+        //     print!("\nNode: {:?}", a);
+        //     print!(" NodeIndex: {:?}\n", graph.get_node(a));
+        //     for i in b.iter() {
+        //         print!("{:?}", i);
+        //         print!(" NodeIndex: {:?}\n", graph.get_node(i));
+        //     }
+        // }
     }
 
     /// pts(target) = pts(target) U pts(source), return true if pts(target) changed
@@ -952,19 +952,19 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         let pts2 = points_to_map2.get(node2)?;
         // 1. Check if `node1` and `node2` points to the same Constant.
         if point_to_same_constant(pts1, pts2) {
-            // println!("point_to_same_constant");
+           
             return Some(ApproximateAliasKind::Probably);
         }
         // 2. Check if `node1` and `node2` points to func parameters with the same local's type and projection.
         if point_to_same_type_param(pts1, pts2, body1, body2) {
-            // println!("point_to_same_type_param");
+          
             return Some(ApproximateAliasKind::Possibly);
         }
         // 3. Check if `node1` and `node2` point to upvars of closures and the upvars alias in the def func.
         // 3.1 Get defsite upvars of `node1` then check if `node2` points to the upvar.
         let mut defsite_upvars1 = None;
         if self.tcx.is_closure(instance1.def_id()) {
-            // println!("3.1");
+           
             let pts_paths = points_to_paths_to_param(*node1, body1, &points_to_map1);
             for pts_path in pts_paths {
                 let defsite_upvars = match self.closure_defsite_upvars(instance1, pts_path) {
@@ -990,7 +990,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         // 3.2 Get defsite upvars of `node2` then check if `node1` points to the upvar.
         let mut defsite_upvars2 = None;
         if self.tcx.is_closure(instance2.def_id()) {
-            // println!("3.2");
+           
             let pts_paths = points_to_paths_to_param(*node2, body2, &points_to_map2);
             for pts_path in pts_paths {
                 let defsite_upvars = match self.closure_defsite_upvars(instance2, pts_path) {
@@ -1015,7 +1015,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
         // 3.3 Check if upvars of `node1` and `node2` alias with each other.
         if let (Some(defsite_upvars1), Some(defsite_upvars2)) = (defsite_upvars1, defsite_upvars2) {
-            // println!("3.3");
+
             for (instance1, node1) in defsite_upvars1 {
                 for (instance2, node2) in &defsite_upvars2 {
                     if instance1.def_id() == instance2.def_id() {

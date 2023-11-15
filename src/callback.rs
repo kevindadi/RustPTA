@@ -6,10 +6,11 @@ extern crate rustc_hir;
 use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
-use crate::analysis::pointstocs::Andersen;
+use crate::analysis::pointsto_inter::Andersen;
+use crate::analysis::lock::LockAnalysis;
 use crate::graph::callgraph::CallGraph;
 use crate::graph::pts_test_graph::PtsDetecter;
-use crate::graph::pts_cs_graph::PtsDetecterCS;
+use crate::graph::pts_inter_graph::PtsDetecterInter;
 use crate::options::{CrateNameList, Options};
 use log::debug;
 use rustc_driver::Compilation;
@@ -118,27 +119,6 @@ impl PTACallbacks {
         let mut callgraph = CallGraph::new();
         let param_env = ParamEnv::reveal_all();
         callgraph.analyze(instances.clone(), tcx, param_env);
-        callgraph.dot();
-        // println!("INSTANCE");
-        // for instance in &instances {
-        //     let body = tcx.instance_mir(instance.def);
-        //     println!("INSTANCE{:?}", instance);
-        //     println!("BODY{:?}", body); // 例如，打印每个 instance
-        // }
-        let mut file = File::create("instance_body.txt").expect("Unable to create file");
-
-        writeln!(file, "INSTANCE").expect("Unable to write to file");
-    
-        for instance in &instances {
-            let body = tcx.instance_mir(instance.def);
-            if let Some(instance_id) = callgraph.instance_to_index(instance){
-                writeln!(file, "\nINSTANCE_ID: {:?}", instance_id).expect("Unable to write to file");
-                writeln!(file, "INSTANCE: {:?}", instance).expect("Unable to write to file");
-                writeln!(file, "BODY: {:?}", body).expect("Unable to write to file");
-            }
-            
-           
-        }
         
 
         //Lockbud 指针分析
@@ -148,7 +128,8 @@ impl PTACallbacks {
 
 
         //过程间 上下文敏感指针分析
-        let instances_cs: Vec<&Instance<'tcx>> = cgus
+        let cgus_inter = tcx.collect_and_partition_mono_items(()).1;
+        let instances_inter: Vec<&Instance<'tcx>> = cgus_inter
         .iter()
         .flat_map(|cgu| {
             cgu.items().iter().filter_map(|(mono_item, _)| {
@@ -160,11 +141,17 @@ impl PTACallbacks {
             })
         })
         .collect();
-        let mut ander = Andersen::new(tcx, &callgraph);
-        ander.analyze(param_env, instances_cs.clone());
         
-        let mut pts_detecter_cs = PtsDetecterCS::new(tcx, param_env);
-        pts_detecter_cs.output_pts(&callgraph, &mut ander,param_env);
+        if instances_inter.len() >= 1{
+            let mut andersen = Andersen::new(tcx, &callgraph);
+            andersen.analyze(param_env, instances_inter.clone()); 
+            
+            // let mut pts_detecter_inter = PtsDetecterInter::new(tcx, param_env);
+            // pts_detecter_inter.output_pts(&callgraph, &mut andersen,param_env);
+            let mut lock_analysis = LockAnalysis::new(tcx,param_env);
+            lock_analysis.detect(&callgraph, &mut andersen)
+        }
+       
 
 
     }

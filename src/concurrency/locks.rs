@@ -90,7 +90,7 @@ impl<'tcx> LockGuardTy<'tcx> {
         // spin: MutexGuard<i32>
         // parking_lot: MutexGuard<RawMutex, i32>
         // async, tokio, future: currently Unsupported
-        if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() {
+        if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() { //ADT 结构体和枚举
             let path = tcx.def_path_str(adt_def.did());
             // quick fail
             if !path.contains("MutexGuard")
@@ -302,7 +302,8 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LockGuardCollector<'a, 'b, 'tcx> {
                                         self.tcx,
                                         self.param_env,
                                         ty::EarlyBinder::bind(
-                                            self.instance.ty(self.tcx, self.param_env),
+                                            func_ty,
+                                            // self.instance.ty(self.tcx, self.param_env),
                                         ),
                                     );
                                 if let ty::FnDef(def_id, _) = *func_ty.kind() {
