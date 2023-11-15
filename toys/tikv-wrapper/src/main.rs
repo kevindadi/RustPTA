@@ -10,13 +10,13 @@ struct Foo {
 impl Foo {
     fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(1)),
+            inner: Arc::new(RwLock::new(1)), 
             data: 1,
         }
     }
     fn foo(&self) {
-        match *self.inner.rl() {
-            1 => *self.inner.wl() += 1,
+        match *self.inner.rl() { //18 NodeIndex(2), Local: _4
+            1 => *self.inner.wl() += 1, //19 NodeIndex(2), Local: _10
             _ => {}
         };
     }

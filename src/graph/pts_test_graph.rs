@@ -1,5 +1,7 @@
 extern crate rustc_hash;
 
+use std::fmt::Debug;
+
 use crate::analysis::pointsto::{AliasAnalysis, ApproximateAliasKind};
 use crate::concurrency::locks::{
     DeadlockPossibility, LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy,
@@ -94,38 +96,88 @@ impl<'tcx> PtsDetecter<'tcx> {
         callgraph: &'a CallGraph<'tcx>,
         alias_analysis: &mut AliasAnalysis<'a, 'tcx>,
     ) {
-        let lockguards = self.collect_lockguards(callgraph);
+        let lockguards = self.collect_lockguards(callgraph);//instanceid lockguardMap
         // Get lockguard info
-        let mut info = FxHashMap::default();
+        let mut info = FxHashMap::default(); //lockguardMap:LockGuardId, LockGuardInfo
         for (_, map) in lockguards.into_iter() {
             info.extend(map.into_iter());
         }
         for (k1, _) in info.iter() {
             for (k2, _) in info.iter() {
-                self.lockguard_relations.insert((*k1, *k2));
+                self.lockguard_relations.insert((*k1, *k2)); //(LockGuardId,LockGuardId)
             }
         }
         use std::cell::RefCell;
         use std::rc::Rc;
         let lock_node = Rc::new(RefCell::new(FxHashMap::<LockGuardId, NodeIndex>::default()));
         let mut pts_map = Graph::<String, String>::new();
-        for (a, b) in &self.lockguard_relations {
-            let possibility = deadlock_possibility(a, b, &info, alias_analysis);
+        for (a, b) in &self.lockguard_relations { //lockguard_relations 
+            println!("pts_test_graph:LockGuardId: {}", a); //LockGuardId
+            println!("pts_test_graph:LockGuardId: {}", b);
+            let a_info = &info[a];
+            let b_info = &info[b];
+            let a_str =
+                format!("{:?}", a_info.lockguard_ty) + &format!("{:?}", a_info.span);
+            let b_str =
+                format!("{:?}", b_info.lockguard_ty) + &format!("{:?}", b_info.span);
+            println!("pts_test_graph:a_str: {}", a_str); //LockGuardInfo
+            println!("pts_test_graph:b_str: {}", b_str);
+            // let possibility = deadlock_possibility(a, b, &info, alias_analysis);
+            // match possibility {
+            //     DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                  
+            //         if lock_node.borrow().get(a).is_none() {
+            //             if lock_node.borrow().get(b).is_none() {
+            //                 // a,b both not exit
+            //                 let a_node = pts_map.add_node(a_str);
+            //                 let b_node = pts_map.add_node(b_str);
+            //                 pts_map.add_edge(a_node, b_node, possibility.to_string());
+            //                 lock_node.borrow_mut().insert(*a, a_node);
+            //                 lock_node.borrow_mut().insert(*b, b_node);
+            //             } else {
+            //                 // a not exits
+            //                 let a_node = pts_map.add_node(a_str);
+            //                 pts_map.add_edge(
+            //                     a_node,
+            //                     *lock_node.borrow().get(b).unwrap(),
+            //                     possibility.to_string(),
+            //                 );
+            //                 lock_node.borrow_mut().insert(*a, a_node);
+            //             }
+            //         } else {
+            //             // b not exits
+            //             if lock_node.borrow().get(b).is_none() {
+            //                 let b_node = pts_map.add_node(b_str);
+            //                 pts_map.add_edge(
+            //                     *lock_node.borrow().get(a).unwrap(),
+            //                     b_node,
+            //                     possibility.to_string(),
+            //                 );
+            //                 lock_node.borrow_mut().insert(*b, b_node);
+            //             } else {
+            //                 // a,b both exit
+            //                 pts_map.add_edge(
+            //                     *lock_node.borrow().get(a).unwrap(),
+            //                     *lock_node.borrow().get(b).unwrap(),
+            //                    possibility.to_string(),
+            //                 );
+            //             }
+            //         }
+            //     }
+            //     _ => {
+                    
+            //     }
+            // }
+            let possibility = alias_analysis.alias((*a).into(), (*b).into());
             match possibility {
-                DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
-                    let a_info = &info[a];
-                    let b_info = &info[b];
-                    let a_str =
-                        format!("{:?}", a_info.lockguard_ty) + &format!("{:?}", a_info.span);
-                    let b_str =
-                        format!("{:?}", b_info.lockguard_ty) + &format!("{:?}", b_info.span);
-
+                ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+                  
                     if lock_node.borrow().get(a).is_none() {
                         if lock_node.borrow().get(b).is_none() {
                             // a,b both not exit
                             let a_node = pts_map.add_node(a_str);
                             let b_node = pts_map.add_node(b_str);
-                            pts_map.add_edge(a_node, b_node, "".to_string());
+                            pts_map.add_edge(a_node, b_node, possibility.to_string());
                             lock_node.borrow_mut().insert(*a, a_node);
                             lock_node.borrow_mut().insert(*b, b_node);
                         } else {
@@ -134,7 +186,7 @@ impl<'tcx> PtsDetecter<'tcx> {
                             pts_map.add_edge(
                                 a_node,
                                 *lock_node.borrow().get(b).unwrap(),
-                                "".to_string(),
+                                possibility.to_string(),
                             );
                             lock_node.borrow_mut().insert(*a, a_node);
                         }
@@ -145,7 +197,7 @@ impl<'tcx> PtsDetecter<'tcx> {
                             pts_map.add_edge(
                                 *lock_node.borrow().get(a).unwrap(),
                                 b_node,
-                                "".to_string(),
+                                possibility.to_string(),
                             );
                             lock_node.borrow_mut().insert(*b, b_node);
                         } else {
@@ -153,12 +205,14 @@ impl<'tcx> PtsDetecter<'tcx> {
                             pts_map.add_edge(
                                 *lock_node.borrow().get(a).unwrap(),
                                 *lock_node.borrow().get(b).unwrap(),
-                                "".to_string(),
+                               possibility.to_string(),
                             );
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                   
+                }
             }
         }
         use std::io::Write;
@@ -187,7 +241,8 @@ fn deadlock_possibility<'tcx>(
     if lockguards[a].span == lockguards[b].span {
         return DeadlockPossibility::Unlikely;
     }
-    let possibility = match a_ty.deadlock_with(b_ty) {
+    //检查Ty 
+    let possibility = match a_ty.deadlock_with(b_ty) { //Ty相同就返回probably
         DeadlockPossibility::Probably => match alias_analysis.alias((*a).into(), (*b).into()) {
             ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
             ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,

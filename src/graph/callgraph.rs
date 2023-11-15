@@ -9,14 +9,17 @@
 //! which is pointed to by upvars.
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
-use petgraph::graph::NodeIndex;
+use petgraph::graph::{NodeIndex, Node};
+use petgraph::graphmap::Nodes;
 use petgraph::visit::IntoNodeReferences;
-use petgraph::Direction::Incoming;
+use petgraph::Direction::{Incoming, Outgoing};
 use petgraph::{Directed, Graph};
 
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind};
+use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind,Place};
 use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind};
+use std::fs::File;
+use std::io::Write;
 
 /// The NodeIndex in CallGraph, denoting a unique instance in CallGraph.
 pub type InstanceId = NodeIndex;
@@ -59,6 +62,8 @@ impl<'tcx> CallGraphNode<'tcx> {
     pub fn match_instance(&self, other: &Instance<'tcx>) -> bool {
         matches!(self, CallGraphNode::WithBody(inst) | CallGraphNode::WithoutBody(inst) if inst == other)
     }
+    
+   
 }
 
 /// CallGraph
@@ -66,6 +71,7 @@ impl<'tcx> CallGraphNode<'tcx> {
 /// The directed edges are CallSite Locations.
 /// e.g., `Instance1--|[CallSite1, CallSite2]|-->Instance2`
 /// denotes `Instance1` calls `Instance2` at locations `Callsite1` and `CallSite2`.
+
 pub struct CallGraph<'tcx> {
     pub graph: Graph<CallGraphNode<'tcx>, Vec<CallSiteLocation>, Directed>,
 }
@@ -78,6 +84,35 @@ impl<'tcx> CallGraph<'tcx> {
         }
     }
 
+    pub fn getNodes(&self) -> Vec<NodeIndex>{
+        self.graph.node_indices().collect()
+    }
+    pub fn getFirstNode(&self) -> Option<NodeIndex>{
+        self.graph.node_indices().next()
+    }
+    pub fn getArgs(
+        &self,
+        callGraphNode:&CallGraphNode<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> Vec<Place<'tcx>>{
+        let mut formal_para_vec = Vec::new();
+        match callGraphNode {
+            CallGraphNode::WithBody(inst) =>{
+                
+                let callee_body = tcx.instance_mir(inst.def);
+                let iter = callee_body.args_iter();
+                for i in iter{
+                    let p = Place::from(i);
+                    formal_para_vec.push(p);
+                }   
+                formal_para_vec
+            },
+            CallGraphNode::WithoutBody(inst) =>{
+                formal_para_vec
+            }
+        }
+                 
+    }
     /// Search for the InstanceId of a given instance in CallGraph.
     pub fn instance_to_index(&self, instance: &Instance<'tcx>) -> Option<InstanceId> {
         self.graph
@@ -91,6 +126,16 @@ impl<'tcx> CallGraph<'tcx> {
         self.graph.node_weight(idx)
     }
 
+    pub fn instance_to_CallGraphNode(&self, instance: &Instance<'tcx>)-> Option<&CallGraphNode<'tcx>>{
+        if let Some(id) = self.instance_to_index(instance) {
+            self.index_to_instance(id)
+        }else{
+            None
+        }
+
+    }
+
+   
     /// Perform callgraph analysis on the given instances.
     /// The instances should be **all** the instances with MIR available in the current crate.
     pub fn analyze(
@@ -105,17 +150,19 @@ impl<'tcx> CallGraph<'tcx> {
                 let idx = self.graph.add_node(CallGraphNode::WithBody(inst));
                 (idx, inst)
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>(); //
         for (caller_idx, caller) in idx_insts {
+            // println!("\ncaller_idx {:?}",caller_idx);
             let body = tcx.instance_mir(caller.def);
             // Skip promoted src
             if body.source.promoted.is_some() {
                 continue;
             }
-            let mut collector = CallSiteCollector::new(caller, body, tcx, param_env);
+            let mut collector = CallSiteCollector::new(caller, body, tcx, param_env); //instance
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
                 let callee_idx = if let Some(callee_idx) = self.instance_to_index(&callee) {
+                    // println!("callee_idx {:?}",callee_idx);
                     callee_idx
                 } else {
                     self.graph.add_node(CallGraphNode::WithoutBody(callee))
@@ -145,7 +192,9 @@ impl<'tcx> CallGraph<'tcx> {
     pub fn callers(&self, target: InstanceId) -> Vec<InstanceId> {
         self.graph.neighbors_directed(target, Incoming).collect()
     }
-
+    pub fn callees(&self, source: InstanceId)-> Vec<InstanceId> {
+        self.graph.neighbors_directed(source, Outgoing).collect()
+    }
     /// Find all simple paths from source to target.
     /// e.g., for one of the paths, `source --> instance1 --> instance2 --> target`,
     /// the return is [source, instance1, instance2, target].
@@ -157,10 +206,24 @@ impl<'tcx> CallGraph<'tcx> {
     /// Print the callgraph in dot format.
     #[allow(dead_code)]
     pub fn dot(&self) {
-        println!(
-            "{:?}",
-            Dot::with_config(&self.graph, &[Config::GraphContentOnly])
-        );
+        // println!(
+        //     "{:?}",
+        //     Dot::with_config(&self.graph, &[Config::GraphContentOnly])
+        // );
+        let dot_string = format!("digraph G {{\n{:?}\n}}", Dot::with_config(&self.graph, &[Config::GraphContentOnly]));
+        let output_file_path = "callgraph.dot";
+        match File::create(output_file_path) {
+            Ok(mut file) => {
+                if let Err(err) = file.write_all(dot_string.as_bytes()) {
+                    eprintln!("Failed to write to file: {}", err);
+                } else {
+                    println!("DOT representation saved to '{}'", output_file_path);
+                }
+            },
+            Err(err) => {
+                eprintln!("Failed to create file: {}", err);
+            }
+        }
     }
 }
 
@@ -195,7 +258,7 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
     }
 }
 
-impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
+impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> { 
     /// Resolve direct call.
     /// Inspired by rustc_mir/src/transform/inline.rs#get_valid_function_call.
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
@@ -205,10 +268,11 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
             let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
                 self.tcx,
                 self.param_env,
-                ty::EarlyBinder::bind(self.caller.ty(self.tcx, self.param_env)),
+                ty::EarlyBinder::bind(func_ty),
             );
+            
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
-                if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
+                if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs) //def_id:DefId substs:GenericArgsRef
                     .ok()
                     .flatten()
                 {

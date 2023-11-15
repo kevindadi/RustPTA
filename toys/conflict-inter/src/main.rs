@@ -15,25 +15,25 @@ impl Foo {
     }
 
     fn std_mutex_1(&self) {
-        match *self.mu1.lock().unwrap() {
+        match *self.mu1.lock().unwrap() {//   NodeIndex4 _4  36 18
             1 => {},
             _ => { self.std_rw_2(); },
         };
     }
 
     fn std_rw_2(&self) {
-        *self.rw1.write().unwrap() += 1;
+        *self.rw1.write().unwrap() += 1;//  NodeIndex3 _4   25 29
     }
 
     fn std_rw_1(&self) {
-        match *self.rw1.read().unwrap() {
+        match *self.rw1.read().unwrap() {//  NodeIndex5 _4   29 25
             1 => {},
             _ => { self.std_mutex_2(); },
         }
     }
 
     fn std_mutex_2(&self) {
-        *self.mu1.lock().unwrap() += 1;
+        *self.mu1.lock().unwrap() += 1; //  NodeIndex6 _4 36 18
     }
 }
 
@@ -44,5 +44,6 @@ fn main() {
         foo1.std_mutex_1();
     });
     foo.std_rw_1();
+    // foo.std_mutex_1();
     th.join().unwrap();
 }

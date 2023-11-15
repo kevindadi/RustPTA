@@ -12,6 +12,7 @@ use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt};
 use rustc_span::Span;
 
 use crate::graph::callgraph::InstanceId;
+use std::fmt;
 
 /// Uniquely identify a LockGuard in a crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -25,6 +26,11 @@ impl LockGuardId {
         Self { instance_id, local }
     }
 }
+impl fmt::Display for LockGuardId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "InstanceId: {:?}, Local: {:?}", self.instance_id, self.local)
+    }
+}
 
 /// The possibility of deadlock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +40,16 @@ pub enum DeadlockPossibility {
     Unlikely,
     Unknown,
 }
-
+impl DeadlockPossibility {
+    pub fn to_string(&self) -> String {
+        match self {
+            DeadlockPossibility::Probably => String::from("Probably"),
+            DeadlockPossibility::Possibly => String::from("Possibly"),
+            DeadlockPossibility::Unlikely => String::from("Unlikely"),
+            DeadlockPossibility::Unknown => String::from("Unknown"),
+        }
+    }
+}
 impl PartialOrd for DeadlockPossibility {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         use DeadlockPossibility::*;
@@ -189,6 +204,8 @@ pub struct LockGuardInfo<'tcx> {
     pub recursive_gen_locs: SmallVec<[Location; 4]>,
     pub kill_locs: SmallVec<[Location; 4]>,
 }
+
+
 
 impl<'tcx> LockGuardInfo<'tcx> {
     pub fn new(lockguard_ty: LockGuardTy<'tcx>, span: Span) -> Self {

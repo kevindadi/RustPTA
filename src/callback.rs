@@ -6,8 +6,10 @@ extern crate rustc_hir;
 use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
+use crate::analysis::pointstocs::Andersen;
 use crate::graph::callgraph::CallGraph;
 use crate::graph::pts_test_graph::PtsDetecter;
+use crate::graph::pts_cs_graph::PtsDetecterCS;
 use crate::options::{CrateNameList, Options};
 use log::debug;
 use rustc_driver::Compilation;
@@ -15,6 +17,8 @@ use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
+use std::fs::File;
+use std::io::Write;
 
 pub struct PTACallbacks {
     options: Options,
@@ -108,17 +112,60 @@ impl PTACallbacks {
                 })
             })
             .collect();
+
+        
+
         let mut callgraph = CallGraph::new();
         let param_env = ParamEnv::reveal_all();
         callgraph.analyze(instances.clone(), tcx, param_env);
+        callgraph.dot();
+        // println!("INSTANCE");
+        // for instance in &instances {
+        //     let body = tcx.instance_mir(instance.def);
+        //     println!("INSTANCE{:?}", instance);
+        //     println!("BODY{:?}", body); // 例如，打印每个 instance
+        // }
+        let mut file = File::create("instance_body.txt").expect("Unable to create file");
 
-        // TODO: 基于调用图构造指针分析框架
+        writeln!(file, "INSTANCE").expect("Unable to write to file");
+    
+        for instance in &instances {
+            let body = tcx.instance_mir(instance.def);
+            if let Some(instance_id) = callgraph.instance_to_index(instance){
+                writeln!(file, "\nINSTANCE_ID: {:?}", instance_id).expect("Unable to write to file");
+                writeln!(file, "INSTANCE: {:?}", instance).expect("Unable to write to file");
+                writeln!(file, "BODY: {:?}", body).expect("Unable to write to file");
+            }
+            
+           
+        }
+        
+
+        //Lockbud 指针分析
         let mut alias_analysis = AliasAnalysis::new(tcx, &callgraph);
         let mut pts_detecter = PtsDetecter::new(tcx, param_env);
         pts_detecter.output_pts(&callgraph, &mut alias_analysis);
-        // TODO: 遍历所有的锁,判断其指向关系
 
-        // TODO: reduce callgraph
-        pts_detecter.generate_petri_net(&callgraph);
+
+        //过程间 上下文敏感指针分析
+        let instances_cs: Vec<&Instance<'tcx>> = cgus
+        .iter()
+        .flat_map(|cgu| {
+            cgu.items().iter().filter_map(|(mono_item, _)| {
+                if let MonoItem::Fn(instance) = mono_item {
+                    Some(instance)
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+        let mut ander = Andersen::new(tcx, &callgraph);
+        ander.analyze(param_env, instances_cs.clone());
+        
+        let mut pts_detecter_cs = PtsDetecterCS::new(tcx, param_env);
+        pts_detecter_cs.output_pts(&callgraph, &mut ander,param_env);
+
+
     }
 }

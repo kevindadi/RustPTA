@@ -31,6 +31,8 @@ use crate::concurrency::atomic::is_atomic_ptr_store;
 use crate::concurrency::locks::LockGuardId;
 use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::memory::ownership;
+use std::fs::File;
+use std::io::Write;
 
 /// Field-sensitive intra-procedural Andersen pointer analysis.
 /// <https://helloworld.pub/program-analysis-andersen-pointer-analysis-algorithm-based-on-svf.html>
@@ -64,7 +66,8 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
     pub fn analyze(&mut self) {
         let mut collector = ConstraintGraphCollector::new(self.body, self.tcx);
         collector.visit_body(self.body);
-        let mut graph = collector.finish();
+        let mut graph = collector.finish(); //constraint graph
+        // graph.dot();
         let mut worklist = VecDeque::new();
         // alloc: place = alloc
         for node in graph.nodes() {
@@ -121,6 +124,17 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                 }
             }
         }
+        
+        //
+        //print PointsToMap 0927
+        for (a, b) in self.pts.iter() {
+            print!("\nNode: {:?}", a);
+            print!(" NodeIndex: {:?}\n", graph.get_node(a));
+            for i in b.iter() {
+                print!("{:?}", i);
+                print!(" NodeIndex: {:?}\n", graph.get_node(i));
+            }
+        }
     }
 
     /// pts(target) = pts(target) U pts(source), return true if pts(target) changed
@@ -139,7 +153,9 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
     pub fn finish(self) -> FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>> {
         self.pts
     }
+
 }
+
 
 /// `ConstraintNode` represents a memory cell, denoted by `Place` in MIR.
 /// A `Place` encompasses `Local` and `[ProjectionElem]`, `ProjectionElem`
@@ -159,6 +175,7 @@ pub enum ConstraintNode<'tcx> {
     Constant(ConstantKind<'tcx>),
     ConstantDeref(ConstantKind<'tcx>),
 }
+
 
 /// The assignments in MIR with default `mir-opt-level` (level 1) are simplified
 /// to the following four kinds:
@@ -210,7 +227,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         }
     }
 
-    fn get_node(&self, node: &ConstraintNode<'tcx>) -> Option<NodeIndex> {
+    pub fn get_node(&self, node: &ConstraintNode<'tcx>) -> Option<NodeIndex> {
         self.node_map.get(node).copied()
     }
 
@@ -402,10 +419,20 @@ impl<'tcx> ConstraintGraph<'tcx> {
     /// Print the callgraph in dot format.
     #[allow(dead_code)]
     pub fn dot(&self) {
-        println!(
-            "{:?}",
-            Dot::with_config(&self.graph, &[Config::GraphContentOnly])
-        );
+        let dot_string = format!("digraph G {{\n{:?}\n}}", Dot::with_config(&self.graph, &[Config::GraphContentOnly]));
+        let output_file_path = "ConstraintGraph_pt.dot";
+        match File::create(output_file_path) {
+            Ok(mut file) => {
+                if let Err(err) = file.write_all(dot_string.as_bytes()) {
+                    eprintln!("Failed to write to file: {}", err);
+                } else {
+                    println!("DOT representation saved to '{}'", output_file_path);
+                }
+            },
+            Err(err) => {
+                eprintln!("Failed to create file: {}", err);
+            }
+        }
     }
 }
 
@@ -627,7 +654,16 @@ pub enum ApproximateAliasKind {
     Unlikely,
     Unknown,
 }
-
+impl ApproximateAliasKind {
+    pub fn to_string(&self) -> String {
+        match self {
+            ApproximateAliasKind::Probably => String::from("Probably"),
+            ApproximateAliasKind::Possibly => String::from("Possibly"),
+            ApproximateAliasKind::Unlikely => String::from("Unlikely"),
+            ApproximateAliasKind::Unknown => String::from("Unknown"),
+        }
+    }
+}
 /// Probably > Possibly > Unlikey > Unknown
 impl PartialOrd for ApproximateAliasKind {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -821,6 +857,8 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             pointer_analysis.analyze();
             let pts = pointer_analysis.finish();
             self.pts.entry(def_id).or_insert(pts)
+            
+
         }
     }
 
@@ -905,7 +943,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         node1: &ConstraintNode<'tcx>,
         instance2: &Instance<'tcx>,
         node2: &ConstraintNode<'tcx>,
-    ) -> Option<ApproximateAliasKind> {
+    ) -> Option<ApproximateAliasKind> { //有误报?
         let body1 = self.tcx.instance_mir(instance1.def);
         let body2 = self.tcx.instance_mir(instance2.def);
         let points_to_map1 = self.get_or_insert_pts(instance1.def_id(), body1).clone();
@@ -914,16 +952,19 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         let pts2 = points_to_map2.get(node2)?;
         // 1. Check if `node1` and `node2` points to the same Constant.
         if point_to_same_constant(pts1, pts2) {
+            // println!("point_to_same_constant");
             return Some(ApproximateAliasKind::Probably);
         }
         // 2. Check if `node1` and `node2` points to func parameters with the same local's type and projection.
         if point_to_same_type_param(pts1, pts2, body1, body2) {
+            // println!("point_to_same_type_param");
             return Some(ApproximateAliasKind::Possibly);
         }
         // 3. Check if `node1` and `node2` point to upvars of closures and the upvars alias in the def func.
         // 3.1 Get defsite upvars of `node1` then check if `node2` points to the upvar.
         let mut defsite_upvars1 = None;
         if self.tcx.is_closure(instance1.def_id()) {
+            // println!("3.1");
             let pts_paths = points_to_paths_to_param(*node1, body1, &points_to_map1);
             for pts_path in pts_paths {
                 let defsite_upvars = match self.closure_defsite_upvars(instance1, pts_path) {
@@ -949,6 +990,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         // 3.2 Get defsite upvars of `node2` then check if `node1` points to the upvar.
         let mut defsite_upvars2 = None;
         if self.tcx.is_closure(instance2.def_id()) {
+            // println!("3.2");
             let pts_paths = points_to_paths_to_param(*node2, body2, &points_to_map2);
             for pts_path in pts_paths {
                 let defsite_upvars = match self.closure_defsite_upvars(instance2, pts_path) {
@@ -973,6 +1015,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
         // 3.3 Check if upvars of `node1` and `node2` alias with each other.
         if let (Some(defsite_upvars1), Some(defsite_upvars2)) = (defsite_upvars1, defsite_upvars2) {
+            // println!("3.3");
             for (instance1, node1) in defsite_upvars1 {
                 for (instance2, node2) in &defsite_upvars2 {
                     if instance1.def_id() == instance2.def_id() {
