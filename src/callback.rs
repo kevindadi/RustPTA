@@ -40,7 +40,8 @@ impl rustc_driver::Callbacks for PTACallbacks {
         self.file_name = config
             .input
             .source_name()
-            .prefer_remapped_unconditionaly()
+            .prefer_remapped() // nightly-2023-09-13
+            // .prefer_remapped_unconditionaly()
             .to_string();
 
         debug!("Processing input file: {}", self.file_name);

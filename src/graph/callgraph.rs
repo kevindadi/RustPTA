@@ -199,15 +199,23 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
     /// Resolve direct call.
     /// Inspired by rustc_mir/src/transform/inline.rs#get_valid_function_call.
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        if let TerminatorKind::Call { ref func, .. } = terminator.kind {
-            let func_ty = func.ty(self.body, self.tcx);
+        if let TerminatorKind::Call {
+            ref func, ref args, ..
+        } = terminator.kind
+        {
             // Only after monomorphizing can Instance::resolve work
-            let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
+            // let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
+            //     self.tcx,
+            //     self.param_env,
+            //     ty::EarlyBinder::bind(func.ty(&self.body.local_decls, self.tcx)),
+            // );
+            let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
                 self.tcx,
                 self.param_env,
-                ty::EarlyBinder::bind(self.caller.ty(self.tcx, self.param_env)),
+                ty::EarlyBinder::bind(func.ty(self.body, self.tcx)),
             );
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
+                // println!("func kind error");
                 if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
                     .ok()
                     .flatten()
@@ -215,6 +223,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                     self.callsites
                         .push((callee, CallSiteLocation::Direct(location)));
                 }
+                // println!("resolve instance error");
             }
         }
         self.super_terminator(terminator, location);
@@ -228,17 +237,22 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
     /// _20 is of type Closure, but it is actually the arg that captures
     /// the variables in the defining function.
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
-        let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
+        // let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
+        //     self.tcx,
+        //     self.param_env,
+        //     ty::EarlyBinder::bind(local_decl.ty),
+        // );
+        let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
             self.tcx,
             self.param_env,
             ty::EarlyBinder::bind(local_decl.ty),
         );
-        if let TyKind::Closure(def_id, substs) = func_ty.kind() {
+        if let TyKind::Closure(def_id, substs) = *func_ty.kind() {
             match self.body.local_kind(local) {
                 LocalKind::Arg | LocalKind::ReturnPointer => {}
                 _ => {
                     if let Some(callee_instance) =
-                        Instance::resolve(self.tcx, self.param_env, *def_id, substs)
+                        Instance::resolve(self.tcx, self.param_env, def_id, substs)
                             .ok()
                             .flatten()
                     {

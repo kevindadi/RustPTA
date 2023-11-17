@@ -190,41 +190,42 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         self.construct_func();
         self.construct_lock_with_dfs(alias_analysis);
         for (node, caller) in self.callgraph.graph.node_references() {
-            let body = self.tcx.instance_mir(caller.instance().def);
-            // Skip promoted src
-            if body.source.promoted.is_some() {
-                continue;
+            if self.tcx.is_mir_available(caller.instance().def_id()) {
+                let body = self.tcx.instance_mir(caller.instance().def);
+                // Skip promoted src
+                if body.source.promoted.is_some() {
+                    continue;
+                }
+                let lock_infos = self.lock_info.clone();
+                // let mut link_construct = LinkConstruct::new(
+                //     node,
+                //     caller.instance(),
+                //     body,
+                //     self.tcx,
+                //     self.param_env,
+                //     &mut self.net,
+                //     lock_infos.clone(),
+                //     &self.function_counter,
+                //     &mut self.function_vec,
+                //     &self.locks_counter,
+                // );
+                // link_construct.visit_body(body);
+
+                let mut func_construct = FunctionPN::new(
+                    node,
+                    caller.instance(),
+                    body,
+                    self.tcx,
+                    self.param_env,
+                    &mut self.net,
+                    lock_infos,
+                    &self.function_counter,
+                    &self.locks_counter,
+                    self.program_panic,
+                );
+                func_construct.visit_body(body);
             }
-            let lock_infos = self.lock_info.clone();
-            // let mut link_construct = LinkConstruct::new(
-            //     node,
-            //     caller.instance(),
-            //     body,
-            //     self.tcx,
-            //     self.param_env,
-            //     &mut self.net,
-            //     lock_infos.clone(),
-            //     &self.function_counter,
-            //     &mut self.function_vec,
-            //     &self.locks_counter,
-            // );
-            // link_construct.visit_body(body);
-
-            let mut func_construct = FunctionPN::new(
-                node,
-                caller.instance(),
-                body,
-                self.tcx,
-                self.param_env,
-                &mut self.net,
-                lock_infos,
-                &self.function_counter,
-                &self.locks_counter,
-                self.program_panic,
-            );
-            func_construct.visit_body(body);
         }
-
         //self.deal_post_function();
     }
 
@@ -905,34 +906,34 @@ impl<'b, 'tcx> LinkConstruct<'b, 'tcx> {
         self.visit_body(self.body);
     }
 
-    pub fn extract_def_id_of_called_function_from_operand(
-        operand: &rustc_middle::mir::Operand<'tcx>,
-        caller_function_def_id: rustc_hir::def_id::DefId,
-        tcx: rustc_middle::ty::TyCtxt<'tcx>,
-    ) -> rustc_hir::def_id::DefId {
-        let function_type = match operand {
-            rustc_middle::mir::Operand::Copy(place) | rustc_middle::mir::Operand::Move(place) => {
-                // Find the type through the local declarations of the caller function.
-                // The `Place` (memory location) of the called function should be declared there and we can query its type.
-                let body = tcx.optimized_mir(caller_function_def_id);
-                let place_ty = place.ty(body, tcx);
-                place_ty.ty
-            }
-            rustc_middle::mir::Operand::Constant(constant) => constant.ty(),
-        };
-        match function_type.kind() {
-            rustc_middle::ty::TyKind::FnPtr(_) => {
-                unimplemented!(
-                    "TyKind::FnPtr not implemented yet. Function pointers are present in the MIR"
-                );
-            }
-            rustc_middle::ty::TyKind::FnDef(def_id, _)
-            | rustc_middle::ty::TyKind::Closure(def_id, _) => *def_id,
-            _ => {
-                panic!("TyKind::FnDef, a function definition, but got: {function_type:?}");
-            }
-        }
-    }
+    // pub fn extract_def_id_of_called_function_from_operand(
+    //     operand: &rustc_middle::mir::Operand<'tcx>,
+    //     caller_function_def_id: rustc_hir::def_id::DefId,
+    //     tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    // ) -> rustc_hir::def_id::DefId {
+    //     let function_type = match operand {
+    //         rustc_middle::mir::Operand::Copy(place) | rustc_middle::mir::Operand::Move(place) => {
+    //             // Find the type through the local declarations of the caller function.
+    //             // The `Place` (memory location) of the called function should be declared there and we can query its type.
+    //             let body = tcx.optimized_mir(caller_function_def_id);
+    //             let place_ty = place.ty(body, tcx);
+    //             place_ty.ty
+    //         }
+    //         rustc_middle::mir::Operand::Constant(constant) => constant.ty(),
+    //     };
+    //     match function_type.kind() {
+    //         rustc_middle::ty::TyKind::FnPtr(_) => {
+    //             unimplemented!(
+    //                 "TyKind::FnPtr not implemented yet. Function pointers are present in the MIR"
+    //             );
+    //         }
+    //         rustc_middle::ty::TyKind::FnDef(def_id, _)
+    //         | rustc_middle::ty::TyKind::Closure(def_id, _) => *def_id,
+    //         _ => {
+    //             panic!("TyKind::FnDef, a function definition, but got: {function_type:?}");
+    //         }
+    //     }
+    // }
 }
 
 impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
