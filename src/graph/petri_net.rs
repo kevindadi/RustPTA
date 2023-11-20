@@ -138,6 +138,11 @@ fn insert_with_comparison<T: Eq + Hash>(set: &mut HashSet<T>, value: T) -> bool 
     return true;
 }
 
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pub struct Marking {
+//     tokens: HashMap<NodeIndex, usize>, // NodeIndex represents the place, usize represents token count
+// }
+
 pub struct PetriNet<'a, 'tcx> {
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
@@ -188,7 +193,8 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         self.construct_lock_with_dfs(alias_analysis);
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id()) {
-                let body = self.tcx.instance_mir(caller.instance().def);
+                let body = self.tcx.optimized_mir(caller.instance().def_id());
+                // let body = self.tcx.instance_mir(caller.instance().def);
                 // Skip promoted src
                 if body.source.promoted.is_some() {
                     continue;
@@ -226,6 +232,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     || func_name.contains("parking_lot::")
                     || func_name.contains("spin::")
                     || func_name.contains("::new")
+                    || func_name.contains("libc")
                 {
                     continue;
                 }
@@ -262,6 +269,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     || func_name.contains("parking_lot::")
                     || func_name.contains("spin::")
                     || func_name.contains("::new")
+                    || func_name.contains("libc")
                 {
                     continue;
                 }
@@ -629,7 +637,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             match self.net.node_weight(edge.source()).unwrap() {
                 PetriNetNode::P(place) => {
                     *place.tokens.borrow_mut() -= edge.weight().label;
-                    assert!(*place.tokens.borrow() >= 0);
+                    // assert!(*place.tokens.borrow() >= 0);
                 }
                 PetriNetNode::T(_) => {
                     println!("{}", "this error!");
@@ -707,30 +715,30 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
 
             if current_sched_transition.is_empty() {
                 // println!("No transitions scheduled");
-                let current_state_uszie: Vec<usize> = current_state_index
+                let mut current_state_usize: Vec<usize> = current_state_index
                     .iter()
                     .map(|node| node.0.index())
                     .collect();
-                self.deadlock_marks.insert(current_state_uszie);
+                current_state_usize.sort();
+                self.deadlock_marks.insert(current_state_usize);
                 continue;
             } else {
                 for t in current_sched_transition {
                     let new_state = self.fire_transition(t, current_state_index.clone());
-                    let mut new_state_uszie: Vec<(usize, usize)> = new_state
+                    let mut new_state_usize: Vec<(usize, usize)> = new_state
                         .clone()
                         .iter()
                         .map(|node| (node.0.index(), node.1))
                         .collect();
-                    new_state_uszie.sort();
+                    new_state_usize.sort();
                     // TODO: Implement for State Graph
-                    if insert_with_comparison(&mut all_state, new_state_uszie) {
+                    if insert_with_comparison(&mut all_state, new_state_usize) {
                         queue.push_back(new_state.clone());
                     }
                 }
             }
         }
         println!("All states are: {:?}", all_state.len());
-        debug!("All states are: {:?}", all_state.len());
         state_graph
     }
 
@@ -742,7 +750,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             v.iter().all(|m| match &self.net[node_index(*m)] {
                 PetriNetNode::P(p) => {
                     // p.name.contains("mainpanic") ||
-                    if p.name.contains("mainpanic") || p.name.contains("mainend") {
+                    if p.name.contains("mainend") {
                         false
                     } else {
                         true
@@ -813,6 +821,69 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         }
         current_mark
     }
+
+    // Detect deadlock in the Petri net
+    // pub fn detect_deadlocks(&self) -> Vec<Marking> {
+    //     let mut visited_markings = HashSet::new();
+    //     let initial_marking = self.get_initial_marking(); // Implement this method based on your Petri net
+    //     let mut deadlock_markings = Vec::new();
+
+    //     self.dfs_deadlock_detection(
+    //         &initial_marking,
+    //         &mut visited_markings,
+    //         &mut deadlock_markings,
+    //     );
+
+    //     deadlock_markings
+    // }
+
+    // Helper function for recursive DFS deadlock detection
+    // fn dfs_deadlock_detection(
+    //     &self,
+    //     marking: &Marking,
+    //     visited_markings: &mut HashSet<Marking>,
+    //     deadlock_markings: &mut Vec<Marking>,
+    // ) {
+    //     for transition in self.get_enabled_transitions(marking) {
+    //         // Fire the transition to get a new marking
+    //         let new_marking = self.fire_transition(marking, &transition);
+
+    //         // Check if the new marking has been visited before
+    //         if visited_markings.contains(&new_marking) {
+    //             // Deadlock detected
+    //             deadlock_markings.push(new_marking.clone());
+    //             continue; // Continue to explore other branches
+    //         }
+
+    //         // Mark the new marking as visited and continue DFS
+    //         visited_markings.insert(new_marking.clone());
+    //         self.dfs_deadlock_detection(&new_marking, visited_markings, deadlock_markings);
+
+    //         // Backtrack: remove the transition firing for the next iteration
+    //         self.undo_transition(&mut new_marking, &transition);
+    //     }
+    // }
+
+    // Implement these methods based on your Petri net
+    // fn get_initial_marking(&self) -> Marking {
+    //     // Implement based on your Petri net structure
+    //     // Return the initial distribution of tokens across places
+    // }
+
+    // fn get_enabled_transitions(&self, marking: &Marking) -> Vec<Transition> {
+    //     // Implement based on your Petri net structure
+    //     // Return a list of transitions that can fire from the given marking
+    // }
+
+    // fn fire_transition(&self, marking: &Marking, transition: &Transition) -> Marking {
+    //     // Implement based on your Petri net structure
+    //     // Return a new marking after firing the given transition from the input marking
+    // }
+
+    // fn undo_transition(&self, marking: &mut Marking, transition: &Transition) {
+    //     // Implement based on your Petri net structure
+    //     // Update the marking to undo the effect of firing the given transition
+    // }
 }
 
 /// Collect lockguard info.
