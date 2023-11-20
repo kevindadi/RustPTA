@@ -1,8 +1,7 @@
-use crate::graph::petri_net::Place;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
-use std::collections::HashSet;
+
 use std::hash::Hash;
 use std::hash::Hasher;
 
@@ -35,7 +34,7 @@ impl Hash for StateNode {
 //         let places = self
 //             .mark
 //             .iter()
-//             .map(|place| format!("{}", place))
+//             .map(|place| format!("{}", place.0.index()))
 //             .collect::<Vec<_>>()
 //             .join(",");
 //         write!(f, "State {{ mark: [{}] }}", places)
@@ -69,3 +68,15 @@ impl StateGraph {
         );
     }
 }
+
+// struct StateGraphDot;
+
+// impl petgraph::dot::Dot for StateGraphDot {
+//     fn dot_header<W>(&self, write: &mut W) -> std::io::Result<()>
+//     where
+//         W: std::io::Write,
+//     {
+//         write!(write, "digraph StateGraph {{")?;
+//         Ok(())
+//     }
+// }

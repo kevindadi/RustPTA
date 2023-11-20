@@ -141,7 +141,7 @@ impl PTACallbacks {
         use std::io::Write;
         // let graph = pn.net.take();
 
-        let dot = Dot::with_attr_getters(
+        let pn_dot = Dot::with_attr_getters(
             &pn.net,
             &[],
             &|_, _| "arrowhead = vee".to_string(),
@@ -160,7 +160,8 @@ impl PTACallbacks {
                 .to_string()
             },
         );
-        let mut file = std::fs::File::create("pn.dot").unwrap();
-        write!(file, "{}", dot).unwrap();
+
+        let mut pn_file = std::fs::File::create("pn.dot").unwrap();
+        write!(pn_file, "{}", pn_dot).unwrap();
     }
 }

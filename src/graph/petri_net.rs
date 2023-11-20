@@ -1,6 +1,8 @@
 extern crate rustc_hash;
 use log::debug;
+use petgraph::data::Build;
 use petgraph::graph::NodeIndex;
+use petgraph::matrix_graph::node_index;
 use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
@@ -9,7 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor},
+        visit::{MutatingUseContext, PlaceContext, Visitor},
         Body, Local, Location, Terminator, TerminatorKind,
     },
     ty::{self, Instance, ParamEnv, TyCtxt},
@@ -22,7 +24,9 @@ use std::hash::Hash;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::function_pn::FunctionPN;
-use super::state_graph::{StateGraph, StateNode};
+use super::state_graph::StateGraph;
+use crate::graph::state_graph::StateEdge;
+use crate::graph::state_graph::StateNode;
 use crate::{
     analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
     concurrency::locks::{
@@ -50,7 +54,7 @@ impl Place {
         Self {
             name,
             tokens: RefCell::new(token),
-            capacity: 1usize,
+            capacity: token,
             shape: Shape::Circle,
             terminal_mark: false,
         }
@@ -138,10 +142,19 @@ fn insert_with_comparison<T: Eq + Hash>(set: &mut HashSet<T>, value: T) -> bool 
     return true;
 }
 
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub struct Marking {
-//     tokens: HashMap<NodeIndex, usize>, // NodeIndex represents the place, usize represents token count
-// }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marking {
+    marks: HashMap<NodeIndex, usize>, // NodeIndex represents the place, usize represents token count
+}
+
+impl Hash for Marking {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for (key, value) in &self.marks {
+            key.hash(state);
+            value.hash(state);
+        }
+    }
+}
 
 pub struct PetriNet<'a, 'tcx> {
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
@@ -152,7 +165,7 @@ pub struct PetriNet<'a, 'tcx> {
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
-    deadlock_marks: HashSet<Vec<usize>>,
+    deadlock_marks: HashSet<Vec<(usize, usize)>>,
 }
 
 // impl std::fmt::Display for PetriNet {
@@ -184,7 +197,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             function_vec: HashMap::<DefId, Vec<NodeIndex>>::new(),
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
-            deadlock_marks: HashSet::<Vec<usize>>::new(),
+            deadlock_marks: HashSet::<Vec<(usize, usize)>>::new(),
         }
     }
 
@@ -398,7 +411,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_name = String::from("Mutex") + &format!("{:?}", id);
+                    let lock_name = "Mutex".to_string() + &format!("{:?}", id);
 
                     let lock_p = Place::new(format!("{:?}", lock_name), 1);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
@@ -407,7 +420,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     }
                 }
                 _ => {
-                    let lock_name = String::from("RwLock") + &format!("{:?}", id);
+                    let lock_name = "RwLock".to_string() + &format!("{:?}", id);
                     let lock_p = Place::new(format!("{:?}", lock_name), 10);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
@@ -479,7 +492,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_name = String::from("Mutex") + &format!("{:?}", id);
+                    let lock_name = format!("{:?}", id.to_string() + "mutex");
 
                     let lock_p = Place::new(format!("{:?}", lock_name), 1);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
@@ -488,7 +501,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     }
                 }
                 _ => {
-                    let lock_name = String::from("RwLock") + &format!("{:?}", id);
+                    let lock_name = format!("{:?}", id.to_string() + "rwlock");
                     let lock_p = Place::new(format!("{:?}", lock_name), 10);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
@@ -602,7 +615,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                         for edge in self.net.edges_directed(node_index, Direction::Incoming) {
                             match self.net.node_weight(edge.source()).unwrap() {
                                 PetriNetNode::P(place) => {
-                                    if *place.tokens.borrow() < edge.weight().label {
+                                    if *(place.tokens.borrow()) < edge.weight().label {
                                         enabled = false;
                                         break;
                                     }
@@ -636,7 +649,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         for edge in self.net.edges_directed(transition, Direction::Incoming) {
             match self.net.node_weight(edge.source()).unwrap() {
                 PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() -= edge.weight().label;
+                    *(place.tokens.borrow_mut()) -= edge.weight().label;
                     // assert!(*place.tokens.borrow() >= 0);
                 }
                 PetriNetNode::T(_) => {
@@ -650,9 +663,9 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             let place_node = self.net.node_weight(edge.target()).unwrap();
             match place_node {
                 PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() += edge.weight().label;
-                    if *place.tokens.borrow() > place.capacity {
-                        *place.tokens.borrow_mut() = place.capacity;
+                    *(place.tokens.borrow_mut()) += edge.weight().label;
+                    if *(place.tokens.borrow()) > place.capacity {
+                        *(place.tokens.borrow_mut()) = place.capacity
                     }
                 }
                 PetriNetNode::T(_) => {
@@ -664,8 +677,8 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         for node in self.net.node_indices() {
             match &self.net[node] {
                 PetriNetNode::P(place) => {
-                    if *place.tokens.borrow() > 0 {
-                        new_state.insert((node, *place.tokens.borrow() as usize));
+                    if *(place.tokens.borrow()) > 0 {
+                        new_state.insert((node, *place.tokens.borrow()));
                     }
                 }
                 PetriNetNode::T(_) => {
@@ -680,7 +693,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     pub fn add_token(&mut self, place_index: NodeIndex, weight: usize) {
         match &mut self.net[place_index] {
             PetriNetNode::P(place) => {
-                *place.tokens.borrow_mut() = *place.tokens.borrow_mut() - weight;
+                *(place.tokens.borrow_mut()) = *(place.tokens.borrow_mut()) - weight;
             }
             PetriNetNode::T(_) => {
                 println!("{}", "this error!");
@@ -699,25 +712,43 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         //     .graph
         //     .add_node(StateNode::new(init_mark.clone()));
         let mut init_usize: Vec<(usize, usize)> = init_mark
+            .clone()
             .iter()
             .map(|node| (node.0.index(), node.1))
             .collect();
+        let state_node: Vec<(NodeIndex, usize)> = init_mark
+            .clone()
+            .iter()
+            .map(|node| (node.0, node.1))
+            .collect();
         queue.push_back(init_mark);
+
         let mut all_state = HashSet::<Vec<(usize, usize)>>::new();
         init_usize.sort();
 
         all_state.insert(init_usize);
-
+        let mut state_node_map: RefCell<HashMap<Vec<(NodeIndex, usize)>, NodeIndex>> =
+            RefCell::new(HashMap::new());
+        let init_node = state_graph
+            .graph
+            .add_node(StateNode::new(state_node.clone()));
+        state_node_map.borrow_mut().insert(state_node, init_node);
         while let Some(current_state_index) = queue.pop_front() {
             self.set_current_mark(current_state_index.clone());
-
+            let current_node: Vec<(NodeIndex, usize)> = current_state_index
+                .clone()
+                .iter()
+                .map(|node| (node.0, node.1))
+                .collect();
+            let current_node = state_node_map.borrow().get(&current_node).unwrap().clone();
             let current_sched_transition = self.get_sched_transitions();
 
             if current_sched_transition.is_empty() {
                 // println!("No transitions scheduled");
-                let mut current_state_usize: Vec<usize> = current_state_index
+                let mut current_state_usize: Vec<(usize, usize)> = current_state_index
+                    .clone()
                     .iter()
-                    .map(|node| node.0.index())
+                    .map(|node| (node.0.index(), node.1))
                     .collect();
                 current_state_usize.sort();
                 self.deadlock_marks.insert(current_state_usize);
@@ -734,11 +765,58 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     // TODO: Implement for State Graph
                     if insert_with_comparison(&mut all_state, new_state_usize) {
                         queue.push_back(new_state.clone());
+                        let state_node: Vec<(NodeIndex, usize)> = new_state
+                            .clone()
+                            .iter()
+                            .map(|node| (node.0, node.1))
+                            .collect();
+                        let new_node = state_graph.graph.add_node(StateNode {
+                            mark: state_node.clone(),
+                        });
+                        state_graph.graph.add_edge(
+                            current_node,
+                            new_node,
+                            StateEdge::new(format!("{:?}", self.net[t]), 0),
+                        );
+                        state_node_map.borrow_mut().insert(state_node, new_node);
                     }
                 }
             }
         }
         println!("All states are: {:?}", all_state.len());
+        use petgraph::dot::Dot;
+        use std::io::Write;
+        let mut sg_file = std::fs::File::create("sg.dot").unwrap();
+
+        write!(
+            sg_file,
+            "{:?}",
+            Dot::with_attr_getters(
+                &state_graph.graph,
+                &[],
+                &|_, _| "arrowhead = vee".to_string(),
+                &|_, nr| {
+                    format!(
+                        "label = {:?}",
+                        "\"".to_string()
+                            + &nr
+                                .1
+                                .mark
+                                .clone()
+                                .iter()
+                                .map(|x| match &self.net[x.0] {
+                                    PetriNetNode::P(p) =>
+                                        p.name.clone() + ":" + (x.1).to_string().as_str(),
+                                    PetriNetNode::T(t) => t.name.clone(),
+                                })
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                            + "\""
+                    )
+                },
+            )
+        )
+        .unwrap();
         state_graph
     }
 
@@ -747,7 +825,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         use petgraph::graph::node_index;
         // Remove the terminal mark
         self.deadlock_marks.retain(|v| {
-            v.iter().all(|m| match &self.net[node_index(*m)] {
+            v.iter().all(|m| match &self.net[node_index(m.0)] {
                 PetriNetNode::P(p) => {
                     // p.name.contains("mainpanic") ||
                     if p.name.contains("mainend") {
@@ -770,8 +848,8 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             let joined = mark
                 .clone()
                 .iter()
-                .map(|x| match &self.net[node_index(*x)] {
-                    PetriNetNode::P(p) => p.name.clone(),
+                .map(|x| match &self.net[node_index(x.0)] {
+                    PetriNetNode::P(p) => p.name.clone() + ":" + (x.1).to_string().as_str(),
                     PetriNetNode::T(t) => t.name.clone(),
                 })
                 .collect::<Vec<String>>()

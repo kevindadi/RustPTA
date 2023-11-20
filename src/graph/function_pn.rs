@@ -363,10 +363,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                     }
                                 } else {
                                     match (target, unwind) {
-                                        (
-                                            Some(return_block),
-                                            UnwindAction::Continue | UnwindAction::Terminate(_),
-                                        ) => {
+                                        (Some(return_block), _) => {
                                             self.net.add_edge(
                                                 bb_ret,
                                                 *self.bb_node_start_end.get(return_block).unwrap(),
@@ -374,58 +371,58 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                             );
                                         }
 
-                                        (Some(return_block), UnwindAction::Cleanup(bb_clean)) => {
-                                            self.net.add_edge(
-                                                bb_ret,
-                                                *self.bb_node_start_end.get(return_block).unwrap(),
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                            let bb_unwind_name = fn_name.clone()
-                                                + &format!("{:?}", bb_idx)
-                                                + "unwind";
-                                            let bb_unwind_transition =
-                                                Transition::new(bb_unwind_name, (0, 0), 1);
-                                            let bb_unwind = self
-                                                .net
-                                                .add_node(PetriNetNode::T(bb_unwind_transition));
-                                            self.net.add_edge(
-                                                *self.bb_node_start_end.get(&bb_idx).unwrap(),
-                                                bb_unwind,
-                                                PetriNetEdge { label: 1usize },
-                                            );
+                                        // (Some(return_block), UnwindAction::Cleanup(bb_clean)) => {
+                                        //     self.net.add_edge(
+                                        //         bb_ret,
+                                        //         *self.bb_node_start_end.get(return_block).unwrap(),
+                                        //         PetriNetEdge { label: 1usize },
+                                        //     );
+                                        //     let bb_unwind_name = fn_name.clone()
+                                        //         + &format!("{:?}", bb_idx)
+                                        //         + "unwind";
+                                        //     let bb_unwind_transition =
+                                        //         Transition::new(bb_unwind_name, (0, 0), 1);
+                                        //     let bb_unwind = self
+                                        //         .net
+                                        //         .add_node(PetriNetNode::T(bb_unwind_transition));
+                                        //     self.net.add_edge(
+                                        //         *self.bb_node_start_end.get(&bb_idx).unwrap(),
+                                        //         bb_unwind,
+                                        //         PetriNetEdge { label: 1usize },
+                                        //     );
 
-                                            self.net.add_edge(
-                                                bb_unwind,
-                                                *self.bb_node_start_end.get(bb_clean).unwrap(),
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                        }
-                                        (
-                                            None,
-                                            UnwindAction::Continue | UnwindAction::Terminate(_),
-                                        ) => {}
+                                        //     self.net.add_edge(
+                                        //         bb_unwind,
+                                        //         *self.bb_node_start_end.get(bb_clean).unwrap(),
+                                        //         PetriNetEdge { label: 1usize },
+                                        //     );
+                                        // }
+                                        // (
+                                        //     None,
+                                        //     UnwindAction::Continue | UnwindAction::Terminate(_),
+                                        // ) => {}
 
-                                        (None, UnwindAction::Cleanup(bb_clean)) => {
-                                            let bb_unwind_name = fn_name.clone()
-                                                + &format!("{:?}", bb_idx)
-                                                + "unwind";
-                                            let bb_unwind_transition =
-                                                Transition::new(bb_unwind_name, (0, 0), 1);
-                                            let bb_unwind = self
-                                                .net
-                                                .add_node(PetriNetNode::T(bb_unwind_transition));
-                                            self.net.add_edge(
-                                                *self.bb_node_start_end.get(&bb_idx).unwrap(),
-                                                bb_unwind,
-                                                PetriNetEdge { label: 1usize },
-                                            );
+                                        // (None, UnwindAction::Cleanup(bb_clean)) => {
+                                        //     let bb_unwind_name = fn_name.clone()
+                                        //         + &format!("{:?}", bb_idx)
+                                        //         + "unwind";
+                                        //     let bb_unwind_transition =
+                                        //         Transition::new(bb_unwind_name, (0, 0), 1);
+                                        //     let bb_unwind = self
+                                        //         .net
+                                        //         .add_node(PetriNetNode::T(bb_unwind_transition));
+                                        //     self.net.add_edge(
+                                        //         *self.bb_node_start_end.get(&bb_idx).unwrap(),
+                                        //         bb_unwind,
+                                        //         PetriNetEdge { label: 1usize },
+                                        //     );
 
-                                            self.net.add_edge(
-                                                bb_unwind,
-                                                *self.bb_node_start_end.get(bb_clean).unwrap(),
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                        }
+                                        //     self.net.add_edge(
+                                        //         bb_unwind,
+                                        //         *self.bb_node_start_end.get(bb_clean).unwrap(),
+                                        //         PetriNetEdge { label: 1usize },
+                                        //     );
+                                        // }
                                         _ => {}
                                     }
                                 }
