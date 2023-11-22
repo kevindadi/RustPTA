@@ -166,6 +166,8 @@ pub struct PetriNet<'a, 'tcx> {
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
     deadlock_marks: HashSet<Vec<(usize, usize)>>,
+    // thread id and handler
+    thread_id_handler: HashMap<usize, DefId>,
 }
 
 // impl std::fmt::Display for PetriNet {
@@ -198,6 +200,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
             deadlock_marks: HashSet::<Vec<(usize, usize)>>::new(),
+            thread_id_handler: HashMap::<usize, DefId>::new(),
         }
     }
 
@@ -264,7 +267,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
                     let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-
+                    println!("function id: {:?}", func_id);
                     self.function_counter
                         .insert(func_id, (func_start_node_id, func_end_node_id));
                     self.function_vec.insert(func_id, vec![func_start_node_id]);
@@ -494,7 +497,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 | LockGuardTy::SpinMutex(_) => {
                     let lock_name = format!("{:?}", id.to_string() + "mutex");
 
-                    let lock_p = Place::new(format!("{:?}", lock_name), 1);
+                    let lock_p = Place::new(lock_name, 1);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -502,7 +505,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
                 _ => {
                     let lock_name = format!("{:?}", id.to_string() + "rwlock");
-                    let lock_p = Place::new(format!("{:?}", lock_name), 10);
+                    let lock_p = Place::new(lock_name, 10);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);

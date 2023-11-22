@@ -224,7 +224,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                         }
                         TerminatorKind::Call {
                             func,
-                            args: _,
+                            args,
                             destination,
                             target,
                             unwind,
@@ -289,32 +289,6 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                             PetriNetEdge { label: 1usize },
                                         );
                                     }
-
-                                    // (Some(return_block), UnwindAction::Cleanup(bb_clean)) => {
-                                    //     self.net.add_edge(
-                                    //         bb_ret,
-                                    //         *self.bb_node_start_end.get(return_block).unwrap(),
-                                    //         PetriNetEdge { label: 1usize },
-                                    //     );
-                                    //     let bb_unwind_name =
-                                    //         fn_name.clone() + &format!("{:?}", bb_idx) + "unwind";
-                                    //     let bb_unwind_transition =
-                                    //         Transition::new(bb_unwind_name, (0, 0), 1);
-                                    //     let bb_unwind = self
-                                    //         .net
-                                    //         .add_node(PetriNetNode::T(bb_unwind_transition));
-                                    //     self.net.add_edge(
-                                    //         *self.bb_node_start_end.get(&bb_idx).unwrap(),
-                                    //         bb_unwind,
-                                    //         PetriNetEdge { label: 1usize },
-                                    //     );
-
-                                    //     self.net.add_edge(
-                                    //         bb_unwind,
-                                    //         *self.bb_node_start_end.get(bb_clean).unwrap(),
-                                    //         PetriNetEdge { label: 1usize },
-                                    //     );
-                                    // }
                                     _ => {}
                                 }
                             } else {
@@ -328,11 +302,33 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                     );
                                     }
                                     rustc_middle::ty::TyKind::FnDef(def_id, _)
-                                    | rustc_middle::ty::TyKind::Closure(def_id, _) => *def_id,
+                                    | rustc_middle::ty::TyKind::Closure(def_id, _) => {
+                                        // println!("callee id: {:?}", *def_id);
+                                        *def_id
+                                    }
                                     _ => {
                                         panic!("TyKind::FnDef, a function definition, but got: {callee_ty:?}");
                                     }
                                 };
+                                if args.len() > 0 {
+                                    let args_ty = args[0].ty(self.body, self.tcx);
+                                    let args_id: Option<DefId> = match args_ty.kind() {
+                                        rustc_middle::ty::TyKind::Closure(def_id, _) => {
+                                            if let Some((callee_start, _)) =
+                                                self.function_counter.get(&def_id)
+                                            {
+                                                self.net.add_edge(
+                                                    bb_end,
+                                                    *callee_start,
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+                                            }
+                                            Some(*def_id)
+                                        }
+                                        _ => None,
+                                    };
+                                    println!("args id(closure): {:?}", args_id);
+                                }
 
                                 if let Some((
                                     callee_start,
