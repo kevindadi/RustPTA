@@ -135,9 +135,8 @@ impl PTACallbacks {
         pn.construct(&mut alias_analysis);
         let stategraph = pn.generate_state_graph();
         pn.check_deadlock();
-        use petgraph::dot::Config;
+
         use petgraph::dot::Dot;
-        use petgraph::graph::{GraphIndex, NodeIndex};
         use std::io::Write;
         // let graph = pn.net.take();
 

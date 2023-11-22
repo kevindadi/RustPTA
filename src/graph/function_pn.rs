@@ -3,7 +3,10 @@ use super::{
     petri_net::{PetriNetEdge, PetriNetNode, Place},
 };
 use crate::{
-    concurrency::locks::{LockGuardId, LockGuardMap, LockGuardTy},
+    concurrency::{
+        handler::JoinHanderId,
+        locks::{LockGuardId, LockGuardMap, LockGuardTy},
+    },
     graph::petri_net::{PetriNet, Transition},
 };
 use petgraph::graph::NodeIndex;
@@ -11,13 +14,25 @@ use petgraph::Graph;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
-    visit::Visitor, BasicBlock, TerminatorKind, UnwindAction, UnwindTerminateReason,
+    visit::Visitor, BasicBlock, Local, TerminatorKind, UnwindAction, UnwindTerminateReason,
 };
 use rustc_middle::{
     mir::Body,
     ty::{Instance, ParamEnv, TyCtxt},
 };
 use std::collections::HashMap;
+
+pub fn find_key_by_id(
+    map: &HashMap<usize, Vec<JoinHanderId>>,
+    target_id: JoinHanderId,
+) -> Option<usize> {
+    for (key, id_vec) in map.iter() {
+        if id_vec.iter().any(|&id| id == target_id) {
+            return Some(*key);
+        }
+    }
+    None
+}
 
 // Constructing Subsequent Graph based on function's CFG
 pub struct FunctionPN<'b, 'tcx> {
@@ -32,6 +47,8 @@ pub struct FunctionPN<'b, 'tcx> {
     locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
     bb_node_start_end: HashMap<BasicBlock, NodeIndex>,
     bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,
+    thread_id_handler: &'b mut HashMap<usize, Vec<JoinHanderId>>,
+    handler_id: &'b mut HashMap<JoinHanderId, DefId>,
 }
 
 impl<'b, 'tcx> FunctionPN<'b, 'tcx> {
@@ -45,6 +62,8 @@ impl<'b, 'tcx> FunctionPN<'b, 'tcx> {
         lockguards: LockGuardMap<'tcx>,
         function_counter: &'b HashMap<DefId, (NodeIndex, NodeIndex)>,
         locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
+        thread_id_handler: &'b mut HashMap<usize, Vec<JoinHanderId>>,
+        handler_id: &'b mut HashMap<JoinHanderId, DefId>,
     ) -> Self {
         Self {
             instance_id,
@@ -58,6 +77,8 @@ impl<'b, 'tcx> FunctionPN<'b, 'tcx> {
             locks_counter,
             bb_node_start_end: HashMap::default(),
             bb_node_vec: HashMap::new(),
+            thread_id_handler,
+            handler_id,
         }
     }
 
@@ -233,7 +254,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                         } => {
                             let lockguard_id =
                                 LockGuardId::new(self.instance_id, destination.local);
-
+                            let handle_id = JoinHanderId::new(self.instance_id, destination.local);
                             let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "call";
                             let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                             let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
@@ -311,7 +332,7 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                     }
                                 };
                                 if args.len() > 0 {
-                                    let args_ty = args[0].ty(self.body, self.tcx);
+                                    let args_ty = args.get(0).unwrap().ty(self.body, self.tcx);
                                     let args_id: Option<DefId> = match args_ty.kind() {
                                         rustc_middle::ty::TyKind::Closure(def_id, _) => {
                                             if let Some((callee_start, _)) =
@@ -323,11 +344,46 @@ impl<'b, 'tcx> Visitor<'tcx> for FunctionPN<'b, 'tcx> {
                                                     PetriNetEdge { label: 1usize },
                                                 );
                                             }
+                                            if let Some(spawn_thread_id) =
+                                                find_key_by_id(&self.thread_id_handler, handle_id)
+                                            {
+                                                if let Some((_, id_vec)) = self
+                                                    .thread_id_handler
+                                                    .get_key_value(&spawn_thread_id)
+                                                {
+                                                    for id in id_vec.iter() {
+                                                        self.handler_id
+                                                            .insert(id.clone(), def_id.clone());
+                                                    }
+                                                }
+                                            };
                                             Some(*def_id)
+                                        }
+                                        rustc_middle::ty::TyKind::Adt(adt_def, _) => {
+                                            let path = self.tcx.def_path_str(adt_def.did());
+                                            if path.contains("JoinHandle") {
+                                                let move_handle_id = JoinHanderId::new(
+                                                    self.instance_id,
+                                                    args.get(0).unwrap().place().unwrap().local,
+                                                );
+                                                if let Some(join_id) =
+                                                    self.handler_id.get(&move_handle_id)
+                                                {
+                                                    if let Some((_, callee_end)) =
+                                                        self.function_counter.get(join_id)
+                                                    {
+                                                        self.net.add_edge(
+                                                            *callee_end,
+                                                            bb_ret,
+                                                            PetriNetEdge { label: 1usize },
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            None
                                         }
                                         _ => None,
                                     };
-                                    println!("args id(closure): {:?}", args_id);
                                 }
 
                                 if let Some((

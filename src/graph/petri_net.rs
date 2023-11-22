@@ -25,6 +25,9 @@ use std::hash::Hash;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::function_pn::FunctionPN;
 use super::state_graph::StateGraph;
+use crate::concurrency::handler::JoinHanderId;
+use crate::concurrency::handler::JoinHandlerCollector;
+use crate::concurrency::handler::JoinHandlerMap;
 use crate::graph::state_graph::StateEdge;
 use crate::graph::state_graph::StateNode;
 use crate::{
@@ -167,7 +170,8 @@ pub struct PetriNet<'a, 'tcx> {
     lock_info: LockGuardMap<'tcx>,
     deadlock_marks: HashSet<Vec<(usize, usize)>>,
     // thread id and handler
-    thread_id_handler: HashMap<usize, DefId>,
+    thread_id_handler: HashMap<usize, Vec<JoinHanderId>>,
+    handler_id: HashMap<JoinHanderId, DefId>,
 }
 
 // impl std::fmt::Display for PetriNet {
@@ -200,13 +204,15 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
             deadlock_marks: HashSet::<Vec<(usize, usize)>>::new(),
-            thread_id_handler: HashMap::<usize, DefId>::new(),
+            thread_id_handler: HashMap::<usize, Vec<JoinHanderId>>::new(),
+            handler_id: HashMap::<JoinHanderId, DefId>::new(),
         }
     }
 
     pub fn construct(&mut self, alias_analysis: &mut AliasAnalysis) {
         self.construct_func();
         self.construct_lock_with_dfs(alias_analysis);
+        self.collect_handle(alias_analysis);
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id()) {
                 let body = self.tcx.optimized_mir(caller.instance().def_id());
@@ -227,6 +233,8 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     lock_infos,
                     &self.function_counter,
                     &self.locks_counter,
+                    &mut self.thread_id_handler,
+                    &mut self.handler_id,
                 );
                 func_construct.visit_body(body);
             }
@@ -267,7 +275,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
                     let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                    println!("function id: {:?}", func_id);
+                    // println!("function id: {:?}", func_id);
                     self.function_counter
                         .insert(func_id, (func_start_node_id, func_end_node_id));
                     self.function_vec.insert(func_id, vec![func_start_node_id]);
@@ -530,6 +538,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         }
     }
 
+    // Mapping JoinHandle To Thread DefId
     fn collect_lockguards(&self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
         let mut lockguards = FxHashMap::default();
         for (instance_id, node) in self.callgraph.graph.node_references() {
@@ -550,6 +559,82 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             }
         }
         lockguards
+    }
+
+    fn collect_handle(
+        &mut self,
+        alias_analysis: &mut AliasAnalysis,
+    ) -> HashMap<InstanceId, JoinHandlerMap<'tcx>> {
+        let mut handlers = HashMap::default();
+        for (instance_id, node) in self.callgraph.graph.node_references() {
+            let instance = match node {
+                CallGraphNode::WithBody(instance) => instance,
+                _ => continue,
+            };
+
+            if !instance.def_id().is_local() {
+                continue;
+            }
+
+            let body = self.tcx.instance_mir(instance.def);
+            let mut handle_collector =
+                JoinHandlerCollector::new(instance_id, instance, body, self.tcx, self.param_env);
+            handle_collector.analyze();
+            if !handle_collector.handlers.is_empty() {
+                handlers.insert(instance_id, handle_collector.handlers);
+            }
+        }
+        let mut info = FxHashMap::default();
+
+        for (_, map) in handlers.clone().into_iter() {
+            info.extend(map.clone().into_iter());
+        }
+
+        let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
+        let lockid_vec: Vec<JoinHanderId> = info.clone().into_keys().collect::<Vec<JoinHanderId>>();
+        println!("{:?}", lockid_vec);
+        for i in 0..lockid_vec.len() {
+            for j in i + 1..lockid_vec.len() {
+                match alias_analysis
+                    .alias_handle(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
+                {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+                        adj_list.entry(i).or_insert_with(Vec::new).push(j);
+                        adj_list.entry(j).or_insert_with(Vec::new).push(i);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        println!("{:?}", adj_list);
+        let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
+        let mut group_id = 0;
+        // let mut groups: HashMap<usize, Vec<JoinHanderId>> = HashMap::new();
+
+        for i in 0..lockid_vec.len() {
+            if !visited[i] {
+                let mut stack: VecDeque<usize> = VecDeque::new();
+                stack.push_back(i);
+                visited[i] = true;
+                while let Some(node) = stack.pop_front() {
+                    self.thread_id_handler
+                        .entry(group_id)
+                        .or_insert_with(Vec::new)
+                        .push(lockid_vec[node].clone());
+                    if let Some(neighbors) = adj_list.get(&node) {
+                        for &neighbor in neighbors {
+                            if !visited[neighbor] {
+                                stack.push_back(neighbor);
+                                visited[neighbor] = true;
+                            }
+                        }
+                    }
+                }
+                group_id += 1;
+            }
+        }
+
+        handlers
     }
 
     fn deadlock_possibility(
@@ -590,20 +675,6 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         possibility
     }
 
-    // Get initial state of Petri net.
-    // pub fn get_initial_state(&self) -> State {
-    //     let mark = self
-    //         .net
-    //         .node_indices()
-    //         .filter_map(|idx| match &self.net[idx] {
-    //             PetriNetNode::P(Place { token: 0, .. }) => Some(&self.net[idx]),
-    //             _ => None,
-    //         })
-    //         .collect();
-    //     State::new(mark)
-    // }
-
-    // Get all enabled transitions at current state
     pub fn get_sched_transitions(&self) -> Vec<NodeIndex> {
         let mut sched_transiton = Vec::<NodeIndex>::new();
         for node_index in self.net.node_indices() {
