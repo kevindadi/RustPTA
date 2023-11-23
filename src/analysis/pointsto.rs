@@ -32,7 +32,6 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Directed, Direction, Graph};
 
-use crate::concurrency::atomic::is_atomic_ptr_store;
 use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::locks::LockGuardId;
 use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
