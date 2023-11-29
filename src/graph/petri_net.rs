@@ -503,7 +503,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_name = format!("{:?}", id.to_string() + "mutex");
+                    let lock_name = format!("{:?}", "mutex".to_string() + id.to_string().as_str());
 
                     let lock_p = Place::new(lock_name, 1);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
@@ -512,7 +512,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                     }
                 }
                 _ => {
-                    let lock_name = format!("{:?}", id.to_string() + "rwlock");
+                    let lock_name = format!("{:?}", "rwlock".to_string() + id.to_string().as_str());
                     let lock_p = Place::new(lock_name, 10);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {

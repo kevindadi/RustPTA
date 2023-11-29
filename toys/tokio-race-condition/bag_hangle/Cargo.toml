@@ -1,0 +1,10 @@
+[package]
+name = "bag_hangle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.34.0", features = ["full"] }
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
