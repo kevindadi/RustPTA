@@ -25,6 +25,10 @@ use std::hash::Hash;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::function_pn::FunctionPN;
 use super::state_graph::StateGraph;
+use crate::concurrency::candvar::CondVarCollector;
+use crate::concurrency::candvar::CondVarId;
+use crate::concurrency::candvar::CondVarInfo;
+use crate::concurrency::candvar::CondvarMap;
 use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::handler::JoinHandlerCollector;
 use crate::concurrency::handler::JoinHandlerMap;
@@ -172,6 +176,8 @@ pub struct PetriNet<'a, 'tcx> {
     // thread id and handler
     thread_id_handler: HashMap<usize, Vec<JoinHanderId>>,
     handler_id: HashMap<JoinHanderId, DefId>,
+    // all condvars
+    condvars: HashMap<CondVarId, NodeIndex>,
 }
 
 // impl std::fmt::Display for PetriNet {
@@ -206,6 +212,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             deadlock_marks: HashSet::<Vec<(usize, usize)>>::new(),
             thread_id_handler: HashMap::<usize, Vec<JoinHanderId>>::new(),
             handler_id: HashMap::<JoinHanderId, DefId>::new(),
+            condvars: HashMap::<CondVarId, NodeIndex>::new(),
         }
     }
 
@@ -213,6 +220,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         self.construct_func();
         self.construct_lock_with_dfs(alias_analysis);
         self.collect_handle(alias_analysis);
+        self.collect_condvar();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id()) {
                 let body = self.tcx.optimized_mir(caller.instance().def_id());
@@ -635,6 +643,41 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         }
 
         handlers
+    }
+
+    fn collect_condvar(&mut self) {
+        let mut condvars: FxHashMap<NodeIndex, HashMap<CondVarId, CondVarInfo>> =
+            FxHashMap::default();
+        for (instance_id, node) in self.callgraph.graph.node_references() {
+            let instance = match node {
+                CallGraphNode::WithBody(instance) => instance,
+                _ => continue,
+            };
+
+            if !instance.def_id().is_local() {
+                continue;
+            }
+
+            let body = self.tcx.instance_mir(instance.def);
+            let mut condvar_collector =
+                CondVarCollector::new(instance_id, instance, body, self.tcx, self.param_env);
+            condvar_collector.analyze();
+            if !condvar_collector.condvars.is_empty() {
+                condvars.insert(instance_id, condvar_collector.condvars);
+            }
+        }
+
+        // create node for all condvars
+        if !condvars.is_empty() {
+            for condvar_map in condvars.into_values() {
+                for condvar in condvar_map.into_iter() {
+                    let condvar_name = format!("condvar:{:?}", condvar.1.span);
+                    let condvar_p = Place::new(condvar_name, 1);
+                    let condvar_node = self.net.add_node(PetriNetNode::P(condvar_p));
+                    self.condvars.insert(condvar.0.clone(), condvar_node);
+                }
+            }
+        }
     }
 
     fn deadlock_possibility(

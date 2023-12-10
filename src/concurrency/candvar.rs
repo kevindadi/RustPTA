@@ -7,11 +7,13 @@
 extern crate rustc_hash;
 extern crate rustc_span;
 
+use std::collections::HashMap;
+
 use smallvec::SmallVec;
 
 use rustc_hash::FxHashMap;
 use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
-use rustc_middle::mir::{Body, Local, Location, TerminatorKind};
+use rustc_middle::mir::{Body, Local, Location};
 use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt};
 use rustc_span::Span;
 
@@ -120,7 +122,7 @@ pub enum ParkingLotNotify {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct CondVarId {
+pub struct CondVarId {
     pub instance_id: InstanceId,
     pub local: Local,
 }
@@ -132,16 +134,16 @@ impl CondVarId {
 }
 
 #[derive(Debug, Clone)]
-pub enum CandVarTy<'tcx> {
-    StdCandvar(ty::Ty<'tcx>),
+pub enum CondVarTy {
+    StdCondvar,
 }
 
-impl<'tcx> CandVarTy<'tcx> {
-    pub fn from_local_ty(local_ty: ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
+impl CondVarTy {
+    pub fn from_local_ty(local_ty: ty::Ty, tcx: TyCtxt) -> Option<Self> {
         if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() {
             let path = tcx.def_path_str(adt_def.did());
             // quick fail
-            if path.contains("Candvar") {
+            if path.contains("Condvar") {
                 if path.contains("async")
                     || path.contains("tokio")
                     || path.contains("future")
@@ -150,7 +152,8 @@ impl<'tcx> CandVarTy<'tcx> {
                     // Currentlly does not support async lock or loom
                     return None;
                 }
-                Some(CandVarTy::StdCandvar(substs.types().next()?))
+                // println!("find condvar is ok!");
+                Some(CondVarTy::StdCondvar)
             } else {
                 None
             }
@@ -161,8 +164,8 @@ impl<'tcx> CandVarTy<'tcx> {
 }
 
 #[derive(Clone, Debug)]
-pub struct CandVarInfo<'tcx> {
-    pub candvar_ty: CandVarTy<'tcx>,
+pub struct CondVarInfo {
+    pub condvar_ty: CondVarTy,
     pub span: Span,
     pub gen_locs: SmallVec<[Location; 4]>,
     pub move_gen_locs: SmallVec<[Location; 4]>,
@@ -170,10 +173,10 @@ pub struct CandVarInfo<'tcx> {
     pub kill_locs: SmallVec<[Location; 4]>,
 }
 
-impl<'tcx> CandVarInfo<'tcx> {
-    pub fn new(candvar_ty: CandVarTy<'tcx>, span: Span) -> Self {
+impl CondVarInfo {
+    pub fn new(condvar_ty: CondVarTy, span: Span) -> Self {
         Self {
-            candvar_ty,
+            condvar_ty,
             span,
             gen_locs: Default::default(),
             move_gen_locs: Default::default(),
@@ -191,19 +194,19 @@ impl<'tcx> CandVarInfo<'tcx> {
     }
 }
 
-pub type CandvarMap<'tcx> = FxHashMap<CondVarId, CandVarInfo<'tcx>>;
+pub type CondvarMap<'tcx> = HashMap<CondVarId, CondVarInfo>;
 
 /// Collect lockguard info.
-pub struct CandVarCollector<'a, 'b, 'tcx> {
+pub struct CondVarCollector<'a, 'b, 'tcx> {
     instance_id: InstanceId,
     instance: &'a Instance<'tcx>,
     body: &'b Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
-    candvars: CandvarMap<'tcx>,
+    pub condvars: CondvarMap<'tcx>,
 }
 
-impl<'a, 'b, 'tcx> CandVarCollector<'a, 'b, 'tcx> {
+impl<'a, 'b, 'tcx> CondVarCollector<'a, 'b, 'tcx> {
     pub fn new(
         instance_id: InstanceId,
         instance: &'a Instance<'tcx>,
@@ -217,7 +220,7 @@ impl<'a, 'b, 'tcx> CandVarCollector<'a, 'b, 'tcx> {
             body,
             tcx,
             param_env,
-            candvars: Default::default(),
+            condvars: Default::default(),
         }
     }
 
@@ -233,21 +236,21 @@ impl<'a, 'b, 'tcx> CandVarCollector<'a, 'b, 'tcx> {
                 self.param_env,
                 ty::EarlyBinder::bind(local_decl.ty),
             );
-            if let Some(candvar_ty) = CandVarTy::from_local_ty(local_ty, self.tcx) {
-                let candvar_id = CondVarId::new(self.instance_id, local);
-                let candvar_info = CandVarInfo::new(candvar_ty, local_decl.source_info.span);
-                self.candvars.insert(candvar_id, candvar_info);
+            if let Some(condvar_ty) = CondVarTy::from_local_ty(local_ty, self.tcx) {
+                let condvar_id = CondVarId::new(self.instance_id, local);
+                let condvar_info = CondVarInfo::new(condvar_ty, local_decl.source_info.span);
+                self.condvars.insert(condvar_id, condvar_info);
             }
         }
         self.visit_body(self.body);
     }
 }
 
-impl<'a, 'b, 'tcx> Visitor<'tcx> for CandVarCollector<'a, 'b, 'tcx> {
+impl<'a, 'b, 'tcx> Visitor<'tcx> for CondVarCollector<'a, 'b, 'tcx> {
     fn visit_local(&mut self, local: Local, context: PlaceContext, location: Location) {
         let lockguard_id = CondVarId::new(self.instance_id, local);
         // local is lockguard
-        if let Some(info) = self.candvars.get_mut(&lockguard_id) {
+        if let Some(info) = self.condvars.get_mut(&lockguard_id) {
             match context {
                 PlaceContext::NonMutatingUse(NonMutatingUseContext::Move) => {
                     info.kill_locs.push(location);
