@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::thread;
 
-fn std_correct() {
+fn correct() {
     use std::sync::{Condvar, Mutex};
 
     let pair1 = Arc::new((Mutex::new(false), Condvar::new()));
@@ -156,7 +156,7 @@ fn std_correct() {
 // }
 
 fn main() {
-    std_correct();
+    correct();
     // std_deadlock_wait();
     // std_missing_lock_before_notify();
     // parking_lot_correct();

@@ -3,6 +3,7 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
@@ -121,7 +122,7 @@ impl PTACallbacks {
         callgraph.analyze(instances.clone(), tcx, param_env);
 
         // TODO: 基于调用图构造指针分析框架
-        let mut alias_analysis = AliasAnalysis::new(tcx, &callgraph);
+        let mut alias_analysis = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
 
         // TODO: 遍历所有的锁,判断其指向关系
 
@@ -132,7 +133,7 @@ impl PTACallbacks {
 
         // TODO: visit local recursive
         let mut pn = PetriNet::new(tcx, param_env, &callgraph);
-        pn.construct(&mut alias_analysis);
+        pn.construct();
         let stategraph = pn.generate_state_graph();
         pn.check_deadlock();
 

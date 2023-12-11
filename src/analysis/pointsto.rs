@@ -32,6 +32,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Directed, Direction, Graph};
 
+use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::locks::LockGuardId;
 use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
@@ -678,6 +679,15 @@ impl std::convert::From<JoinHanderId> for AliasId {
     }
 }
 
+impl std::convert::From<CondVarId> for AliasId {
+    fn from(condvar_id: CondVarId) -> Self {
+        Self {
+            instance_id: condvar_id.instance_id,
+            local: condvar_id.local,
+        }
+    }
+}
+
 /// Alias analysis based on points-to info.
 /// It answers if two memory cells alias with each other.
 /// It performs an underlying points-to analysis if needed.
@@ -769,6 +779,44 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                         .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
                     ApproximateAliasKind::Unlikely
+                }
+            }
+            _ => ApproximateAliasKind::Unknown,
+        }
+    }
+
+    pub fn alias_condvar(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
+        let AliasId {
+            instance_id: id1,
+            local: local1,
+        } = aid1;
+        let AliasId {
+            instance_id: id2,
+            local: local2,
+        } = aid2;
+
+        let instance1 = self
+            .callgraph
+            .index_to_instance(id1)
+            .map(CallGraphNode::instance);
+        let instance2 = self
+            .callgraph
+            .index_to_instance(id2)
+            .map(CallGraphNode::instance);
+
+        match (instance1, instance2) {
+            (Some(instance1), Some(instance2)) => {
+                let node1 = ConstraintNode::Place(Place::from(local1).as_ref());
+                let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
+                if instance1.def_id() == instance2.def_id() {
+                    if local1 == local2 {
+                        return ApproximateAliasKind::Probably;
+                    }
+                    self.intraproc_alias(instance1, &node1, &node2)
+                        .unwrap_or(ApproximateAliasKind::Unknown)
+                } else {
+                    self.interproc_alias(instance1, &node1, instance2, &node2)
+                        .unwrap_or(ApproximateAliasKind::Unknown)
                 }
             }
             _ => ApproximateAliasKind::Unknown,

@@ -1,5 +1,6 @@
 extern crate rustc_hash;
 use log::debug;
+use log::info;
 use petgraph::data::Build;
 use petgraph::graph::NodeIndex;
 use petgraph::matrix_graph::node_index;
@@ -168,6 +169,7 @@ pub struct PetriNet<'a, 'tcx> {
     param_env: ParamEnv<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'a CallGraph<'tcx>,
+    alias: RefCell<AliasAnalysis<'a, 'tcx>>,
     function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
@@ -200,11 +202,13 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         param_env: ParamEnv<'tcx>,
         callgraph: &'a CallGraph<'tcx>,
     ) -> Self {
+        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
         Self {
             tcx,
             param_env,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
             callgraph,
+            alias,
             function_counter: HashMap::<DefId, (NodeIndex, NodeIndex)>::new(),
             function_vec: HashMap::<DefId, Vec<NodeIndex>>::new(),
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
@@ -216,38 +220,49 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         }
     }
 
-    pub fn construct(&mut self, alias_analysis: &mut AliasAnalysis) {
+    pub fn construct(&mut self /*alias_analysis: &'a RefCell<AliasAnalysis<'a, 'tcx>>*/) {
         self.construct_func();
-        self.construct_lock_with_dfs(alias_analysis);
-        self.collect_handle(alias_analysis);
+        self.construct_lock_with_dfs();
+        self.collect_handle();
         self.collect_condvar();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id()) {
-                let body = self.tcx.optimized_mir(caller.instance().def_id());
-                // let body = self.tcx.instance_mir(caller.instance().def);
-                // Skip promoted src
-                if body.source.promoted.is_some() {
-                    continue;
-                }
-                let lock_infos = self.lock_info.clone();
-
-                let mut func_construct = FunctionPN::new(
-                    node,
-                    caller.instance(),
-                    body,
-                    self.tcx,
-                    self.param_env,
-                    &mut self.net,
-                    lock_infos,
-                    &self.function_counter,
-                    &self.locks_counter,
-                    &mut self.thread_id_handler,
-                    &mut self.handler_id,
-                );
-                func_construct.visit_body(body);
+                self.visitor_function_body(node, caller);
             }
         }
         //self.deal_post_function();
+    }
+
+    pub fn visitor_function_body(
+        &mut self,
+        node: NodeIndex,
+        caller: &CallGraphNode<'tcx>,
+        //alias_analysis: &'a RefCell<AliasAnalysis<'a, 'tcx>>,
+    ) {
+        let body = self.tcx.optimized_mir(caller.instance().def_id());
+        // let body = self.tcx.instance_mir(caller.instance().def);
+        // Skip promoted src
+        if body.source.promoted.is_some() {
+            return;
+        }
+        let lock_infos = self.lock_info.clone();
+
+        let mut func_construct = FunctionPN::new(
+            node,
+            caller.instance(),
+            body,
+            self.tcx,
+            // self.param_env,
+            &mut self.net,
+            &self.alias,
+            lock_infos,
+            &self.function_counter,
+            &self.locks_counter,
+            &mut self.thread_id_handler,
+            &mut self.handler_id,
+            &self.condvars,
+        );
+        func_construct.analyze();
     }
 
     // Construct Function Start and End Place by callgraph
@@ -318,7 +333,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     }
 
     // Construct lock for place
-    pub fn construct_lock(&mut self, alias_analysis: &mut AliasAnalysis) {
+    pub fn construct_lock(&mut self, alias_analysis: &RefCell<AliasAnalysis>) {
         let lockguards = self.collect_lockguards();
         // classify the lock point to the same memory location
         let mut lockguard_relations = FxHashSet::<(LockGuardId, LockGuardId)>::default();
@@ -450,7 +465,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         }
     }
 
-    pub fn construct_lock_with_dfs(&mut self, alias_analysis: &mut AliasAnalysis) {
+    pub fn construct_lock_with_dfs(&mut self /*alias_analysis: &RefCell<AliasAnalysis>*/) {
         let lockguards = self.collect_lockguards();
         let mut info = FxHashMap::default();
 
@@ -461,15 +476,11 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
 
         let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
         let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect::<Vec<LockGuardId>>();
-        println!("{:?}", lockid_vec);
+        debug!("{:?}", lockid_vec);
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
-                match self.deadlock_possibility(
-                    &lockid_vec[i],
-                    &lockid_vec[j],
-                    &info,
-                    alias_analysis,
-                ) {
+                match self.deadlock_possibility(&lockid_vec[i], &lockid_vec[j], &info, &self.alias)
+                {
                     DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
                         adj_list.entry(i).or_insert_with(Vec::new).push(j);
                         adj_list.entry(j).or_insert_with(Vec::new).push(i);
@@ -478,7 +489,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
             }
         }
-        println!("{:?}", adj_list);
+        debug!("{:?}", adj_list);
         let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
         let mut group_id = 0;
         let mut groups: HashMap<usize, Vec<LockGuardId>> = HashMap::new();
@@ -571,7 +582,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
 
     fn collect_handle(
         &mut self,
-        alias_analysis: &mut AliasAnalysis,
+        //alias_analysis: &RefCell<AliasAnalysis>,
     ) -> HashMap<InstanceId, JoinHandlerMap<'tcx>> {
         let mut handlers = HashMap::default();
         for (instance_id, node) in self.callgraph.graph.node_references() {
@@ -600,10 +611,12 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
 
         let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
         let lockid_vec: Vec<JoinHanderId> = info.clone().into_keys().collect::<Vec<JoinHanderId>>();
-        println!("{:?}", lockid_vec);
+        debug!("{:?}", lockid_vec);
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
-                match alias_analysis
+                match self
+                    .alias
+                    .borrow_mut()
                     .alias_handle(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
                 {
                     ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
@@ -614,7 +627,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
             }
         }
-        println!("{:?}", adj_list);
+        debug!("{:?}", adj_list);
         let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
         let mut group_id = 0;
         // let mut groups: HashMap<usize, Vec<JoinHanderId>> = HashMap::new();
@@ -685,7 +698,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         a: &LockGuardId,
         b: &LockGuardId,
         lockguards: &LockGuardMap<'tcx>,
-        alias_analysis: &mut AliasAnalysis,
+        alias_analysis: &RefCell<AliasAnalysis>,
     ) -> DeadlockPossibility {
         let a_ty = &lockguards[a].lockguard_ty;
         let b_ty = &lockguards[b].lockguard_ty;
@@ -701,18 +714,22 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             return DeadlockPossibility::Unlikely;
         }
         let possibility = match a_ty.deadlock_with(b_ty) {
-            DeadlockPossibility::Probably => match alias_analysis.alias((*a).into(), (*b).into()) {
-                ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
-                ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-                ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-                ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-            },
-            DeadlockPossibility::Possibly => match alias_analysis.alias((*a).into(), (*b).into()) {
-                ApproximateAliasKind::Probably => DeadlockPossibility::Possibly,
-                ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-                ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-                ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-            },
+            DeadlockPossibility::Probably => {
+                match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
+                    ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
+                    ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
+                    ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
+                    ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
+                }
+            }
+            DeadlockPossibility::Possibly => {
+                match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
+                    ApproximateAliasKind::Probably => DeadlockPossibility::Possibly,
+                    ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
+                    ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
+                    ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
+                }
+            }
             _ => DeadlockPossibility::Unlikely,
         };
         possibility
@@ -900,7 +917,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
             }
         }
-        println!("All states are: {:?}", all_state.len());
+        info!("All states are: {:?}", all_state.len());
         use petgraph::dot::Dot;
         use std::io::Write;
         let mut sg_file = std::fs::File::create("sg.dot").unwrap();

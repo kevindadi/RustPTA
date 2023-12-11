@@ -1,5 +1,7 @@
 extern crate rustc_hash;
 
+use std::cell::RefCell;
+
 use crate::analysis::pointsto::{AliasAnalysis, ApproximateAliasKind};
 use crate::concurrency::locks::{
     DeadlockPossibility, LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy,
@@ -92,7 +94,7 @@ impl<'tcx> PtsDetecter<'tcx> {
     pub fn output_pts<'a>(
         &mut self,
         callgraph: &'a CallGraph<'tcx>,
-        alias_analysis: &mut AliasAnalysis<'a, 'tcx>,
+        alias_analysis: &mut RefCell<AliasAnalysis<'a, 'tcx>>,
     ) {
         let lockguards = self.collect_lockguards(callgraph);
         // Get lockguard info
@@ -187,7 +189,7 @@ fn deadlock_possibility<'tcx>(
     a: &LockGuardId,
     b: &LockGuardId,
     lockguards: &LockGuardMap<'tcx>,
-    alias_analysis: &mut AliasAnalysis,
+    alias_analysis: &mut RefCell<AliasAnalysis>,
 ) -> DeadlockPossibility {
     let a_ty = &lockguards[a].lockguard_ty;
     let b_ty = &lockguards[b].lockguard_ty;
@@ -203,18 +205,22 @@ fn deadlock_possibility<'tcx>(
         return DeadlockPossibility::Unlikely;
     }
     let possibility = match a_ty.deadlock_with(b_ty) {
-        DeadlockPossibility::Probably => match alias_analysis.alias((*a).into(), (*b).into()) {
-            ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
-            ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-            ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-            ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-        },
-        DeadlockPossibility::Possibly => match alias_analysis.alias((*a).into(), (*b).into()) {
-            ApproximateAliasKind::Probably => DeadlockPossibility::Possibly,
-            ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-            ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-            ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-        },
+        DeadlockPossibility::Probably => {
+            match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
+                ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
+                ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
+                ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
+                ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
+            }
+        }
+        DeadlockPossibility::Possibly => {
+            match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
+                ApproximateAliasKind::Probably => DeadlockPossibility::Possibly,
+                ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
+                ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
+                ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
+            }
+        }
         _ => DeadlockPossibility::Unlikely,
     };
     possibility
