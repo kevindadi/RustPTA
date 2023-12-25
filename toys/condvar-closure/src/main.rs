@@ -17,8 +17,8 @@ fn correct() {
 
     let th2 = thread::spawn(move || {
         let (lock, cvar) = &*pair2;
-        let mut started = lock.lock().unwrap();
-        *started = true;
+        // let mut started = lock.lock().unwrap();
+        // *started = true;
         cvar.notify_one();
     });
 
