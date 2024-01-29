@@ -1,4 +1,4 @@
-//! Find atomic functions and classify them into read, write, read-write.
+//! 查找原子函数，并将其分为读、写、读写三种。
 extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_middle;
@@ -70,8 +70,6 @@ impl AtomicApi {
     }
 }
 
-// AtomicPtr::store(&self, ptr: *mut T, order: Ordering)
-// Alias: self = ptr
 static ATOMIC_PTR_STORE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(std|core)::sync::atomic::AtomicPtr::<.*>::store").unwrap());
 

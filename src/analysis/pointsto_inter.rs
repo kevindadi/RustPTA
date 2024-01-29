@@ -1,12 +1,5 @@
-//! 过程间 指针分析
-//! 改进1.构造了过程间的 Constraint Graph，即所有instance
-//! 改进2.形参和实参间的指向关系
-//! 改进3.a=&b 如果b是Place类型 不是Alloc类型
-//! 改进4.域敏感
-//! 改进5.闭包
-//! 
-//! 需要上下文敏感吗
-
+//! 域敏感、上下文不敏感的过程间指针分析 
+//! 基于Andesen算法
 extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
@@ -14,27 +7,28 @@ extern crate rustc_index;
 
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::VecDeque;
+use std::fs::File;
+use std::io::Write;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
-    Body, Constant, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef,
-    ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,LocalDecl,LocalInfo,LocalKind,
+    Body, Constant, ConstantKind, Local, Location, Operand, Place, PlaceRef,
+    ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,LocalDecl,LocalKind,
 };
-
-
 use rustc_middle::ty::{self,Instance, TyCtxt, TyKind,ParamEnv,ClosureArgs};
+
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Directed, Direction, Graph};
 
 use crate::concurrency::locks::LockGuardId;
-use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId, self};
+use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::ownership;
-use std::fs::File;
-use std::io::Write;
 
+
+/// 指针分析
 pub struct Andersen<'a,'tcx> {
     tcx: TyCtxt<'tcx>,
     pts: PointsToMap<'tcx>,
@@ -60,9 +54,9 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
     ) {
         let instance_first = instances[0];
         let body_first = self.tcx.instance_mir(instance_first.def);
-        let mut consGCollector = ConstraintGraphCollector::new(instance_first, body_first, self.tcx,self.callgraph,param_env);
-        consGCollector.analyze(instances);
-        let mut graph = consGCollector.finish();
+        let mut consG_collector = ConstraintGraphCollector::new(instance_first, body_first, self.tcx,self.callgraph,param_env);
+        consG_collector.analyze(instances);
+        let mut graph = consG_collector.finish();
 
         let mut worklist = VecDeque::new();
         // alloc: place = alloc
@@ -90,7 +84,7 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
                         worklist.push_back(target);
                     }
                 }else{
-                    self.pts.entry(target).or_default().insert(source);//
+                    self.pts.entry(target).or_default().insert(source);
                     worklist.push_back(target);
                 }
                 
@@ -154,9 +148,8 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
         graph.dot();//dot输出constraint graph
     }
 
-    /// pts(target) = pts(target) U pts(source), return true if pts(target) changed
+    /// pts(target) = pts(target) U pts(source), 如果pts(target)改变，返回true
     fn union_pts(&mut self, target: &ConstraintNode<'tcx>, source: &ConstraintNode<'tcx>) -> bool {
-        // skip Alloc target
         if matches!(target, ConstraintNode::Alloc(_,_)) {
             return false;
         }
@@ -182,7 +175,7 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
         self.pts
     }
 
-    // 检查 MutexGuard是从哪里得到的，如果不是从Mutex里得到的（比如 参数），则返回false
+    /// 检查 MutexGuard是从哪里得到的，如果不是从Mutex里得到的（比如参数），则返回false
     pub fn checkGuardSource(
         & self,
         node:ConstraintNode<'tcx>,
@@ -196,17 +189,17 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
                         if *instance_id_n == instance_id{
                             let body = self.tcx.instance_mir(instance.def);
                             for (local, local_ty) in body.local_decls.iter_enumerated(){
-                                println!("local{:?},local_ty{:?}",local,local_ty.ty);
-                                println!("loalty sort_string{:?}",local_ty.ty.sort_string(self.tcx));
+                                // println!("local{:?},local_ty{:?}",local,local_ty.ty);
+                                // println!("loalty sort_string{:?}",local_ty.ty.sort_string(self.tcx));
                                 let cow = local_ty.ty.sort_string(self.tcx).into_owned();
                                 let path =cow.as_str();
-                                println!("cow{:?}",path);
+                                // println!("cow{:?}",path);
                                 if !path.contains("Guard"){
                                             //Result 是unwrap() 之前吗
                                             if path.contains("Mutex") || path.contains("RwLock") || path.contains("Result") || path.contains("Arc")
                                                 || path.contains("parking_lot") || path.contains("spin") || path.contains("sync")
                                             {
-                                                println!("11111111111111111");
+                                
                                                 return true;
                                             }
                                            
@@ -239,6 +232,7 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
         false
     }
 
+    /// 检查两个变量间是否存在别名关系
     pub fn alias( 
         &mut self, 
         aid1: AliasId, 
@@ -267,63 +261,86 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
         let node2 = ConstraintNode::Place(Place::from(local2).as_ref(),id2);
         let set1 = self.pts.get(&node1);
         let set2 = self.pts.get(&node2);
-        println!("PROCESS ALISA.........");
-        // if id1 != id2{ //在不同instance时 才检查MutexGuard来源
-        //     if let (Some(instance1), Some(instance2)) = (instance1, instance2){
-        //         //检测Guard 是否是从Mutex或者RwLock里得到
-        //         let flag1 = self.checkGuardSource(node1, instance1, id1);
-        //         let flag2 = self.checkGuardSource(node2, instance2, id2);
-        //         println!("instance_id{:?},flag{:?}",id1,flag1);
-        //         println!("instance_id{:?},flag{:?}",id2,flag2);
-        //         if !flag1 || !flag2{
-        //             // return ApproximateAliasKind::Unlikely;
-        //         }
-        //     }
-        // }
-        if let (Some(set1), Some(set2)) = (set1, set2) {
-            println!("NODE:{:?}",node1);
-            for s1 in set1{
-                println!("{:?}",s1);
+        if id1 != id2{ //在不同instance时 才检查MutexGuard来源
+            if let (Some(instance1), Some(instance2)) = (instance1, instance2){
+                //检测Guard 是否是从Mutex或者RwLock里得到
+                let flag1 = self.checkGuardSource(node1, instance1, id1);
+                // println!("instance_id{:?},flag{:?}",id1,flag1);
+                let flag2 = self.checkGuardSource(node2, instance2, id2);
+                // println!("instance_id{:?},flag{:?}",id2,flag2);
+                if flag1 && flag2{
+                    if let (Some(set1), Some(set2)) = (set1, set2) {
+                        if set2.contains(&node1) || set1.contains(&node2) {
+                            ApproximateAliasKind::Probably
+                        } else {
+                            let intersection = set1.intersection(set2);
+                            if intersection.count() > 0 {
+                                ApproximateAliasKind::Probably
+                            } else {
+                                ApproximateAliasKind::Unlikely
+                            }
+                        }
+                    } 
+                    else if let Some(set2) = set2 {
+                        if set2.contains(&node1) {
+                            ApproximateAliasKind::Probably
+                        } else {
+                            ApproximateAliasKind::Unlikely
+                        }
+                    } else if let Some(set1) = set1 {
+                        if set1.contains(&node2) {
+                            ApproximateAliasKind::Probably
+                        } else {
+                            ApproximateAliasKind::Unlikely
+                        }
+                    }
+                    else {
+                        ApproximateAliasKind::Unlikely
+                    }
+                }else {
+                    ApproximateAliasKind::Unlikely
+                }
+            }else {
+                ApproximateAliasKind::Unlikely
             }
-            println!("NODE:{:?}",node2);
-            for s2 in set2{
-                println!("{:?}",s2);
-            }
-            if set2.contains(&node1) || set1.contains(&node2) {
-                ApproximateAliasKind::Probably
-            } else {
-                let intersection = set1.intersection(set2);
-                if intersection.count() > 0 {
+        }else{
+            if let (Some(set1), Some(set2)) = (set1, set2) {
+                if set2.contains(&node1) || set1.contains(&node2) {
+                    ApproximateAliasKind::Probably
+                } else {
+                    let intersection = set1.intersection(set2);
+                    if intersection.count() > 0 {
+                        ApproximateAliasKind::Probably
+                    } else {
+                        ApproximateAliasKind::Unlikely
+                    }
+                }
+            } else if let Some(set2) = set2 {
+                if set2.contains(&node1) {
+                    ApproximateAliasKind::Probably
+                } else {
+                    ApproximateAliasKind::Unlikely
+                }
+            } else if let Some(set1) = set1 {
+                if set1.contains(&node2) {
                     ApproximateAliasKind::Probably
                 } else {
                     ApproximateAliasKind::Unlikely
                 }
             }
-        } else if let Some(set2) = set2 {
-            if set2.contains(&node1) {
-                ApproximateAliasKind::Probably
-            } else {
+            else {
                 ApproximateAliasKind::Unlikely
             }
-        } else if let Some(set1) = set1 {
-            if set1.contains(&node2) {
-                ApproximateAliasKind::Probably
-            } else {
-                ApproximateAliasKind::Unlikely
-            }
+            
         }
-        else {
-            ApproximateAliasKind::Unlikely
-        }
+        
        
         
     }
     
+    
 
-    /// Check if `pointer` points to `pointee`.
-    /// First get the pts(`pointer`),
-    /// then check alias between each node in pts(`pointer`) and `pointee`.
-    /// Choose the highest alias kind.
+    /// 检查是否pointer指向pointee
     pub fn points(
         &mut self, 
         pointer: AliasId, 
@@ -366,14 +383,19 @@ impl<'a, 'tcx> Andersen<'a,'tcx> {
         }
         
     }
+
+    pub fn get_pts(&mut self) ->&PointsToMap<'tcx>{
+        &self.pts
+    }
+    
 }
 
+/// AliasId和LockGuardId有相同信息
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AliasId {
     pub instance_id: InstanceId,
     pub local: Local,
 }
-/// Basically, `AliasId` and `LockGuardId` share the same info.
 impl std::convert::From<LockGuardId> for AliasId {
     fn from(lockguard_id: LockGuardId) -> Self {
         Self {
@@ -400,8 +422,8 @@ impl ApproximateAliasKind {
     }
 }
 
-/// Probably > Possibly > Unlikey > Unknown
 impl PartialOrd for ApproximateAliasKind {
+    // Probably > Possibly > Unlikey > Unknown
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         use ApproximateAliasKind::*;
         match (*self, *other) {
@@ -420,6 +442,7 @@ impl PartialOrd for ApproximateAliasKind {
 }
 
 
+/// 约束图结点
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConstraintNode<'tcx> {
     Alloc(PlaceRef<'tcx>,InstanceId),
@@ -428,6 +451,7 @@ pub enum ConstraintNode<'tcx> {
     ConstantDeref(ConstantKind<'tcx>,InstanceId),
 }
 
+/// 约束图的边
 #[derive(Debug, Clone, Copy, PartialEq, Eq,Hash)]
 enum ConstraintEdge {
     Address,// a = &b
@@ -447,6 +471,7 @@ enum AccessPattern<'tcx> {
     Field(PlaceRef<'tcx>),
 }
 
+/// 约束图
 #[derive(Default)]
 struct ConstraintGraph<'tcx> {
     graph: Graph<ConstraintNode<'tcx>, ConstraintEdge, Directed>,
@@ -519,8 +544,6 @@ impl<'tcx> ConstraintGraph<'tcx> {
         let lhs = self.get_or_insert_node(lhs);
         let rhs = self.get_or_insert_node(rhs);
         self.add_edge_check(rhs, lhs, ConstraintEdge::Address);
-        // For a constant C, there may be deref like *C, **C, ***C, ... in a real program.
-        // For simplicity, we only track *C, and treat **C, ***C, ... the same as *C.
         self.add_edge_check(rhs, rhs, ConstraintEdge::Address);
     }
 
@@ -767,7 +790,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
                 if let Err(err) = file.write_all(dot_string.as_bytes()) {
                     eprintln!("Failed to write to file: {}", err);
                 } else {
-                    println!("DOT representation saved to '{}'", output_file_path);
+                    // println!("DOT representation saved to '{}'", output_file_path);
                 }
             },
             Err(err) => {
@@ -777,7 +800,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
     }
 }
 
-/// Generate `ConstraintGraph` by visiting MIR body.
+/// 遍历MIR body，生成约束图
 struct ConstraintGraphCollector<'a, 'tcx> {
     instance: &'a Instance<'tcx>,
     body: &'a Body<'tcx>,
@@ -800,7 +823,8 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             param_env,
         }
     }
-
+ 
+    /// 处理赋值语句
     fn process_assignment(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>) {
         if let Some(instance_id) = self.callgraph.instance_to_index(self.instance)
         {
@@ -808,7 +832,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             let rhs_pattern = Self::process_rvalue(rvalue);
             match (lhs_pattern, rhs_pattern) {
                 
-                 // a = &b
+                // a = &b
                 (AccessPattern::Direct(lhs), Some(AccessPattern::Ref(rhs))) => {
                     self.graph.add_address(lhs, rhs,instance_id);
                 }
@@ -820,7 +844,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 (AccessPattern::Direct(lhs), Some(AccessPattern::Constant(rhs))) => {
                     self.graph.add_copy_constant(lhs, rhs,instance_id);
                 }
-                // a = *b   //这个呢
+                // a = *b  
                 (AccessPattern::Direct(lhs), Some(AccessPattern::Indirect(rhs))) => {
                     self.graph.add_load(lhs, rhs,instance_id);
                 }
@@ -834,9 +858,6 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 }
                 // a = &((*b).0)  _8 = &((*_1).0: std::sync::Arc<std::sync::Mutex<i32>>);
                 (AccessPattern::Direct(lhs), Some(AccessPattern::Field(rhs))) => {
-                    // println!("PROCESS FIELD");
-                    // println!("lhs:{:?},rhs:{:?},instance_id:{:?}",lhs,rhs,instance_id);
-                    // lhs:_8; rhs:((*_1).0: std::sync::Arc<std::sync::Mutex<i32>>)
                     self.graph.add_field_address(lhs, rhs, instance_id)
                 }
                 _ => {}
@@ -844,6 +865,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
 
+    /// 处理赋值语句左值place
     fn process_place(place_ref: PlaceRef<'tcx>) -> AccessPattern<'tcx> {
         match place_ref {
             PlaceRef {
@@ -857,6 +879,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
 
+    /// 处理赋值语句右值
     fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Option<AccessPattern<'tcx>> {
         match rvalue {
             Rvalue::Use(operand) | Rvalue::Repeat(operand, _) | Rvalue::Cast(_, operand, _) => {
@@ -864,7 +887,6 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     // Operand::Move(place) | Operand::Copy(place) => {
                     //     Some(AccessPattern::Direct(place.as_ref()))
                     // }
-                    //1102
                     Operand::Move(place) | Operand::Copy(place) => match place.as_ref() {
                         // _9 = (_8.0: *const alloc::sync::ArcInner<T>)
                         // PlaceRef {
@@ -910,7 +932,9 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
 
-    /// 实参 --> 形参
+    /// 处理函数调用参数 pi--|copy|-->argi
+    /// dest = func(p1,p2,...)
+    /// fn func(arg1,arg2,...) =>
     fn process_call_arg(&mut self, real: PlaceRef<'tcx>, formal: PlaceRef<'tcx>, callee_instance_id:InstanceId) {
         if let Some(instance_id) = self.callgraph.instance_to_index(self.instance)
         {
@@ -920,8 +944,9 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
         
     }
+    
+    /// 处理函数调用参数 arg--|copy|-->dest
     /// dest: *const T = Vec::as_ptr(arg: &Vec<T>) =>
-    /// arg--|copy|-->dest
     fn process_call_arg_dest_inter(&mut self, arg: PlaceRef<'tcx>, dest: PlaceRef<'tcx>) {
         if let Some(instance_id) = self.callgraph.instance_to_index(self.instance)
         {
@@ -929,7 +954,11 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
        
     }
-     ///需要修改
+
+     /// 处理闭包间的参数传递
+     ///  _18 = {closure@src/main.rs:13:28: 13:35} { lock_a2: move _3, lock_b2: move _7 };
+     /// fn one_closure_one_caller::{closure#0}(_1: {closure@src/main.rs:13:28: 13:35}) -> () {...}
+     /// TODO: 不够准确
     fn process_closure(&mut self, capture: PlaceRef<'tcx>, closure_arg: PlaceRef<'tcx>, closure_instance_id:InstanceId) {
         if let Some(instance_id) = self.callgraph.instance_to_index(self.instance)
         {
@@ -938,6 +967,8 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
        
     }
+
+    /// 处理智能指针Arc::clone
     /// dest: Arc<T> = Arc::clone(arg: &Arc<T>) or dest: T = ptr::read(arg: *const T) =>
     /// arg--|load|-->dest and
     /// arg--|alias_copy|-->dest
@@ -950,11 +981,10 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         
     }
 
-    /// forall (p1, p2) where p1 is prefix of p1, add `p1 = p2`.
-    /// e.g. Place1{local1, &[f0]}, Place2{local1, &[f0,f1]},
-    /// since they have the same local
-    /// and Place1.projection is prefix of Place2.projection,
-    /// Add constraint `Place1 = Place2`.
+    /// 处理域敏感
+    /// Place1{local1, &[f0]}  Place2{local1, &[f0,f1]}
+    /// Place1.projection是Place2.projection的前缀
+    /// 添加约束Place1 = Place2
     fn add_partial_copy(&mut self) {
         if let Some(instance_id) = self.callgraph.instance_to_index(self.instance)
         {
@@ -977,7 +1007,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
     
-
+    /// 遍历所有的instance的MIR body 创建初始约束图
     fn analyze(
         &mut self,
         instances: Vec<&'a Instance<'tcx>>,
@@ -985,22 +1015,22 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         //所有的instance 
        for instance_temp in instances{
             let body_temp = self.tcx.instance_mir(instance_temp.def);
-            self.body = body_temp;//
-            self.instance = &instance_temp;//
+            self.body = body_temp;
+            self.instance = &instance_temp;
             self.visit_body(body_temp);
        }
     }
 
     
-
+    /// 返回创建的初始约束图
     fn finish(mut self) -> ConstraintGraph<'tcx> {
         self.add_partial_copy();
-        // self.graph.dot();
         self.graph
     }
 }
 
 impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
+    /// 处理赋值语句
     fn visit_statement(&mut self, statement: &Statement<'tcx>, _location: Location) {
         match &statement.kind {
             StatementKind::Assign(box (place, rvalue)) => {
@@ -1033,7 +1063,6 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             fn_span
         } = &terminator.kind
         {
-            // let mut formal_para_vec = Vec::new();
             let func_ty = func.ty(self.body, self.tcx);
             let func_ty = self.instance.subst_mir_and_normalize_erasing_regions(
                 self.tcx,
@@ -1062,18 +1091,12 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                             
                          }
                     }                    
-                    // if let Some(callee_instance_id) = self.callgraph.instance_to_index(&callee){
-                    //     if let Some(instance_id) = self.callgraph.instance_to_index(self.instance){
-                    //         println!("PROCESS CALL................");
-                    //         println!("InstanceId:{:?} Callee_InstanceID{:?}\n",instance_id,callee_instance_id);
-                    //     }
-                    // }
                 }
             }  
            
 
-           //处理dest和返回值 _4 = Mutex::<i32>::lock(_2) ， _2 ----> _4
-           //   还要修改，内部函数？    这里不够准确 需要修改    
+           // 处理dest和返回值 _4 = Mutex::<i32>::lock(_2) ， _2 ----> _4
+           // TODO: 这里不够准确 需要修改    
            match (args.as_slice(), destination) {
             (&[Operand::Move(arg)], dest) => {
                 self.process_call_arg_dest_inter(arg.as_ref(), dest.as_ref());
@@ -1104,29 +1127,17 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
     } 
 
 
-    ///处理闭包 Closure 
-    /// 这里不够准确 需要修改    
+    /// 处理闭包 Closure 
+    /// TODO: 这里不够准确 需要修改   
+    /// 只能根据捕获参数的类型寻找闭包内部相同类型的变量，不精确，没找到rust提供的合适Closure处理函数
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) { 
         let func_ty = self.instance.subst_mir_and_normalize_erasing_regions(
             self.tcx,
             self.param_env,
             ty::EarlyBinder::bind(local_decl.ty),
-        ); //Ty
+        ); 
        
         if let TyKind::Closure(def_id, substs) = func_ty.kind() {  //Closure(DefId, &'tcx List<GenericArg<'tcx>>)
-       
-            // if let Some(local_def_id) = def_id.as_local(){
-            //     let closure_type_info = self.tcx.closure_typeinfo(local_def_id);
-            //     let closure_saved_names_of_captured_variables = self.tcx.closure_saved_names_of_captured_variables(local_def_id);
-            //     let closure_captures = self.tcx.closure_captures(local_def_id);
-            //     let def_path = self.tcx.def_path(*def_id);
-            //     for captured_place in closure_captures.iter() {
-            //         println!("closure_capture{:?}",captured_place);
-            //     }
-            // }
-           
-            
-
             match self.body.local_kind(local) {
                 LocalKind::Arg | LocalKind::ReturnPointer => {
                 }
@@ -1152,7 +1163,6 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                                                 // println!("instance_id:{:?} local:{:?}, capture.local_ty:{:?}",instance_id,place,upcar_ty);
                                                 for c in closure_arg_vec.iter(){
                                                     self.process_closure(place.as_ref(), c.as_ref(), closure_instance_id);
-                                                   
                                                     // println!("instance_id:{:?} local:{:?}, closure_instance_id{:?},local:{:?}",instance_id,place,closure_instance_id,c);
                                                 }
                                                

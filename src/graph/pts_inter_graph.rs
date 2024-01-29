@@ -1,12 +1,11 @@
+//! 指向关系图
+//! 只输出锁变量之间的指向关系，没有考虑变量的生命周期
+//! 基于域敏感上下文不敏感的过程间指针分析
 extern crate rustc_hash;
-
-use std::fmt::Debug;
 
 use crate::analysis::pointsto_inter::Andersen;
 use crate::analysis::pointsto_inter::ApproximateAliasKind;
-use crate::concurrency::locks::{
-    DeadlockPossibility, LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy,
-};
+use crate::concurrency::locks::{LockGuardCollector, LockGuardId, LockGuardMap,};
 use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 
 use petgraph::dot::Dot;
@@ -14,46 +13,16 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Graph;
 
-use rustc_middle::mir::Location;
-use rustc_middle::ty::{ParamEnv, TyCtxt,Instance};
-
+use rustc_middle::ty::{ParamEnv, TyCtxt};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-#[derive(Clone, Debug, Default)]
-struct LiveLockGuards(FxHashSet<LockGuardId>);
-
-impl LiveLockGuards {
-    fn insert(&mut self, lockguard_id: LockGuardId) -> bool {
-        self.0.insert(lockguard_id)
-    }
-    fn raw_lockguard_ids(&self) -> &FxHashSet<LockGuardId> {
-        &self.0
-    }
-    // self = self \ other, if changed return true
-    fn difference_in_place(&mut self, other: &Self) -> bool {
-        let old_len = self.0.len();
-        for id in &other.0 {
-            self.0.remove(id);
-        }
-        old_len != self.0.len()
-    }
-    // self = self U other, if changed return true
-    fn union_in_place(&mut self, other: Self) -> bool {
-        let old_len = self.0.len();
-        self.0.extend(other.0.into_iter());
-        old_len != self.0.len()
-    }
-}
-
-type LockGuardsBeforeCallSites = FxHashMap<(InstanceId, Location), LiveLockGuards>;
-
-pub struct PtsDetecterInter<'tcx> {
+pub struct PtsGraph<'tcx> {
     tcx: TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
     pub lockguard_relations: FxHashSet<(LockGuardId, LockGuardId)>,
 }
 
-impl<'tcx> PtsDetecterInter<'tcx> {
+impl<'tcx> PtsGraph<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, param_env: ParamEnv<'tcx>) -> Self {
         Self {
             tcx,
@@ -62,6 +31,7 @@ impl<'tcx> PtsDetecterInter<'tcx> {
         }
     }
 
+    /// 收集所有锁变量
     fn collect_lockguards(
         &self,
         callgraph: &CallGraph<'tcx>,
@@ -72,7 +42,6 @@ impl<'tcx> PtsDetecterInter<'tcx> {
                 CallGraphNode::WithBody(instance) => instance,
                 _ => continue,
             };
-            // Only analyze local fn with body
             if !instance.def_id().is_local() {
                 continue;
             }
@@ -87,6 +56,7 @@ impl<'tcx> PtsDetecterInter<'tcx> {
         lockguards
     }
 
+    /// dot格式输出
     pub fn output_pts<'a>(
         &mut self,
         callgraph: &'a CallGraph<'tcx>,
@@ -94,9 +64,8 @@ impl<'tcx> PtsDetecterInter<'tcx> {
         param_env: ParamEnv<'tcx>,
         
     ) {
-        let lockguards = self.collect_lockguards(callgraph);//instanceid lockguardMap
-        // Get lockguard info
-        let mut info = FxHashMap::default(); //lockguardMap:LockGuardId, LockGuardInfo
+        let lockguards = self.collect_lockguards(callgraph);
+        let mut info = FxHashMap::default();
         for (_, map) in lockguards.into_iter() {
             info.extend(map.into_iter());
         }
@@ -109,32 +78,25 @@ impl<'tcx> PtsDetecterInter<'tcx> {
         use std::rc::Rc;
         let lock_node = Rc::new(RefCell::new(FxHashMap::<LockGuardId, NodeIndex>::default()));
         let mut pts_map = Graph::<String, String>::new();
-        for (a, b) in &self.lockguard_relations { //lockguard_relations 
-            println!("pts_cs_graph:LockGuardId: {}", a); //LockGuardId
-            println!("pts_cs_graph:LockGuardId: {}", b);
+        for (a, b) in &self.lockguard_relations { 
             let a_info = &info[a];
             let b_info = &info[b];
             let a_str =
                 format!("{:?}", a_info.lockguard_ty) + &format!("{:?}", a_info.span);
             let b_str =
                 format!("{:?}", b_info.lockguard_ty) + &format!("{:?}", b_info.span);
-            println!("pts_cs_graph:a_str: {}", a_str); //LockGuardInfo
-            println!("pts_cs_graph:b_str: {}", b_str);
-            let possibility = andersen.alias((*a).into(), (*b).into(),param_env); //alias
-           
+            let possibility = andersen.alias((*a).into(), (*b).into(),param_env); //指针分析
             match possibility {
                 ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                   
                     if lock_node.borrow().get(a).is_none() {
                         if lock_node.borrow().get(b).is_none() {
-                            // a,b both not exit
                             let a_node = pts_map.add_node(a_str);
                             let b_node = pts_map.add_node(b_str);
                             pts_map.add_edge(a_node, b_node, possibility.to_string());
                             lock_node.borrow_mut().insert(*a, a_node);
                             lock_node.borrow_mut().insert(*b, b_node);
                         } else {
-                            // a not exits
                             let a_node = pts_map.add_node(a_str);
                             pts_map.add_edge(
                                 a_node,
@@ -144,7 +106,6 @@ impl<'tcx> PtsDetecterInter<'tcx> {
                             lock_node.borrow_mut().insert(*a, a_node);
                         }
                     } else {
-                        // b not exits
                         if lock_node.borrow().get(b).is_none() {
                             let b_node = pts_map.add_node(b_str);
                             pts_map.add_edge(
@@ -154,7 +115,6 @@ impl<'tcx> PtsDetecterInter<'tcx> {
                             );
                             lock_node.borrow_mut().insert(*b, b_node);
                         } else {
-                            // a,b both exit
                             pts_map.add_edge(
                                 *lock_node.borrow().get(a).unwrap(),
                                 *lock_node.borrow().get(b).unwrap(),

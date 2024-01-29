@@ -1,36 +1,25 @@
-//! Generate a CallGraph for instances in each crate.
-//! You can roughly think of instances as a monomorphic function.
-//! If an instance calls another instance, then we have an edge
-//! from caller to callee with callsite locations as edge weight.
-//! This is a fundamental analysis for other analysis,
-//! e.g., points-to analysis, lockguard collector, etc.
-//! We also track where a closure is defined rather than called
-//! to record the defined function and the parameter of the closure,
-//! which is pointed to by upvars.
+//! 对crate里所有的instance分析，创建CallGraph
+//! 是指针分析的基础
 extern crate rustc_abi;
+
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
-use petgraph::graph::{NodeIndex, Node};
-use petgraph::graphmap::Nodes;
+use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction::{Incoming, Outgoing};
 use petgraph::{Directed, Graph};
 
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind,Place,PlaceElem};
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind,List,Ty};
-use rustc_abi::FieldIdx;
+use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind, Place};
+use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind, Ty};
 
 use std::fs::File;
 use std::io::Write;
 
-/// The NodeIndex in CallGraph, denoting a unique instance in CallGraph.
+/// 使用NodeIndex作为instance的id
 pub type InstanceId = NodeIndex;
 
-/// The location where caller calls callee.
-/// Support direct call for now, where callee resolves to FnDef.
-/// Also support tracking the parameter of a closure (pointed to by upvars)
-/// TODO(boqin): Add support for FnPtr.
+/// 调用点
 #[derive(Copy, Clone, Debug)]
 pub enum CallSiteLocation {
     Direct(Location),
@@ -47,8 +36,8 @@ impl CallSiteLocation {
     }
 }
 
-/// The CallGraph node wrapping an Instance.
-/// WithBody means the Instance owns body.
+/// 封装的Instance
+/// WithBody：带函数体的实例；WithoutBody：不带函数体的实例
 #[derive(Debug, PartialEq, Eq)]
 pub enum CallGraphNode<'tcx> {
     WithBody(Instance<'tcx>),
@@ -69,18 +58,15 @@ impl<'tcx> CallGraphNode<'tcx> {
    
 }
 
-/// CallGraph
-/// The nodes of CallGraph are instances.
-/// The directed edges are CallSite Locations.
-/// e.g., `Instance1--|[CallSite1, CallSite2]|-->Instance2`
-/// denotes `Instance1` calls `Instance2` at locations `Callsite1` and `CallSite2`.
+/// 函数调用图
+/// Instance1--|[CallSite1, CallSite2]|-->Instance2
+/// 代表Instance1在Callsite1和CallSite2处调用Instance2
 
 pub struct CallGraph<'tcx> {
     pub graph: Graph<CallGraphNode<'tcx>, Vec<CallSiteLocation>, Directed>,
 }
 
 impl<'tcx> CallGraph<'tcx> {
-    /// Create an empty CallGraph.
     pub fn new() -> Self {
         Self {
             graph: Graph::new(),
@@ -90,9 +76,13 @@ impl<'tcx> CallGraph<'tcx> {
     pub fn getNodes(&self) -> Vec<NodeIndex>{
         self.graph.node_indices().collect()
     }
+
     pub fn getFirstNode(&self) -> Option<NodeIndex>{
         self.graph.node_indices().next()
     }
+
+    /// 返回函数的形参
+    /// 在pointsto_inter中处理函数调用时用到
     pub fn getArgs(
         &self,
         callGraphNode:&CallGraphNode<'tcx>,
@@ -116,6 +106,10 @@ impl<'tcx> CallGraph<'tcx> {
         }
                  
     }
+
+    /// 返回闭包的参数
+    /// 在pointsto_inter中处理闭包时用到
+    /// TODO：寻找对应闭包参数不够准确
     pub fn getClosureArg(
         &self,
         callGraphNode:&CallGraphNode<'tcx>,
@@ -130,42 +124,16 @@ impl<'tcx> CallGraph<'tcx> {
                 for (local, local_ty) in closure_body.local_decls.iter_enumerated(){
                     // println!("closure_local{:?},closure_local_ty{:?}",local,local_ty);
                     if local_ty.ty.contains(ty) {
-                        // 找到了匹配的局部变量?? 不准确
-                        let p = Place::from(local); //
+                        // TODO：找到了匹配的局部变量?? 不准确
+                        let p = Place::from(local);
                         formal_para_vec.push(p);
                     }
                 }
                 formal_para_vec
-                // let iter =closure_body.args_iter();
-                // for i in iter{
-                //     let place_elem = PlaceElem::Field(FieldIdx::from_u32(0),ty);
-                //     let mut projection = List::empty();
-                //     projection.push(place_elem);
-                //     let place = Place {
-                //         local: i,
-                //         projection: &projection,  
-                //     };
-                // }   
             },
         }
     }
-    pub fn getReturn( 
-        &self,
-        callGraphNode:&CallGraphNode<'tcx>,
-        tcx: TyCtxt<'tcx>,
-    ) {
-        match callGraphNode {
-            CallGraphNode::WithBody(inst) =>{
-                
-                // let callee_body = tcx.instance_mir(inst.def);
-                // let ret_ty = callee_body.return_ty();
-                // println!("{:?}",ret_ty);
-                
-            },
-           _ =>{}
-        }
-    }
-    /// Search for the InstanceId of a given instance in CallGraph.
+    
     pub fn instance_to_index(&self, instance: &Instance<'tcx>) -> Option<InstanceId> {
         self.graph
             .node_references()
@@ -173,7 +141,6 @@ impl<'tcx> CallGraph<'tcx> {
             .map(|(idx, _)| idx)
     }
 
-    /// Get the instance by InstanceId.
     pub fn index_to_instance(&self, idx: InstanceId) -> Option<&CallGraphNode<'tcx>> {
         self.graph.node_weight(idx)
     }
@@ -188,8 +155,7 @@ impl<'tcx> CallGraph<'tcx> {
     }
 
    
-    /// Perform callgraph analysis on the given instances.
-    /// The instances should be **all** the instances with MIR available in the current crate.
+    /// 对所有的instance创建CallGraph
     pub fn analyze(
         &mut self,
         instances: Vec<Instance<'tcx>>,
@@ -202,35 +168,30 @@ impl<'tcx> CallGraph<'tcx> {
                 let idx = self.graph.add_node(CallGraphNode::WithBody(inst));
                 (idx, inst)
             })
-            .collect::<Vec<_>>(); //
+            .collect::<Vec<_>>(); 
         for (caller_idx, caller) in idx_insts {
-            // println!("\ncaller_idx {:?}",caller_idx);
             let body = tcx.instance_mir(caller.def);
-            // Skip promoted src
             if body.source.promoted.is_some() {
                 continue;
             }
-            let mut collector = CallSiteCollector::new(caller, body, tcx, param_env); //instance
+            let mut collector = CallSiteCollector::new(caller, body, tcx, param_env);
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
                 let callee_idx = if let Some(callee_idx) = self.instance_to_index(&callee) {
-                    // println!("callee_idx {:?}",callee_idx);
                     callee_idx
                 } else {
                     self.graph.add_node(CallGraphNode::WithoutBody(callee))
                 };
                 if let Some(edge_idx) = self.graph.find_edge(caller_idx, callee_idx) {
-                    // Update edge weight.
                     self.graph.edge_weight_mut(edge_idx).unwrap().push(location);
                 } else {
-                    // Add edge if not exists.
                     self.graph.add_edge(caller_idx, callee_idx, vec![location]);
                 }
             }
         }
     }
 
-    /// Find the callsites (weight) on the edge from source to target.
+    /// 找出从source到target的边上的调用点
     pub fn callsites(
         &self,
         source: InstanceId,
@@ -240,28 +201,27 @@ impl<'tcx> CallGraph<'tcx> {
         self.graph.edge_weight(edge).cloned()
     }
 
-    /// Find all the callers that call target
+    /// 找出调用者
     pub fn callers(&self, target: InstanceId) -> Vec<InstanceId> {
         self.graph.neighbors_directed(target, Incoming).collect()
     }
+
+    /// 找出被调用者
     pub fn callees(&self, source: InstanceId)-> Vec<InstanceId> {
         self.graph.neighbors_directed(source, Outgoing).collect()
     }
-    /// Find all simple paths from source to target.
-    /// e.g., for one of the paths, `source --> instance1 --> instance2 --> target`,
-    /// the return is [source, instance1, instance2, target].
+
+    /// 寻找从source到target的路径
+    /// 比如路径source --> instance1 --> instance2 --> target
+    /// 返回 [source, instance1, instance2, target]
     pub fn all_simple_paths(&self, source: InstanceId, target: InstanceId) -> Vec<Vec<InstanceId>> {
         algo::all_simple_paths::<Vec<_>, _>(&self.graph, source, target, 0, None)
             .collect::<Vec<_>>()
     }
 
-    /// Print the callgraph in dot format.
+    /// callgraph的dot输出
     #[allow(dead_code)]
     pub fn dot(&self) {
-        // println!(
-        //     "{:?}",
-        //     Dot::with_config(&self.graph, &[Config::GraphContentOnly])
-        // );
         let dot_string = format!("digraph G {{\n{:?}\n}}", Dot::with_config(&self.graph, &[Config::GraphContentOnly]));
         let output_file_path = "callgraph.dot";
         match File::create(output_file_path) {
@@ -279,7 +239,7 @@ impl<'tcx> CallGraph<'tcx> {
     }
 }
 
-/// Visit Terminator and record callsites (callee + location).
+/// 遍历Terminator，记录callsites (callee + location).
 struct CallSiteCollector<'a, 'tcx> {
     caller: Instance<'tcx>,
     body: &'a Body<'tcx>,
@@ -304,19 +264,18 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
         }
     }
 
-    /// Consumes `CallSiteCollector` and returns its callsites when finished visiting.
     fn finish(self) -> impl IntoIterator<Item = (Instance<'tcx>, CallSiteLocation)> {
         self.callsites.into_iter()
     }
 }
 
 impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> { 
-    /// Resolve direct call.
-    /// Inspired by rustc_mir/src/transform/inline.rs#get_valid_function_call.
+    /// 参考 rustc_mir/src/transform/inline.rs#get_valid_function_call.
+    /// 寻找函数调用 TerminatorKind::Call
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         if let TerminatorKind::Call { ref func, .. } = terminator.kind {
             let func_ty = func.ty(self.body, self.tcx);
-            // Only after monomorphizing can Instance::resolve work
+            //monomorphizing 在Instance::resolve前必要的步骤
             let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
                 self.tcx,
                 self.param_env,
@@ -324,7 +283,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
             );
             
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
-                if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs) //def_id:DefId substs:GenericArgsRef
+                if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs) 
                     .ok()
                     .flatten()
                 {
@@ -336,13 +295,10 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
         self.super_terminator(terminator, location);
     }
 
-    /// Find where the closure is defined rather than called,
-    /// including the closure instance and the arg.
-    ///
-    /// e.g., let mut _20: [closure@src/main.rs:13:28: 16:6];
-    ///
-    /// _20 is of type Closure, but it is actually the arg that captures
-    /// the variables in the defining function.
+    /// 寻找闭包定义
+    /// let mut _18: {closure@src/main.rs:13:28: 13:35};
+    /// _18 = {closure@src/main.rs:13:28: 13:35} { lock_a2: move _3, lock_b2: move _7 }
+    /// 
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
         let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
             self.tcx,

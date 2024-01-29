@@ -1,3 +1,4 @@
+//! main 入口文件
 #![feature(rustc_private)]
 #![feature(box_patterns)]
 
@@ -7,6 +8,7 @@ pub mod concurrency;
 pub mod graph;
 pub mod memory;
 pub mod options;
+pub mod detector;
 
 extern crate rustc_driver;
 extern crate rustc_interface;
@@ -16,7 +18,9 @@ extern crate rustc_session;
 use log::debug;
 use options::Options;
 
+
 fn main() {
+
     if std::env::var("PTA_LOG").is_ok() {
         let e = env_logger::Env::new()
             .filter("PTA_LOG")
@@ -31,27 +35,17 @@ fn main() {
         .enumerate()
         .map(|(i, arg)| {
             arg.into_string().unwrap_or_else(|arg| {
-                // TODO: error handler
                 String::from("need to handle")
-                // early_error(
-                //     ErrorOutputType::default(),
-                //     &format!("Argument {} is not valid Unicode: {:?}", i, arg),
-                // )
             })
         })
         .collect::<Vec<_>>();
     assert!(!args.is_empty());
-
-    // Setting RUSTC_WRAPPER causes Cargo to pass 'rustc' as the first argument.
-    // We're invoking the compiler programmatically, so we remove it if present.
     if args.len() > 1 && std::path::Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
         args.remove(1);
     }
 
     let mut rustc_command_line_arguments: Vec<String> = args[1..].into();
-    //rustc_driver::install_ice_hook();
     let result = rustc_driver::catch_fatal_errors(|| {
-        // Add back the binary name
         rustc_command_line_arguments.insert(0, args[0].clone());
 
         let print: String = "--print=".into();
@@ -59,18 +53,12 @@ fn main() {
             .iter()
             .any(|arg| arg.starts_with(&print))
         {
-            // If a --print option is given on the command line we wont get called to analyze
-            // anything. We also don't want to the caller to know that LOCKBUD adds configuration
-            // parameters to the command line, lest the caller be cargo and it panics because
-            // the output from --print=cfg is not what it expects.
         } else {
             let sysroot: String = "--sysroot".into();
             if !rustc_command_line_arguments
                 .iter()
                 .any(|arg| arg.starts_with(&sysroot))
             {
-                // Tell compiler where to find the std library and so on.
-                // The compiler relies on the standard rustc driver to tell it, so we have to do likewise.
                 rustc_command_line_arguments.push(sysroot);
                 rustc_command_line_arguments.push(find_sysroot());
             }
@@ -80,13 +68,12 @@ fn main() {
                 .iter()
                 .any(|arg| arg.ends_with(&always_encode_mir))
             {
-                // Tell compiler to emit MIR into crate for every function with a body.
                 rustc_command_line_arguments.push("-Z".into());
                 rustc_command_line_arguments.push(always_encode_mir);
             }
         }
 
-        let mut callbacks = callback::PTACallbacks::new(options);
+        let mut callbacks = callback::PTACallbacks::new(options);  //callback
         debug!(
             "rustc_command_line_arguments {:?}",
             rustc_command_line_arguments

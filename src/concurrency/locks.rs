@@ -1,9 +1,12 @@
-//! Collect LockGuard info.
+//! 收集锁的Guard变量信息
+//! LockGuard: MutexGuard RwLockReadGuard RwLockWriteGuard
+//! 目前不支持async lock 、loom
 extern crate rustc_hash;
 extern crate rustc_span;
 
 use smallvec::SmallVec;
 use std::cmp::Ordering;
+use std::fmt;
 
 use rustc_hash::FxHashMap;
 use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
@@ -11,10 +14,11 @@ use rustc_middle::mir::{Body, Local, Location, TerminatorKind};
 use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt};
 use rustc_span::Span;
 
+use crate::analysis::pointsto_inter::AliasId;
 use crate::graph::callgraph::InstanceId;
-use std::fmt;
 
-/// Uniquely identify a LockGuard in a crate.
+
+/// LockGuard唯一标识 instance+local
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LockGuardId {
     pub instance_id: InstanceId,
@@ -32,7 +36,16 @@ impl fmt::Display for LockGuardId {
     }
 }
 
-/// The possibility of deadlock.
+impl std::convert::From<AliasId> for LockGuardId {
+    fn from(aliasid: AliasId) -> Self {
+        Self {
+            instance_id: aliasid.instance_id,
+            local: aliasid.local,
+        }
+    }
+}
+
+/// 死锁的可能性
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeadlockPossibility {
     Probably,
@@ -68,12 +81,13 @@ impl PartialOrd for DeadlockPossibility {
     }
 }
 
-/// LockGuardKind, DataTy
+/// LockGuard类型
 #[derive(Clone, Debug)]
 pub enum LockGuardTy<'tcx> {
     StdMutex(ty::Ty<'tcx>),
     ParkingLotMutex(ty::Ty<'tcx>),
     SpinMutex(ty::Ty<'tcx>),
+    TokioMutex(ty::Ty<'tcx>),
     StdRwLockRead(ty::Ty<'tcx>),
     StdRwLockWrite(ty::Ty<'tcx>),
     ParkingLotRead(ty::Ty<'tcx>),
@@ -84,15 +98,8 @@ pub enum LockGuardTy<'tcx> {
 
 impl<'tcx> LockGuardTy<'tcx> {
     pub fn from_local_ty(local_ty: ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
-        // e.g.
-        // extract i32 from
-        // sync: MutexGuard<i32, Poison>
-        // spin: MutexGuard<i32>
-        // parking_lot: MutexGuard<RawMutex, i32>
-        // async, tokio, future: currently Unsupported
-        if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() { //ADT 结构体和枚举
+        if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() { 
             let path = tcx.def_path_str(adt_def.did());
-            // quick fail
             if !path.contains("MutexGuard")
                 && !path.contains("RwLockReadGuard")
                 && !path.contains("RwLockWriteGuard")
@@ -102,50 +109,47 @@ impl<'tcx> LockGuardTy<'tcx> {
             let first_part = path.split('<').next()?;
             if first_part.contains("MutexGuard") {
                 if first_part.contains("async")
-                    || first_part.contains("tokio")
+                    // || first_part.contains("tokio")
                     || first_part.contains("future")
                     || first_part.contains("loom")
                 {
-                    // Currentlly does not support async lock or loom
                     None
+                } else if first_part.contains("tokio") {
+                    // println!("process tokio");
+                    Some(LockGuardTy::TokioMutex(substs.types().next()?))
                 } else if first_part.contains("spin") {
                     Some(LockGuardTy::SpinMutex(substs.types().next()?))
                 } else if first_part.contains("lock_api") || first_part.contains("parking_lot") {
                     Some(LockGuardTy::ParkingLotMutex(substs.types().nth(1)?))
                 } else {
-                    // std::sync::Mutex or its wrapper by default
                     Some(LockGuardTy::StdMutex(substs.types().next()?))
                 }
             } else if first_part.contains("RwLockReadGuard") {
                 if first_part.contains("async")
-                    || first_part.contains("tokio")
+                    // || first_part.contains("tokio")
                     || first_part.contains("future")
                     || first_part.contains("loom")
                 {
-                    // Currentlly does not support async lock or loom
                     None
                 } else if first_part.contains("spin") {
                     Some(LockGuardTy::SpinRead(substs.types().next()?))
                 } else if first_part.contains("lock_api") || first_part.contains("parking_lot") {
                     Some(LockGuardTy::ParkingLotRead(substs.types().nth(1)?))
                 } else {
-                    // std::sync::RwLockReadGuard or its wrapper by default
                     Some(LockGuardTy::StdRwLockRead(substs.types().next()?))
                 }
             } else if first_part.contains("RwLockWriteGuard") {
                 if first_part.contains("async")
-                    || first_part.contains("tokio")
+                    // || first_part.contains("tokio")
                     || first_part.contains("future")
                     || first_part.contains("loom")
                 {
-                    // Currentlly does not support async lock or loom
                     None
                 } else if first_part.contains("spin") {
                     Some(LockGuardTy::SpinWrite(substs.types().next()?))
                 } else if first_part.contains("lock_api") || first_part.contains("parking_lot") {
                     Some(LockGuardTy::ParkingLotWrite(substs.types().nth(1)?))
                 } else {
-                    // std::sync::RwLockReadGuard or its wrapper by default
                     Some(LockGuardTy::StdRwLockWrite(substs.types().next()?))
                 }
             } else {
@@ -156,19 +160,11 @@ impl<'tcx> LockGuardTy<'tcx> {
         }
     }
 
-    /// In parking_lot, the read lock is by default non-recursive if not specified.
-    /// if two recursively acquired read locks in one thread are interleaved
-    /// by a write lock from another thread, a deadlock may happen.
-    /// The reason is write lock has higher priority than read lock in parking_lot.
-    /// In std::sync, the implementation of read lock depends on the underlying OS.
-    /// AFAIK, the implementation on Windows and Mac have write priority.
-    /// So read lock in std::sync cannot be acquired recursively on the two systems.
-    /// spin explicitly documents no write priority. So the read lock in spin can
-    /// be acquired recursively.
     pub fn deadlock_with(&self, other: &Self) -> DeadlockPossibility {
         use LockGuardTy::*;
         match (self, other) {
             (StdMutex(a), StdMutex(b))
+            | (TokioMutex(a), TokioMutex(b))
             | (ParkingLotMutex(a), ParkingLotMutex(b))
             | (SpinMutex(a), SpinMutex(b))
             | (StdRwLockWrite(a), StdRwLockWrite(b))
@@ -194,7 +190,8 @@ impl<'tcx> LockGuardTy<'tcx> {
     }
 }
 
-/// The lockguard info. `span` is for report.
+
+/// LockGuard的相关信息
 #[derive(Clone, Debug)]
 pub struct LockGuardInfo<'tcx> {
     pub lockguard_ty: LockGuardTy<'tcx>,
@@ -204,8 +201,6 @@ pub struct LockGuardInfo<'tcx> {
     pub recursive_gen_locs: SmallVec<[Location; 4]>,
     pub kill_locs: SmallVec<[Location; 4]>,
 }
-
-
 
 impl<'tcx> LockGuardInfo<'tcx> {
     pub fn new(lockguard_ty: LockGuardTy<'tcx>, span: Span) -> Self {
@@ -230,7 +225,7 @@ impl<'tcx> LockGuardInfo<'tcx> {
 
 pub type LockGuardMap<'tcx> = FxHashMap<LockGuardId, LockGuardInfo<'tcx>>;
 
-/// Collect lockguard info.
+/// 收集LockGuard的信息
 pub struct LockGuardCollector<'a, 'b, 'tcx> {
     instance_id: InstanceId,
     instance: &'a Instance<'tcx>,
@@ -278,7 +273,6 @@ impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
 impl<'a, 'b, 'tcx> Visitor<'tcx> for LockGuardCollector<'a, 'b, 'tcx> {
     fn visit_local(&mut self, local: Local, context: PlaceContext, location: Location) {
         let lockguard_id = LockGuardId::new(self.instance_id, local);
-        // local is lockguard
         if let Some(info) = self.lockguards.get_mut(&lockguard_id) {
             match context {
                 PlaceContext::NonMutatingUse(NonMutatingUseContext::Move) => {
@@ -291,19 +285,17 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LockGuardCollector<'a, 'b, 'tcx> {
                         info.move_gen_locs.push(location);
                     }
                     MutatingUseContext::Call => {
-                        // if lockguard = parking_lot::recursive_read() then record to recursive_gen_locs
                         if let LockGuardTy::ParkingLotRead(_) = info.lockguard_ty {
                             let term = self.body[location.block].terminator();
                             if let TerminatorKind::Call { ref func, .. } = term.kind {
                                 let func_ty = func.ty(self.body, self.tcx);
-                                // Only after monomorphizing can Instance::resolve work
+                                // monomorphizing
                                 let func_ty =
                                     self.instance.subst_mir_and_normalize_erasing_regions(
                                         self.tcx,
                                         self.param_env,
                                         ty::EarlyBinder::bind(
                                             func_ty,
-                                            // self.instance.ty(self.tcx, self.param_env),
                                         ),
                                     );
                                 if let ty::FnDef(def_id, _) = *func_ty.kind() {

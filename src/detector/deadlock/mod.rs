@@ -1,10 +1,7 @@
 extern crate rustc_hash;
-
+pub mod report;
 use std::fmt::Debug;
 use std::collections::VecDeque;
-use std::cell::RefCell;
-use std::rc::Rc;
-use log::{debug, warn};
 use std::fs::File;
 use std::io::Write;
 
@@ -15,7 +12,8 @@ use crate::concurrency::locks::{
 use crate::concurrency::condvar::{CondvarApi, ParkingLotCondvarApi, StdCondvarApi};
 
 use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use crate::analysis::report::{Report,ReportContent,DeadlockDiagnosis,CondvarDeadlockDiagnosis,WaitNotifyLocks,report_stats};
+use super::report::{Report, ReportContent};
+use report::{DeadlockDiagnosis,CondvarDeadlockDiagnosis,WaitNotifyLocks};
 
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
@@ -24,7 +22,7 @@ use petgraph::visit::{depth_first_search, Control, DfsEvent, EdgeRef, IntoNodeRe
 use petgraph::{Directed, Direction, Graph};
 
 use rustc_middle::mir::{Body, Location, Operand, TerminatorKind};
-use rustc_middle::ty::{ParamEnv, TyCtxt,Instance};
+use rustc_middle::ty::{ParamEnv, TyCtxt};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -57,13 +55,13 @@ impl LiveLockGuards {
 
 type LockGuardsBeforeCallSites = FxHashMap<(InstanceId, Location), LiveLockGuards>;
 
-pub struct CondvarAnalysis<'tcx> {
+pub struct LockAnalysis<'tcx> {
     tcx: TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
     pub lockguard_relations: FxHashSet<(LockGuardId, LockGuardId)>,
 }
 
-impl<'tcx> CondvarAnalysis<'tcx> {
+impl<'tcx> LockAnalysis<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, param_env: ParamEnv<'tcx>) -> Self {
         Self {
             tcx,
@@ -89,10 +87,13 @@ impl<'tcx> CondvarAnalysis<'tcx> {
             let mut lockguard_collector =
                 LockGuardCollector::new(instance_id, instance, body, self.tcx, self.param_env);
             lockguard_collector.analyze();
+            
             if !lockguard_collector.lockguards.is_empty() { // LockGuardMap: FxHashMap<LockGuardId, LockGuardInfo<'tcx>>;
+                // println!("instance_id{:?}, lockguard_collector.lockguards{:?}",instance_id,lockguard_collector.lockguards);
                 lockguards.insert(instance_id, lockguard_collector.lockguards); //<NodeIndex,LockGuardMap>
             }
         }
+        
         lockguards
     }
 
@@ -111,28 +112,25 @@ impl<'tcx> CondvarAnalysis<'tcx> {
         &mut self,
         callgraph: &'a CallGraph<'tcx>,
         andersen: &mut Andersen<'a,'tcx>,
-    ) {
+    )->Vec<Report> {
         let lockguards = self.collect_lockguards(callgraph);
         let condvar_apis = self.collect_condvars(callgraph);
-        println!("CONDVAR_APIS:{:?}",condvar_apis);
         let mut lockguards_before_condvar_apis: FxHashMap<InstanceId, LockGuardsBeforeCallSites> =
             condvar_apis
                 .keys()
                 .map(|instance_id| (*instance_id, FxHashMap::default()))
                 .collect();
-        // Init `worklist` with all the `InstanceId`s
         let mut worklist = callgraph
             .graph
             .node_references()
             .map(|(instance_id, _)| instance_id)
             .collect::<VecDeque<_>>();
-        // `contexts` records live lockguards before calling each instance, init empty
         let mut contexts = worklist
             .iter()
             .copied()
             .map(|id| (id, LiveLockGuards::default()))
-            .collect::<FxHashMap<_, _>>();
-        // The fixed-point algorithm
+            .collect::<FxHashMap<_, _>>(); //记录LiveLockGuard
+        // 固定点算法
         while let Some(id) = worklist.pop_front() {
             if let Some(lockguard_info) = lockguards.get(&id) {
                 let instance = match callgraph.index_to_instance(id).unwrap() {
@@ -190,35 +188,24 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                 }
             }
         }
-        
-        // Get lockguard info
         let mut info = FxHashMap::default();
         for (_, map) in lockguards.into_iter() {
             info.extend(map.into_iter());
         }
 
-        let mut reports = self.detect_deadlock(callgraph,&info, andersen);
-        
-        
+        let mut reports = self.detect_deadlock(callgraph,&info, andersen,&contexts);
+
         if !lockguards_before_condvar_apis.is_empty() {
-            reports.extend(
-                self.detect_condvar_misuse(
-                    &lockguards_before_condvar_apis,
-                    &condvar_apis,
-                    &info,
-                    callgraph,
-                    andersen,
-                )
-                .into_iter(),
-            );
+            let condvar_repo = self.detect_condvar_misuse(
+                                            &lockguards_before_condvar_apis,
+                                            &condvar_apis,
+                                &info,
+                                            callgraph,
+                                            andersen,
+                                        );
+            reports.extend(condvar_repo.into_iter());
         }
-        //输出report
-       if !reports.is_empty() {
-            let j = serde_json::to_string_pretty(&reports).unwrap();
-            warn!("{}", j);
-            let stats = report_stats("crate_name", &reports);
-            warn!("{}", stats);
-        }
+        reports
     }
 
     fn intraproc_gen_kill(
@@ -322,6 +309,7 @@ impl<'tcx> CondvarAnalysis<'tcx> {
         callgraph: &'a CallGraph<'tcx>,
         info: &LockGuardMap<'tcx>,
         andersen: &mut Andersen<'a, 'tcx>,
+        context: &FxHashMap<NodeIndex,LiveLockGuards>,
     )  -> Vec<Report>{
        let mut reports = Vec::new();
        let mut conflictlock_graph = ConflictLockGraph::new();
@@ -334,7 +322,7 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                format!("{:?}", a_info.lockguard_ty) + &format!("{:?}", a_info.span);
            let b_str =
                format!("{:?}", b_info.lockguard_ty) + &format!("{:?}", b_info.span);
-           println!("\nLOCKGUARD RELATION (a,b):\na: {:?},{:?}\nb: {:?},{:?}",a,a_str,b,b_str);
+        //    println!("\nLOCKGUARD RELATION (a,b):\na: {:?},{:?}\nb: {:?},{:?}",a,a_str,b,b_str);
           
            let (possibility,reason) =deadlock_possibility(a, b,info,andersen,self.param_env); //alias
           
@@ -364,37 +352,75 @@ impl<'tcx> CondvarAnalysis<'tcx> {
        //处理 conflict lock
        for ((_, a), node1) in relation_to_nodes.iter() {
             for ((b, _), node2) in relation_to_nodes.iter() { //不会同时匹配同一个元素
-                let (possibility, _) = deadlock_possibility(a, b, info,andersen,self.param_env);
-                match possibility {
-                    DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
-                        conflictlock_graph.add_edge(*node1, *node2, possibility); //添加边
-                    }
-                    _ => {}
-                };
+                    let (possibility, _) = deadlock_possibility(a, b, info,andersen,self.param_env);
+                    match possibility {           
+                        DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                            conflictlock_graph.add_edge(*node1, *node2, possibility); //添加边
+                        }
+                        _ => {}
+                    };
+                
+               
             }
         }
         let cycle_paths = conflictlock_graph.cycle_paths();
+       
         
+
         for path in cycle_paths {
-            let diagnosis = path
+
+            // let gatelock = path
+            //         .iter()
+            //         .zip(path.iter().skip(1).chain(path.get(0)))
+            //         .map(|(node1, node2)| self.detect_gatelock(*node1, *node2, context, andersen)) 
+            //         .collect::<Vec<_>>();
+            // println!("gatelock{:?}",gatelock);
+           
+            // if !gatelock[0]{
+                
+                let diagnosis = path
                 .into_iter()
                 .map(|relation_id| { 
                     let (a, b) = conflictlock_graph.node_weight(relation_id).unwrap();
                     diagnose_one_relation(a, b, info, callgraph, self.tcx)
                 })
                 .collect::<Vec<_>>();
-            let report = Report::ConflictLock(ReportContent::new(
-                "ConflictLock".to_owned(),
-                "Possibly".to_owned(),
-                diagnosis,
-                "Locks mutually wait for each other to form a cycle".to_owned(),
-            ));
-            reports.push(report);
+                let report = Report::ConflictLock(ReportContent::new(
+                    "ConflictLock".to_owned(),
+                    "Possibly".to_owned(),
+                    diagnosis,
+                    "Locks mutually wait for each other to form a cycle".to_owned(),
+                ));
+                reports.push(report);
+            // }
         }
         reports
     }
 
-
+    fn detect_gatelock<'a>(
+        &self,
+        node1:NodeIndex,
+        node2:NodeIndex,
+        contexts: &FxHashMap<NodeIndex,LiveLockGuards>,
+        andersen: &mut Andersen<'a, 'tcx>,
+    )-> bool{
+        let mut live1 =  contexts[&node1].clone();
+        let mut live2 =  contexts[&node2].clone();
+        for id1 in live1.0.iter(){
+            for id2 in live2.0.iter(){
+                if *id1 == *id2{
+                    return true
+                }else {
+                    let res = andersen.alias((*id1).into(), (*id2).into(), self.param_env);
+                    match res {
+                        ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {return true;}
+                        _ =>{}
+                    }
+                }   
+            }
+        }
+        false
+    }
     fn detect_condvar_misuse<'a>(
         &self,
         lockguards_before_condvar_apis: &FxHashMap<InstanceId, LockGuardsBeforeCallSites>,
@@ -414,6 +440,7 @@ impl<'tcx> CondvarAnalysis<'tcx> {
         // callee_instance -> (Caller, Location, Callee) -> &Condvar
         let mut parking_lot_wait = FxHashMap::default();
         for (callee_id, callsite_lockguards) in lockguards_before_condvar_apis {
+            // println!("callsite_lockguards:{:?}",callsite_lockguards);
             let condvar_api = condvar_apis.get(callee_id).unwrap();
             for (caller_id, loc) in callsite_lockguards.keys() {
                 let body = self.tcx.instance_mir(
@@ -428,49 +455,50 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                     TerminatorKind::Call { func: _, args, .. } => args.clone(),
                     _ => continue,
                 };
+                // println!("condvar_api{:?},args{:?}",condvar_api,args);   //args的类型 类型
                 match condvar_api {
                     CondvarApi::Std(StdCondvarApi::Wait(_)) => {
-                        if let (Operand::Move(condvar_ref), Operand::Move(mutex_guard)) =
-                            (&args[0], &args[1])
-                        {
-                            // callsite -> (&Condvar, MutexGuard)
-                            std_wait.insert(
-                                (*caller_id, *loc, *callee_id),
-                                (
-                                    AliasId {
-                                        instance_id: *caller_id,
-                                        local: condvar_ref.local,
-                                    },
-                                    AliasId {
-                                        instance_id: *caller_id,
-                                        local: mutex_guard.local,
-                                    },
-                                ),
-                            );
+                        if let Operand::Copy(condvar_ref)|Operand::Move(condvar_ref) = &args[0]{ //
+                            if let Operand::Copy(mutex_guard)|Operand::Move(mutex_guard) = &args[1]{ //
+                                std_wait.insert(
+                                    (*caller_id, *loc, *callee_id),
+                                    (
+                                        AliasId {
+                                            instance_id: *caller_id,
+                                            local: condvar_ref.local,
+                                        },
+                                        AliasId {
+                                            instance_id: *caller_id,
+                                            local: mutex_guard.local,
+                                        },
+                                    ),
+                                );
+                            }
                         }
+                       
                     }
                     CondvarApi::ParkingLot(ParkingLotCondvarApi::Wait(_)) => {
-                        if let (Operand::Move(condvar_ref), Operand::Move(mutex_guard_ref)) =
-                            (&args[0], &args[1])
-                        {
-                            // callsite -> (&Condvar, &mut MutexGuard)
-                            parking_lot_wait.insert(
-                                (*caller_id, *loc, *callee_id),
-                                (
-                                    AliasId {
-                                        instance_id: *caller_id,
-                                        local: condvar_ref.local,
-                                    },
-                                    AliasId {
-                                        instance_id: *caller_id,
-                                        local: mutex_guard_ref.local,
-                                    },
-                                ),
-                            );
+                        if let Operand::Copy(condvar_ref)|Operand::Move(condvar_ref) = &args[0]{ //
+                            if let Operand::Copy(mutex_guard_ref)|Operand::Move(mutex_guard_ref) = &args[1]{ //
+                                parking_lot_wait.insert(
+                                    (*caller_id, *loc, *callee_id),
+                                    (
+                                        AliasId {
+                                            instance_id: *caller_id,
+                                            local: condvar_ref.local,
+                                        },
+                                        AliasId {
+                                            instance_id: *caller_id,
+                                            local: mutex_guard_ref.local,
+                                        },
+                                    ),
+                                );
+                            }
                         }
+                       
                     }
                     CondvarApi::Std(StdCondvarApi::Notify(_)) => {
-                        if let Operand::Move(condvar_ref) = args[0] {
+                        if let Operand::Copy(condvar_ref) | Operand::Move(condvar_ref) = args[0] {
                             // callsite -> &Condvar
                             std_notify.insert(
                                 (*caller_id, *loc, *callee_id),
@@ -482,7 +510,7 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                         }
                     }
                     CondvarApi::ParkingLot(ParkingLotCondvarApi::Notify(_)) => {
-                        if let Operand::Move(condvar_ref) = args[0] {
+                        if let Operand::Copy(condvar_ref)|Operand::Move(condvar_ref) = args[0] {
                             // callsite -> &Condvar
                             parking_lot_notify.insert(
                                 (*caller_id, *loc, *callee_id),
@@ -496,12 +524,16 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                 }
             }
         }
-        // Check std::sync::Condvar
+       
+        
         for ((caller_id1, loc1, callee_id1), (condvar_ref1, mutex_guard1)) in std_wait.iter() {
+            let mut wait_match_notify = false;
             for ((caller_id2, loc2, callee_id2), condvar_ref2) in std_notify.iter() {
                 let res = andersen.alias(*condvar_ref1, *condvar_ref2,self.param_env);
+                // println!("condvar1:{:?},condvar2:{:?},alias:{:?}",*condvar_ref1,*condvar_ref2,res);
                 match res {
                     ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {
+                        wait_match_notify = true;
                         // live1: LiveLockGuards before `wait`
                         // live2: LiveLockGuards before `notify`
                         let live1 = lockguards_before_condvar_apis
@@ -519,7 +551,7 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                                     live2.flat_map(|g2| live1.clone().map(move |g1| (*g1, *g2)));
                                 let aliased_pairs = cartesian_product
                                     .filter(|(g1, g2)| {
-                                        andersen.alias((*g1).into(), (*g2).into(),self.param_env)
+                                        andersen.alias((*g1).into(), (*g2).into(),self.param_env) //wait和notify配对 但因为闭包参数不准确
                                             > ApproximateAliasKind::Unlikely
                                             && deadlock_possibility(
                                                 g1,
@@ -540,6 +572,7 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                                     }
                                 }
                                 if !no_mutex_guards.is_empty() {
+                                
                                     let diagnosis = diagnose_condvar_deadlock(
                                         (*caller_id1, *loc1),
                                         (*caller_id2, *loc2),
@@ -566,14 +599,19 @@ impl<'tcx> CondvarAnalysis<'tcx> {
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
+            }
+            if !wait_match_notify{
+                ///需要输出report 
+                /// 因为闭包参数不准确
+                println!("Miss Notify()!");
+                
             }
         }
         // Check parking_lot::Condvar
-        for ((caller_id1, loc1, callee_id1), (condvar_ref1, mutex_guard1)) in
-            parking_lot_wait.iter()
-        {
+        for ((caller_id1, loc1, callee_id1), (condvar_ref1, mutex_guard1)) in parking_lot_wait.iter(){
             for ((caller_id2, loc2, callee_id2), condvar_ref2) in parking_lot_notify.iter() {
                 let res = andersen.alias(*condvar_ref1, *condvar_ref2,self.param_env);
                 match res {
@@ -691,7 +729,7 @@ fn deadlock_possibility<'a,'tcx>(
         return (DeadlockPossibility::Unlikely, NotDeadlockReason::SameSpan);
     }
     let possibility = match a_ty.deadlock_with(b_ty) {
-        DeadlockPossibility::Probably => match andersen.alias((*a).into(), (*b).into(),param_env) {
+        DeadlockPossibility::Probably => match andersen.alias((*a).into(), (*b).into(),param_env) { //
             ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
             ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
             ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
@@ -775,6 +813,27 @@ fn diagnose_condvar_deadlock<'tcx>(
         )
     }
 }
+
+// fn diagnose_condvar_no_notify<'tcx>(
+//     callsite1: (InstanceId, Location),
+//     is_std_condvar: bool,
+//     waitid: LockGuardId,
+//     lockguards: &LockGuardMap<'tcx>,
+//     callgraph: &CallGraph<'tcx>,
+//     tcx: TyCtxt<'tcx>,
+// ) -> CondvarDeadlockDiagnosis{
+//     CondvarDeadlockDiagnosis::new(
+//         "std::sync::Condvar::wait".to_owned(),
+//         wait_span,
+//         "std::sync::Condvar::notify".to_owned(),
+//         notify_span,
+//         wait_notify_locks,
+//     )
+// }
+
+
+
+
 /// Find all the callchains: source -> target
 // e.g., for one path: source --|callsites1|--> medium --|callsites2|--> target,
 // first extract callsite locations on edge, namely, [callsites1, callsites2],

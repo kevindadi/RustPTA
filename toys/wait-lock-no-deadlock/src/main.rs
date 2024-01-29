@@ -6,7 +6,7 @@ fn wait<T>(a: MutexGuard<T>) -> MutexGuard<T> {
 }
 fn main() {
     let mu = Mutex::new(0);
-    let mut lg = mu.lock().unwrap();
+    let mut lg = mu.lock().unwrap(); //
     lg = wait(lg);
     std::mem::drop(lg);
 }
