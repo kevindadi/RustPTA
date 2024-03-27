@@ -1,3 +1,4 @@
+pub mod async_callgraph;
 pub mod callgraph;
 pub mod function_pn;
 pub mod graph_type;

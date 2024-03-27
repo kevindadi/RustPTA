@@ -1,5 +1,5 @@
 use super::{
-    callgraph::{CallGraph, InstanceId},
+    callgraph::InstanceId,
     petri_net::{PetriNetEdge, PetriNetNode, Place},
 };
 use crate::{
@@ -9,18 +9,15 @@ use crate::{
         handler::JoinHanderId,
         locks::{LockGuardId, LockGuardMap, LockGuardTy},
     },
-    graph::petri_net::{PetriNet, Transition},
+    graph::petri_net::Transition,
 };
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
-use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{
-    visit::Visitor, BasicBlock, Local, TerminatorKind, UnwindAction, UnwindTerminateReason,
-};
+use rustc_middle::mir::{visit::Visitor, BasicBlock, TerminatorKind, UnwindAction};
 use rustc_middle::{
     mir::Body,
-    ty::{Instance, ParamEnv, TyCtxt},
+    ty::{Instance, TyCtxt},
 };
 use std::{cell::RefCell, collections::HashMap};
 
@@ -277,7 +274,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
                                 PetriNetEdge { label: 1usize },
                             );
 
-                            if let Some(info) = self.lockguards.get_mut(&lockguard_id) {
+                            if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
                                 let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
                                 match &self.lockguards[&lockguard_id].lockguard_ty {
                                     LockGuardTy::StdMutex(_)
@@ -468,7 +465,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
 
                                     if args.len() > 0 {
                                         let args_ty = args.get(0).unwrap().ty(self.body, self.tcx);
-                                        let args_id: Option<DefId> = match args_ty.kind() {
+                                        let _: Option<DefId> = match args_ty.kind() {
                                             rustc_middle::ty::TyKind::Closure(def_id, _) => {
                                                 if let Some((callee_start, _)) =
                                                     self.function_counter.get(&def_id)

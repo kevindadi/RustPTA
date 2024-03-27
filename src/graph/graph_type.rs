@@ -1,12 +1,12 @@
 use super::petri_net::PetriNet;
 
-pub trait GraphType {
+pub trait OutputType {
     fn lola(&self);
 
     fn pnml(&self);
 }
 
-impl<'tcx, 'a> GraphType for PetriNet<'tcx, 'a> {
+impl<'tcx, 'a> OutputType for PetriNet<'tcx, 'a> {
     fn lola(&self) {}
 
     fn pnml(&self) {}

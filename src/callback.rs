@@ -20,6 +20,7 @@ use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
 
 pub struct PTACallbacks {
     options: Options,
+
     file_name: String,
     output_directory: PathBuf,
     test_run: bool,

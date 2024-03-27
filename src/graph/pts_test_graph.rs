@@ -107,7 +107,7 @@ impl<'tcx> PtsDetecter<'tcx> {
                 self.lockguard_relations.insert((*k1, *k2));
             }
         }
-        use std::cell::RefCell;
+
         use std::rc::Rc;
         let lock_node = Rc::new(RefCell::new(FxHashMap::<LockGuardId, NodeIndex>::default()));
         let mut pts_map = Graph::<String, String>::new();

@@ -1,9 +1,7 @@
 extern crate rustc_hash;
 use log::debug;
 use log::info;
-use petgraph::data::Build;
 use petgraph::graph::NodeIndex;
-use petgraph::matrix_graph::node_index;
 use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
@@ -29,7 +27,6 @@ use super::state_graph::StateGraph;
 use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::candvar::CondVarInfo;
-use crate::concurrency::candvar::CondvarMap;
 use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::handler::JoinHandlerCollector;
 use crate::concurrency::handler::JoinHandlerMap;
