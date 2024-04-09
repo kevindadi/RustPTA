@@ -1,5 +1,3 @@
-extern crate rustc_hash;
-
 use std::cell::RefCell;
 
 use crate::analysis::pointsto::{AliasAnalysis, ApproximateAliasKind};

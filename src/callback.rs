@@ -43,7 +43,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
             .input
             .source_name()
             .prefer_remapped() // nightly-2023-09-13
-            // .prefer_remapped_unconditionaly()
+            //.prefer_remapped_unconditionaly()
             .to_string();
 
         debug!("Processing input file: {}", self.file_name);
@@ -93,15 +93,8 @@ impl rustc_driver::Callbacks for PTACallbacks {
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         // Skip crates by names (white or black list).
-        let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
+        // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
 
-        match &self.options.crate_name_list {
-            CrateNameList::White(crates) if !crates.is_empty() && !crates.contains(&crate_name) => {
-                return
-            }
-            CrateNameList::Black(crates) if crates.contains(&crate_name) => return,
-            _ => {}
-        };
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }

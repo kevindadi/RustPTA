@@ -1,4 +1,3 @@
-extern crate rustc_hash;
 use log::debug;
 use log::info;
 use petgraph::graph::NodeIndex;

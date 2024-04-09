@@ -5,6 +5,7 @@
 //! if `-l` not specified, then do not white-or-black list the crates.
 use clap::{Arg, Command};
 use std::error::Error;
+use std::path::Path;
 
 #[derive(Debug)]
 pub enum CrateNameList {
@@ -29,31 +30,27 @@ pub enum DetectorKind {
     // More to be supported.
 }
 
-fn make_options_parser<'help>() -> Command<'help> {
-    let parser = Command::new("LOCKBUD")
+fn make_options_parser() -> clap::Command {
+    let parser = Command::new("PTA")
         .no_binary_name(true)
-        .version("v0.2.0")
+        .author("https://flml.tongji.edu.cn/")
+        .version("v0.1.0")
         .arg(
             Arg::new("kind")
                 .short('k')
                 .long("detector-kind")
-                .possible_values(["deadlock", "atomicity_violation", "memory", "all", "panic"])
+                .help("The detector kind")
                 .default_values(&["deadlock"])
-                .help("The detector kind"),
+                .value_parser(["deadlock", "race", "memory", "all"]),
+            //.possible_values(),
         )
         .arg(
-            Arg::new("black")
-                .short('b')
-                .long("blacklist-mode")
-                .takes_value(false)
-                .help("set `crates` as blacklist than whitelist"),
-        )
-        .arg(
-            Arg::new("crates")
-                .short('l')
-                .long("crate-name-list")
-                .takes_value(true)
-                .help("The crate names seperated by ,"),
+            Arg::new("output")
+                .short('o')
+                .long("output")
+                .value_name("FILE")
+                .help("Path to file where diagnostic information will be stored")
+                .default_value("diagnostics.json"), // 默认的文件路径
         );
     parser
 }
@@ -61,14 +58,14 @@ fn make_options_parser<'help>() -> Command<'help> {
 #[derive(Debug)]
 pub struct Options {
     pub detector_kind: DetectorKind,
-    pub crate_name_list: CrateNameList,
+    pub output: String,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
             detector_kind: DetectorKind::Deadlock,
-            crate_name_list: CrateNameList::Black(Vec::new()),
+            output: Default::default(),
         }
     }
 }
@@ -82,29 +79,20 @@ impl Options {
     pub fn parse_from_args(flags: &[String]) -> Result<Self, Box<dyn Error>> {
         let app = make_options_parser();
         let matches = app.try_get_matches_from(flags.iter())?;
-        let detector_kind = match matches.value_of("kind") {
-            Some("deadlock") => DetectorKind::Deadlock,
-            Some("atomicity_violation") => DetectorKind::AtomicityViolation,
-            Some("memory") => DetectorKind::Memory,
-            Some("all") => DetectorKind::All,
-            Some("panic") => DetectorKind::Panic,
+        let detector_kind = match matches.get_one::<&str>("kind") {
+            Some(&"deadlock") => DetectorKind::Deadlock,
+            Some(&"atomicity_violation") => DetectorKind::AtomicityViolation,
+            Some(&"memory") => DetectorKind::Memory,
+            Some(&"all") => DetectorKind::All,
+            Some(&"panic") => DetectorKind::Panic,
             _ => return Err("UnsupportedDetectorKind")?,
         };
-        let black = matches.is_present("black");
-        let crate_name_list = matches
-            .value_of("crates")
-            .map(|crates| {
-                let crates: Vec<String> = crates.split(',').map(|s| s.into()).collect();
-                if black {
-                    CrateNameList::Black(crates)
-                } else {
-                    CrateNameList::White(crates)
-                }
-            })
-            .unwrap_or_default();
+
+        let output = matches.get_one::<String>("output").unwrap().to_string();
+
         Ok(Options {
             detector_kind,
-            crate_name_list,
+            output,
         })
     }
 }
@@ -114,58 +102,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_from_str_blacklist_ok() {
-        let options = Options::parse_from_str("-k deadlock -b -l cc,tokio_util,indicatif").unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::Black(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
-    }
-
-    #[test]
-    fn test_parse_from_str_whitelist_ok() {
-        let options = Options::parse_from_str("-k deadlock -l cc,tokio_util,indicatif").unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::White(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
-    }
-
-    #[test]
     fn test_parse_from_str_err() {
         let options = Options::parse_from_str("-k unknown -b -l cc,tokio_util,indicatif");
         assert!(options.is_err());
-    }
-
-    #[test]
-    fn test_parse_from_args_blacklist_ok() {
-        let options = Options::parse_from_args(&[
-            "-k".to_owned(),
-            "deadlock".to_owned(),
-            "-b".to_owned(),
-            "-l".to_owned(),
-            "cc,tokio_util,indicatif".to_owned(),
-        ])
-        .unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::Black(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
-    }
-
-    #[test]
-    fn test_parse_from_args_whitelist_ok() {
-        let options = Options::parse_from_args(&[
-            "-k".to_owned(),
-            "deadlock".to_owned(),
-            "-l".to_owned(),
-            "cc,tokio_util,indicatif".to_owned(),
-        ])
-        .unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::White(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
     }
 
     #[test]

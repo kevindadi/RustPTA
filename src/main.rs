@@ -8,12 +8,14 @@ pub mod graph;
 pub mod memory;
 pub mod options;
 
+extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
+extern crate rustc_span;
 
 use log::debug;
 use options::Options;
@@ -35,6 +37,7 @@ fn main() {
             arg.into_string().unwrap_or_else(|arg| {
                 // TODO: error handler
                 String::from("need to handle")
+
                 // early_error(
                 //     ErrorOutputType::default(),
                 //     &format!("Argument {} is not valid Unicode: {:?}", i, arg),
