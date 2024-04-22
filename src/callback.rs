@@ -11,7 +11,7 @@ use crate::graph::callgraph::CallGraph;
 use crate::graph::petri_net::{PetriNet, PetriNetNode, Shape};
 use crate::graph::pts_test_graph::PtsDetecter;
 use crate::options::{CrateNameList, Options};
-use log::debug;
+use log::{debug, info};
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
@@ -94,7 +94,10 @@ impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         // Skip crates by names (white or black list).
         // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-
+        info!(
+            "Current Crate: {:?}",
+            tcx.crate_name(LOCAL_CRATE).to_string()
+        );
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }

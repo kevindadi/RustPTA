@@ -111,7 +111,7 @@ impl ReturnAssign {
         let left = Vec::<usize>::new();
         let right = Vec::<usize>::new();
         ReturnAssign {
-            left_index: left_index,
+            left_index,
             left: left,
             left_so_so: left_so_so,
             left_need_drop: left_need_drop,
@@ -580,6 +580,9 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         }
                         None => {}
                     }
+                    // for t in targets.iter() {
+                    //     current_node.push(t.as_usize());
+                    // }
                     match unwind {
                         UnwindAction::Cleanup(target) => {
                             current_node.push(target.as_usize());

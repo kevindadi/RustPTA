@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 #![feature(box_patterns)]
+#![feature(saturating_int_impl)]
 
 pub mod analysis;
 pub mod callback;
