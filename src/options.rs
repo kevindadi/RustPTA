@@ -48,6 +48,12 @@ fn make_options_parser() -> clap::Command {
                 .value_name("FILE")
                 .help("Path to file where diagnostic information will be stored")
                 .default_value("diagnostics.json"), // 默认的文件路径
+        )
+        .arg(
+            Arg::new("crate")
+                .short('c')
+                .long("crate-name")
+                .default_value("test"), // 默认的文件路径
         );
     parser
 }
@@ -56,6 +62,7 @@ fn make_options_parser() -> clap::Command {
 pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: String,
+    pub crate_name: String,
 }
 
 impl Default for Options {
@@ -63,6 +70,7 @@ impl Default for Options {
         Options {
             detector_kind: DetectorKind::Deadlock,
             output: Default::default(),
+            crate_name: String::new(),
         }
     }
 }
@@ -87,9 +95,11 @@ impl Options {
 
         let output = matches.get_one::<String>("output").unwrap().to_string();
 
+        let crate_name = matches.get_one::<String>("crate-name").unwrap().to_string();
         Ok(Options {
             detector_kind,
             output,
+            crate_name,
         })
     }
 }

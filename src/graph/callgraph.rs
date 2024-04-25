@@ -7,6 +7,8 @@
 //! We also track where a closure is defined rather than called
 //! to record the defined function and the parameter of the closure,
 //! which is pointed to by upvars.
+use std::fmt::Debug;
+
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
@@ -156,11 +158,11 @@ impl<'tcx> CallGraph<'tcx> {
 
     /// Print the callgraph in dot format.
     #[allow(dead_code)]
-    pub fn dot(&self) {
-        println!(
+    pub fn dot(&self) -> String {
+        format!(
             "{:?}",
-            Dot::with_config(&self.graph, &[Config::GraphContentOnly])
-        );
+            Dot::with_config(&self.graph, &[Config::EdgeNoLabel])
+        )
     }
 }
 

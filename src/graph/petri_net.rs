@@ -46,9 +46,9 @@ pub enum Shape {
 
 #[derive(Debug, Clone)]
 pub struct Place {
-    name: String,
-    tokens: RefCell<usize>,
-    capacity: usize,
+    pub name: String,
+    pub tokens: RefCell<usize>,
+    pub capacity: usize,
     shape: Shape,
     terminal_mark: bool,
 }
@@ -93,9 +93,9 @@ impl std::fmt::Display for Place {
 
 #[derive(Debug, Clone)]
 pub struct Transition {
-    name: String,
+    pub name: String,
     time: (u32, u32),
-    weight: u32,
+    pub weight: u32,
     shape: Shape,
 }
 
@@ -227,6 +227,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
             }
         }
         //self.deal_post_function();
+        self.reduce_state();
     }
 
     pub fn visitor_function_body(
@@ -913,7 +914,7 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
             }
         }
-        info!("All states are: {:?}", all_state.len());
+        // info!("All states are: {:?}", all_state.len());
         use petgraph::dot::Dot;
         use std::io::Write;
         let mut sg_file = std::fs::File::create("sg.dot").unwrap();
@@ -1030,6 +1031,34 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         current_mark
     }
 
+    // Reduce the size of the Petri net and merge edges without branches
+    pub fn reduce_state(&mut self) {
+        // 删除孤独节点
+        // 收集孤立节点
+        let mut isolated_nodes = Vec::new();
+        for node in self.net.node_indices() {
+            if self
+                .net
+                .edges_directed(node, petgraph::Direction::Incoming)
+                .count()
+                == 0
+                && self
+                    .net
+                    .edges_directed(node, petgraph::Direction::Outgoing)
+                    .count()
+                    == 0
+            {
+                isolated_nodes.push(node);
+            }
+        }
+
+        // 删除孤立节点
+        for node in isolated_nodes {
+            self.net.remove_node(node);
+        }
+    }
+
+    pub fn print_callgraph(&self) {}
     // Detect deadlock in the Petri net
     // pub fn detect_deadlocks(&self) -> Vec<Marking> {
     //     let mut visited_markings = HashSet::new();

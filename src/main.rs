@@ -8,6 +8,7 @@ pub mod concurrency;
 pub mod graph;
 pub mod memory;
 pub mod options;
+pub mod utils;
 
 extern crate rustc_data_structures;
 extern crate rustc_driver;
@@ -18,10 +19,19 @@ extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
 
-use log::debug;
+use log::{debug, info};
 use options::Options;
+use rustc_span::sym::format;
 
 fn main() {
+    let early_error_handler =
+        rustc_session::EarlyErrorHandler::new(rustc_session::config::ErrorOutputType::default());
+
+    // Initialize loggers.
+    if std::env::var("RUSTC_LOG").is_ok() {
+        rustc_driver::init_rustc_env_logger(&early_error_handler);
+    }
+
     if std::env::var("PTA_LOG").is_ok() {
         let e = env_logger::Env::new()
             .filter("PTA_LOG")
@@ -31,13 +41,13 @@ fn main() {
 
     let options = Options::parse_from_str(&std::env::var("PTA_FLAGS").unwrap_or_default())
         .unwrap_or_default();
-    debug!("PTA options from environment: {:?}", options);
+    log::debug!("PTA options from environment: {:?}", options);
     let mut args = std::env::args_os()
         .enumerate()
         .map(|(i, arg)| {
             arg.into_string().unwrap_or_else(|arg| {
-                // TODO: error handler
-                String::from("need to handle")
+                early_error_handler
+                    .early_error(format!("Argument {i} is not valid Unicode: {arg:?}"))
 
                 // early_error(
                 //     ErrorOutputType::default(),
@@ -97,6 +107,7 @@ fn main() {
             "rustc_command_line_arguments {:?}",
             rustc_command_line_arguments
         );
+
         let compiler =
             rustc_driver::RunCompiler::new(&rustc_command_line_arguments, &mut callbacks);
         compiler.run()

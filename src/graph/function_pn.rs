@@ -97,9 +97,9 @@ impl<'a, 'b, 'tcx> FunctionPN<'a, 'b, 'tcx> {
 
 impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
-        let fn_id = self.instance.def_id();
+        let func_id = self.instance.def_id();
 
-        let fn_name = self.tcx.def_path_str(fn_id);
+        let fn_name = self.tcx.def_path_str(func_id);
         if fn_name.contains("core")
             || fn_name.contains("std")
             || fn_name.contains("alloc")
@@ -107,6 +107,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
             || fn_name.contains("spin::")
             || fn_name.contains("::new")
             || fn_name.contains("libc")
+            || fn_name.contains("tokio")
         {
         } else {
             for (bb_idx, _) in body.basic_blocks.iter_enumerated() {
@@ -127,7 +128,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
                     let bb_start = self.net.add_node(PetriNetNode::T(bb_start_transition));
 
                     self.net.add_edge(
-                        self.function_counter.get(&fn_id).unwrap().0,
+                        self.function_counter.get(&func_id).unwrap().0,
                         bb_start,
                         PetriNetEdge { label: 1usize },
                     );
@@ -191,7 +192,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
                                 bb_end,
                                 PetriNetEdge { label: 1usize },
                             );
-                            let return_node = self.function_counter.get(&fn_id).unwrap().1;
+                            let return_node = self.function_counter.get(&func_id).unwrap().1;
                             self.net
                                 .add_edge(bb_end, return_node, PetriNetEdge { label: 1usize });
                         }
@@ -207,7 +208,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
                                 PetriNetEdge { label: 1usize },
                             );
 
-                            let return_node = self.function_counter.get(&fn_id).unwrap().1;
+                            let return_node = self.function_counter.get(&func_id).unwrap().1;
                             self.net
                                 .add_edge(bb_end, return_node, PetriNetEdge { label: 1usize });
                         }
@@ -260,6 +261,15 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
                             call_source: _,
                             fn_span: _,
                         } => {
+                            let call_ty = func.ty(self.body, self.tcx).kind();
+                            match call_ty {
+                                rustc_middle::ty::TyKind::FnDef(_, _)
+                                | rustc_middle::ty::TyKind::Closure(_, _) => {}
+                                _ => {
+                                    return;
+                                }
+                            }
+
                             let lockguard_id =
                                 LockGuardId::new(self.instance_id, destination.local);
                             let handle_id = JoinHanderId::new(self.instance_id, destination.local);
@@ -313,9 +323,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
 
                                 let callee_id = match callee_ty.kind() {
                                     rustc_middle::ty::TyKind::FnPtr(_) => {
-                                        unimplemented!(
-                                        "TyKind::FnPtr not implemented yet. Function pointers are present in the MIR"
-                                    );
+                                        return;
                                     }
                                     rustc_middle::ty::TyKind::FnDef(def_id, _)
                                     | rustc_middle::ty::TyKind::Closure(def_id, _) => {

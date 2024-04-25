@@ -8,19 +8,19 @@ use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::petri_net::{PetriNet, PetriNetNode, Shape};
-use crate::graph::pts_test_graph::PtsDetecter;
+use crate::graph::graph_type::OutputType;
+use crate::graph::petri_net::{PetriNet, PetriNetNode};
 use crate::options::{CrateNameList, Options};
-use log::{debug, info};
+use log::debug;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
+use std::fmt::{Debug, Formatter, Result};
 
 pub struct PTACallbacks {
     options: Options,
-
     file_name: String,
     output_directory: PathBuf,
     test_run: bool,
@@ -34,6 +34,18 @@ impl PTACallbacks {
             output_directory: PathBuf::default(),
             test_run: false,
         }
+    }
+}
+
+impl Debug for PTACallbacks {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        "PTACallbacks".fmt(f)
+    }
+}
+
+impl Default for PTACallbacks {
+    fn default() -> Self {
+        Self::new(Options::default())
     }
 }
 
@@ -51,6 +63,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
             debug!("in test only mode");
             // self.options.test_only = true;
         }
+        config.crate_cfg.insert(("pta".to_string(), None));
         match &config.output_dir {
             None => {
                 self.output_directory = std::env::temp_dir();
@@ -94,13 +107,21 @@ impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         // Skip crates by names (white or black list).
         // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-        info!(
-            "Current Crate: {:?}",
-            tcx.crate_name(LOCAL_CRATE).to_string()
-        );
+        let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
+        if crate_name.contains("lock_api")
+            || crate_name.contains("bytes")
+            || crate_name.contains("signal")
+            || crate_name.contains("num_cpus")
+            || crate_name.contains("syn")
+            || crate_name.contains("tokio")
+        {
+            return;
+        }
+
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
+
         let cgus = tcx.collect_and_partition_mono_items(()).1;
         let instances: Vec<Instance<'tcx>> = cgus
             .iter()
@@ -124,13 +145,19 @@ impl PTACallbacks {
         // TODO: 遍历所有的锁,判断其指向关系
 
         // TODO: reduce callgraph
-        let mut pts_detecter = PtsDetecter::new(tcx, param_env);
-        pts_detecter.output_pts(&callgraph, &mut alias_analysis);
+        // let mut pts_detecter = PtsDetecter::new(tcx, param_env);
+        // pts_detecter.output_pts(&callgraph, &mut alias_analysis);
         // pts_detecter.generate_petri_net(&callgraph);
-
+        let callgraph_output = callgraph.dot();
+        let callgraph_path = "callgraph.dot";
+        let mut callgraph_file = std::fs::File::create(callgraph_path).unwrap();
+        callgraph_file
+            .write_all(callgraph_output.as_bytes())
+            .expect("Unable to write callgraph!");
         // TODO: visit local recursive
         let mut pn = PetriNet::new(tcx, param_env, &callgraph);
         pn.construct();
+
         let stategraph = pn.generate_state_graph();
         pn.check_deadlock();
 
@@ -160,5 +187,13 @@ impl PTACallbacks {
 
         let mut pn_file = std::fs::File::create("pn.dot").unwrap();
         write!(pn_file, "{}", pn_dot).unwrap();
+
+        let lola_output = pn.lola();
+        let lola_path = "output.lola";
+        let mut lola_file = std::fs::File::create(lola_path).unwrap();
+        lola_file
+            .write_all(lola_output.as_bytes())
+            .expect("Unable to write lola!");
+        // log::info!("export to Lola");
     }
 }
