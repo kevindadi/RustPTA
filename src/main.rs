@@ -21,7 +21,6 @@ extern crate rustc_span;
 
 use log::{debug, info};
 use options::Options;
-use rustc_span::sym::format;
 
 fn main() {
     let early_error_handler =
@@ -39,20 +38,20 @@ fn main() {
         env_logger::init_from_env(e);
     }
 
-    let options = Options::parse_from_str(&std::env::var("PTA_FLAGS").unwrap_or_default())
-        .unwrap_or_default();
+    let mut options = Options::default();
+    let _ = options.parse_from_str(
+        &std::env::var("PTA_FLAGS").unwrap_or_default(),
+        &early_error_handler,
+    );
+
     log::debug!("PTA options from environment: {:?}", options);
+    // panic!();
     let mut args = std::env::args_os()
         .enumerate()
         .map(|(i, arg)| {
             arg.into_string().unwrap_or_else(|arg| {
                 early_error_handler
                     .early_error(format!("Argument {i} is not valid Unicode: {arg:?}"))
-
-                // early_error(
-                //     ErrorOutputType::default(),
-                //     &format!("Argument {} is not valid Unicode: {:?}", i, arg),
-                // )
             })
         })
         .collect::<Vec<_>>();

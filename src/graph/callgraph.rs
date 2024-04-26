@@ -16,6 +16,7 @@ use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction::Incoming;
 use petgraph::{Directed, Graph};
 
+use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind};
 use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind};
@@ -43,6 +44,32 @@ impl CallSiteLocation {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct FunctionNode<'tcx> {
+    pub instance: Instance<'tcx>,
+    pub def_id: DefId,
+    pub name: Box<str>,
+}
+
+impl<'tcx> FunctionNode<'tcx> {
+    pub fn new_node(instance: Instance<'tcx>, def_id: DefId) -> FunctionNode {
+        FunctionNode {
+            instance,
+            def_id,
+            name: FunctionNode::format_name(def_id),
+        }
+    }
+
+    pub fn format_name(def_id: DefId) -> Box<str> {
+        let tmp1 = format!("{def_id:?}");
+        let tmp2: &str = tmp1.split("~ ").collect::<Vec<&str>>()[1];
+        let tmp3 = tmp2.replace(')', "");
+        let lhs = tmp3.split('[').collect::<Vec<&str>>()[0];
+        let rhs = tmp3.split(']').collect::<Vec<&str>>()[1];
+        format!("{lhs}{rhs}").into_boxed_str()
+    }
+}
+
 /// The CallGraph node wrapping an Instance.
 /// WithBody means the Instance owns body.
 #[derive(Debug, PartialEq, Eq)]
@@ -50,6 +77,12 @@ pub enum CallGraphNode<'tcx> {
     WithBody(Instance<'tcx>),
     WithoutBody(Instance<'tcx>),
 }
+
+// #[derive(Debug, PartialEq, Eq)]
+// pub enum CallGraphNode<'tcx> {
+//     WithBody(FunctionNode<'tcx>),
+//     WithoutBody(FunctionNode<'tcx>),
+// }
 
 impl<'tcx> CallGraphNode<'tcx> {
     pub fn instance(&self) -> &Instance<'tcx> {

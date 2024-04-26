@@ -1,8 +1,5 @@
-use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
-use petgraph::Graph;
 
 use super::petri_net::{PetriNet, PetriNetNode};
 
@@ -12,7 +9,7 @@ pub trait OutputType {
     fn pnml(&self);
 }
 
-impl<'tcx, 'a> OutputType for PetriNet<'tcx, 'a> {
+impl<'compilation, 'tcx, 'a> OutputType for PetriNet<'compilation, 'tcx, 'a> {
     fn lola(&self) -> String {
         let mut places = Vec::<String>::new();
         let mut transitions = Vec::<String>::new();

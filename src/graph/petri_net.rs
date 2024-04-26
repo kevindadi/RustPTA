@@ -1,3 +1,4 @@
+use crate::Options;
 use log::debug;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -51,6 +52,7 @@ pub struct Place {
     pub capacity: usize,
     shape: Shape,
     terminal_mark: bool,
+    pub details: String,
 }
 
 impl Place {
@@ -61,6 +63,7 @@ impl Place {
             capacity: token,
             shape: Shape::Circle,
             terminal_mark: false,
+            details: String::new(),
         }
     }
 
@@ -71,6 +74,7 @@ impl Place {
             capacity: 1usize,
             shape: Shape::Circle,
             terminal_mark: false,
+            details: String::new(),
         }
     }
 
@@ -81,6 +85,7 @@ impl Place {
             capacity: 1,
             shape: Shape::Circle,
             terminal_mark,
+            details: String::new(),
         }
     }
 }
@@ -160,7 +165,8 @@ impl Hash for Marking {
     }
 }
 
-pub struct PetriNet<'a, 'tcx> {
+pub struct PetriNet<'compilation, 'a, 'tcx> {
+    options: &'compilation Options,
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
@@ -191,14 +197,16 @@ pub struct PetriNet<'a, 'tcx> {
 //         write!(f, "{}", Dot::with_config(&self.net, &[config]))
 //     }
 // }
-impl<'a, 'tcx> PetriNet<'a, 'tcx> {
+impl<'compilation, 'a, 'tcx> PetriNet<'compilation, 'a, 'tcx> {
     pub fn new(
+        options: &'compilation Options,
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         param_env: ParamEnv<'tcx>,
         callgraph: &'a CallGraph<'tcx>,
     ) -> Self {
         let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
         Self {
+            options,
             tcx,
             param_env,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
@@ -221,12 +229,25 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         self.collect_handle();
         self.collect_condvar();
         for (node, caller) in self.callgraph.graph.node_references() {
-            if self.tcx.is_mir_available(caller.instance().def_id()) {
+            if self.tcx.is_mir_available(caller.instance().def_id())
+                && self
+                    .format_name(caller.instance().def_id())
+                    .contains(&self.options.crate_name)
+            {
                 self.visitor_function_body(node, caller);
             }
         }
-        //self.deal_post_function();
         self.reduce_state();
+    }
+
+    /// Extracts a function name from the DefId of a function.
+    fn format_name(&self, def_id: DefId) -> String {
+        let tmp1 = format!("{def_id:?}");
+        let tmp2: &str = tmp1.split("~ ").collect::<Vec<&str>>()[1];
+        let tmp3 = tmp2.replace(')', "");
+        let lhs = tmp3.split('[').collect::<Vec<&str>>()[0];
+        let rhs = tmp3.split(']').collect::<Vec<&str>>()[1];
+        format!("{lhs}{rhs}").to_string()
     }
 
     pub fn visitor_function_body(
@@ -269,16 +290,16 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
                 let func_id = func_instance.instance().def_id();
                 let func_name = self.tcx.def_path_str(func_id);
-                if func_name.contains("core")
-                    || func_name.contains("std")
-                    || func_name.contains("alloc")
-                    || func_name.contains("parking_lot::")
-                    || func_name.contains("spin::")
-                    || func_name.contains("::new")
-                    || func_name.contains("libc")
-                {
-                    continue;
-                }
+                // if func_name.contains("core")
+                //     || func_name.contains("std")
+                //     || func_name.contains("alloc")
+                //     || func_name.contains("parking_lot::")
+                //     || func_name.contains("spin::")
+                //     || func_name.contains("::new")
+                //     || func_name.contains("libc")
+                // {
+                //     continue;
+                // }
                 if func_id == main_func {
                     let func_start = Place::new(format!("{}", func_name) + "start", 1);
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
@@ -301,30 +322,31 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
                 }
             }
         } else {
-            for node_idx in self.callgraph.graph.node_indices() {
-                // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
-                let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
-                let func_id = func_instance.instance().def_id();
-                let func_name = self.tcx.def_path_str(func_id);
-                if func_name.contains("core")
-                    || func_name.contains("std")
-                    || func_name.contains("alloc")
-                    || func_name.contains("parking_lot::")
-                    || func_name.contains("spin::")
-                    || func_name.contains("::new")
-                    || func_name.contains("libc")
-                {
-                    continue;
-                }
-                let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
-                let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
-                let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
+            log::error!("cargo pta need a entry point!");
+            // for node_idx in self.callgraph.graph.node_indices() {
+            //     // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
+            //     let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
+            //     let func_id = func_instance.instance().def_id();
+            //     let func_name = self.tcx.def_path_str(func_id);
+            //     if func_name.contains("core")
+            //         || func_name.contains("std")
+            //         || func_name.contains("alloc")
+            //         || func_name.contains("parking_lot::")
+            //         || func_name.contains("spin::")
+            //         || func_name.contains("::new")
+            //         || func_name.contains("libc")
+            //     {
+            //         continue;
+            //     }
+            //     let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
+            //     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
+            //     let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
+            //     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
 
-                self.function_counter
-                    .insert(func_id, (func_start_node_id, func_end_node_id));
-                self.function_vec.insert(func_id, vec![func_start_node_id]);
-            }
+            //     self.function_counter
+            //         .insert(func_id, (func_start_node_id, func_end_node_id));
+            //     self.function_vec.insert(func_id, vec![func_start_node_id]);
+            // }
         }
     }
 

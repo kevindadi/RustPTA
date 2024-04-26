@@ -20,7 +20,7 @@ use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
 use std::fmt::{Debug, Formatter, Result};
 
 pub struct PTACallbacks {
-    options: Options,
+    pub options: Options,
     file_name: String,
     output_directory: PathBuf,
     test_run: bool,
@@ -153,13 +153,17 @@ impl PTACallbacks {
             .write_all(callgraph_output.as_bytes())
             .expect("Unable to write callgraph!");
 
-        let mut pn = PetriNet::new(tcx, param_env, &callgraph);
+        log::debug!("analysi crate is {:?}", self.options.crate_name);
+        if !crate_name.contains(&self.options.crate_name) {
+            log::info!("No conversion is required for this crate {:?}!", crate_name);
+            return;
+        }
+        let mut pn = PetriNet::new(&self.options, tcx, param_env, &callgraph);
         pn.construct();
 
         // let stategraph = pn.generate_state_graph();
         // pn.check_deadlock();
 
-        use petgraph::dot::Dot;
         use std::io::Write;
 
         // let pn_dot = Dot::with_attr_getters(
