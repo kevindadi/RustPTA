@@ -108,15 +108,15 @@ impl PTACallbacks {
         // Skip crates by names (white or black list).
         // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
         let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-        if crate_name.contains("lock_api")
-            || crate_name.contains("bytes")
-            || crate_name.contains("signal")
-            || crate_name.contains("num_cpus")
-            || crate_name.contains("syn")
-            || crate_name.contains("tokio")
-        {
-            return;
-        }
+        // if crate_name.contains("lock_api")
+        //     || crate_name.contains("bytes")
+        //     || crate_name.contains("signal")
+        //     || crate_name.contains("num_cpus")
+        //     || crate_name.contains("syn")
+        //     || crate_name.contains("tokio")
+        // {
+        //     return;
+        // }
 
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
@@ -139,10 +139,8 @@ impl PTACallbacks {
         let param_env = ParamEnv::reveal_all();
         callgraph.analyze(instances.clone(), tcx, param_env);
 
-        // TODO: 基于调用图构造指针分析框架
+        // 基于调用图构造指针分析框架
         let mut alias_analysis = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
-
-        // TODO: 遍历所有的锁,判断其指向关系
 
         // TODO: reduce callgraph
         // let mut pts_detecter = PtsDetecter::new(tcx, param_env);
@@ -154,46 +152,45 @@ impl PTACallbacks {
         callgraph_file
             .write_all(callgraph_output.as_bytes())
             .expect("Unable to write callgraph!");
-        // TODO: visit local recursive
+
         let mut pn = PetriNet::new(tcx, param_env, &callgraph);
         pn.construct();
 
-        let stategraph = pn.generate_state_graph();
-        pn.check_deadlock();
+        // let stategraph = pn.generate_state_graph();
+        // pn.check_deadlock();
 
         use petgraph::dot::Dot;
         use std::io::Write;
-        // let graph = pn.net.take();
 
-        let pn_dot = Dot::with_attr_getters(
-            &pn.net,
-            &[],
-            &|_, _| "arrowhead = vee".to_string(),
-            &|_, nr| {
-                format!(
-                    "shape = {}",
-                    match nr.1 {
-                        PetriNetNode::P(_) => {
-                            "circle"
-                        }
-                        PetriNetNode::T(_) => {
-                            "box"
-                        }
-                    }
-                )
-                .to_string()
-            },
-        );
+        // let pn_dot = Dot::with_attr_getters(
+        //     &pn.net,
+        //     &[],
+        //     &|_, _| "arrowhead = vee".to_string(),
+        //     &|_, nr| {
+        //         format!(
+        //             "shape = {}",
+        //             match nr.1 {
+        //                 PetriNetNode::P(_) => {
+        //                     "circle"
+        //                 }
+        //                 PetriNetNode::T(_) => {
+        //                     "box"
+        //                 }
+        //             }
+        //         )
+        //         .to_string()
+        //     },
+        // );
 
-        let mut pn_file = std::fs::File::create("pn.dot").unwrap();
-        write!(pn_file, "{}", pn_dot).unwrap();
+        // let mut pn_file = std::fs::File::create("pn.dot").unwrap();
+        // write!(pn_file, "{}", pn_dot).unwrap();
 
-        let lola_output = pn.lola();
-        let lola_path = "output.lola";
-        let mut lola_file = std::fs::File::create(lola_path).unwrap();
-        lola_file
-            .write_all(lola_output.as_bytes())
-            .expect("Unable to write lola!");
+        // let lola_output = pn.lola();
+        // let lola_path = "output.lola";
+        // let mut lola_file = std::fs::File::create(lola_path).unwrap();
+        // lola_file
+        //     .write_all(lola_output.as_bytes())
+        //     .expect("Unable to write lola!");
         // log::info!("export to Lola");
     }
 }

@@ -95,7 +95,7 @@ impl Options {
 
         let output = matches.get_one::<String>("output").unwrap().to_string();
 
-        let crate_name = matches.get_one::<String>("crate-name").unwrap().to_string();
+        let crate_name = matches.get_one::<String>("cn").unwrap().to_string();
         Ok(Options {
             detector_kind,
             output,

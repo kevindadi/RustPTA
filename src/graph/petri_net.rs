@@ -1,5 +1,4 @@
 use log::debug;
-use log::info;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
@@ -15,6 +14,7 @@ use rustc_middle::{
     ty::{self, Instance, ParamEnv, TyCtxt},
 };
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -191,7 +191,6 @@ pub struct PetriNet<'a, 'tcx> {
 //         write!(f, "{}", Dot::with_config(&self.net, &[config]))
 //     }
 // }
-
 impl<'a, 'tcx> PetriNet<'a, 'tcx> {
     pub fn new(
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
@@ -1058,69 +1057,19 @@ impl<'a, 'tcx> PetriNet<'a, 'tcx> {
         }
     }
 
-    pub fn print_callgraph(&self) {}
-    // Detect deadlock in the Petri net
-    // pub fn detect_deadlocks(&self) -> Vec<Marking> {
-    //     let mut visited_markings = HashSet::new();
-    //     let initial_marking = self.get_initial_marking(); // Implement this method based on your Petri net
-    //     let mut deadlock_markings = Vec::new();
-
-    //     self.dfs_deadlock_detection(
-    //         &initial_marking,
-    //         &mut visited_markings,
-    //         &mut deadlock_markings,
-    //     );
-
-    //     deadlock_markings
-    // }
-
-    // Helper function for recursive DFS deadlock detection
-    // fn dfs_deadlock_detection(
-    //     &self,
-    //     marking: &Marking,
-    //     visited_markings: &mut HashSet<Marking>,
-    //     deadlock_markings: &mut Vec<Marking>,
-    // ) {
-    //     for transition in self.get_enabled_transitions(marking) {
-    //         // Fire the transition to get a new marking
-    //         let new_marking = self.fire_transition(marking, &transition);
-
-    //         // Check if the new marking has been visited before
-    //         if visited_markings.contains(&new_marking) {
-    //             // Deadlock detected
-    //             deadlock_markings.push(new_marking.clone());
-    //             continue; // Continue to explore other branches
-    //         }
-
-    //         // Mark the new marking as visited and continue DFS
-    //         visited_markings.insert(new_marking.clone());
-    //         self.dfs_deadlock_detection(&new_marking, visited_markings, deadlock_markings);
-
-    //         // Backtrack: remove the transition firing for the next iteration
-    //         self.undo_transition(&mut new_marking, &transition);
-    //     }
-    // }
-
-    // Implement these methods based on your Petri net
-    // fn get_initial_marking(&self) -> Marking {
-    //     // Implement based on your Petri net structure
-    //     // Return the initial distribution of tokens across places
-    // }
-
-    // fn get_enabled_transitions(&self, marking: &Marking) -> Vec<Transition> {
-    //     // Implement based on your Petri net structure
-    //     // Return a list of transitions that can fire from the given marking
-    // }
-
-    // fn fire_transition(&self, marking: &Marking, transition: &Transition) -> Marking {
-    //     // Implement based on your Petri net structure
-    //     // Return a new marking after firing the given transition from the input marking
-    // }
-
-    // fn undo_transition(&self, marking: &mut Marking, transition: &Transition) {
-    //     // Implement based on your Petri net structure
-    //     // Update the marking to undo the effect of firing the given transition
-    // }
+    pub fn get_or_insert_node(&mut self, def_id: DefId) -> (NodeIndex, NodeIndex) {
+        match self.function_counter.entry(def_id) {
+            Entry::Occupied(node) => node.get().to_owned(),
+            Entry::Vacant(v) => {
+                let func_name = self.tcx.def_path_str(def_id);
+                let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
+                let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
+                let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
+                let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
+                *v.insert((func_start_node_id, func_end_node_id))
+            }
+        }
+    }
 }
 
 /// Collect lockguard info.
