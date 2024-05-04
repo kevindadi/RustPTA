@@ -27,6 +27,7 @@ pub enum DetectorKind {
     AtomicityViolation,
     Memory,
     Panic,
+    DataRace,
     // More to be supported.
 }
 
@@ -134,6 +135,7 @@ impl Options {
             "memory" => DetectorKind::Memory,
             "all" => DetectorKind::All,
             "panic" => DetectorKind::Panic,
+            "datarace" => DetectorKind::DataRace,
             _ => DetectorKind::Deadlock,
         };
         if matches.contains_id("output_dir") {

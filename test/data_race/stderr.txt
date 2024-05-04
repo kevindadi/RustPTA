@@ -1,0 +1,41 @@
+    Finished dev [unoptimized + debuginfo] target(s) in 0.01s
+     Running `target/debug/data_race`
+==================
+WARNING: ThreadSanitizer: data race (pid=73478)
+  Write of size 4 at 0x00010161a138 by thread T1:
+    #0 data_race::main::_$u7b$$u7b$closure$u7d$$u7d$::h46c11a1d2f4f7a3c main.rs:6 (data_race:x86_64+0x10000489c)
+    #1 std::sys_common::backtrace::__rust_begin_short_backtrace::hb112272e9bb6db2d backtrace.rs:154 (data_race:x86_64+0x100006ae5)
+    #2 std::thread::Builder::spawn_unchecked_::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::hc2a42f0363bd3455 mod.rs:529 (data_race:x86_64+0x100006905)
+    #3 _$LT$core..panic..unwind_safe..AssertUnwindSafe$LT$F$GT$$u20$as$u20$core..ops..function..FnOnce$LT$$LP$$RP$$GT$$GT$::call_once::he1d66c460f9b4f8c unwind_safe.rs:271 (data_race:x86_64+0x100006a45)
+    #4 std::panicking::try::do_call::h07c3dec6665898ef panicking.rs:526 (data_race:x86_64+0x100009245)
+    #5 __rust_try <null>:33868249 (data_race:x86_64+0x100009456)
+    #6 std::panicking::try::h0b5d81ac35d90170 panicking.rs:490 (data_race:x86_64+0x1000090cb)
+    #7 std::thread::Builder::spawn_unchecked_::_$u7b$$u7b$closure$u7d$$u7d$::h8733b586313c5331 mod.rs:528 (data_race:x86_64+0x100006765)
+    #8 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::haf1116a148e6401e function.rs:250 (data_race:x86_64+0x1000015f1)
+    #9 std::sys::unix::thread::Thread::new::thread_start::hbd6b3c940ffebb42 <null>:33868249 (data_race:x86_64+0x10002cad8)
+
+  Previous write of size 4 at 0x00010161a138 by main thread:
+    #0 data_race::main::h9aaa3d02cd49da53 main.rs:8 (data_race:x86_64+0x1000047a7)
+    #1 core::ops::function::FnOnce::call_once::h7fc327ab93fc3eeb function.rs:250 (data_race:x86_64+0x10000177e)
+    #2 std::sys_common::backtrace::__rust_begin_short_backtrace::hacae4f21585e5c7d backtrace.rs:154 (data_race:x86_64+0x100006aa1)
+    #3 std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$::hdcfea15eec5df62f rt.rs:166 (data_race:x86_64+0x100006c0d)
+    #4 std::rt::lang_start_internal::he25611ff05acf1eb <null>:33868249 (data_race:x86_64+0x1000248f9)
+    #5 main <null>:33868249 (data_race:x86_64+0x10000483f)
+
+  Location is global 'data_race::ANSWER::h46fc85e338847902' at 0x00010161a138 (data_race+0x100055138)
+
+  Thread T1 (tid=5999154, running) created by main thread at:
+    #0 pthread_create <null>:33868249 (librustc-nightly_rt.tsan.dylib:x86_64h+0x9aef)
+    #1 std::sys::unix::thread::Thread::new::h249fa67ab56bb63c <null>:33868249 (data_race:x86_64+0x10002c93f)
+    #2 std::thread::Builder::spawn_unchecked::h3f024ac906f0489c mod.rs:457 (data_race:x86_64+0x100005b7c)
+    #3 std::thread::spawn::h9dc8f5993b4aa544 mod.rs:686 (data_race:x86_64+0x100005aee)
+    #4 data_race::main::h9aaa3d02cd49da53 main.rs:6 (data_race:x86_64+0x100004799)
+    #5 core::ops::function::FnOnce::call_once::h7fc327ab93fc3eeb function.rs:250 (data_race:x86_64+0x10000177e)
+    #6 std::sys_common::backtrace::__rust_begin_short_backtrace::hacae4f21585e5c7d backtrace.rs:154 (data_race:x86_64+0x100006aa1)
+    #7 std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$::hdcfea15eec5df62f rt.rs:166 (data_race:x86_64+0x100006c0d)
+    #8 std::rt::lang_start_internal::he25611ff05acf1eb <null>:33868249 (data_race:x86_64+0x1000248f9)
+    #9 main <null>:33868249 (data_race:x86_64+0x10000483f)
+
+SUMMARY: ThreadSanitizer: data race main.rs:6 in data_race::main::_$u7b$$u7b$closure$u7d$$u7d$::h46c11a1d2f4f7a3c
+==================
+ThreadSanitizer: reported 1 warnings

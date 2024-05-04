@@ -8,6 +8,7 @@ pub mod concurrency;
 pub mod graph;
 pub mod memory;
 pub mod options;
+pub mod report;
 pub mod utils;
 
 extern crate rustc_data_structures;
@@ -21,6 +22,8 @@ extern crate rustc_span;
 
 use log::{debug, info};
 use options::Options;
+
+use crate::options::DetectorKind;
 
 fn main() {
     let early_error_handler =
@@ -74,10 +77,6 @@ fn main() {
             .iter()
             .any(|arg| arg.starts_with(&print))
         {
-            // If a --print option is given on the command line we wont get called to analyze
-            // anything. We also don't want to the caller to know that LOCKBUD adds configuration
-            // parameters to the command line, lest the caller be cargo and it panics because
-            // the output from --print=cfg is not what it expects.
         } else {
             let sysroot: String = "--sysroot".into();
             if !rustc_command_line_arguments
@@ -98,6 +97,13 @@ fn main() {
                 // Tell compiler to emit MIR into crate for every function with a body.
                 rustc_command_line_arguments.push("-Z".into());
                 rustc_command_line_arguments.push(always_encode_mir);
+            }
+
+            match options.detector_kind {
+                DetectorKind::DataRace => {
+                    rustc_command_line_arguments.push("-Zsanitizer=thread".into())
+                }
+                _ => {}
             }
         }
 

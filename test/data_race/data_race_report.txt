@@ -1,0 +1,17 @@
+{
+  "filename": "main.rs",
+  "line_number": 0,
+  "current_action": {
+    "action_type": "",
+    "size": 0,
+    "address": "",
+    "thread_name": ""
+  },
+  "previous_action": {
+    "action_type": "",
+    "size": 0,
+    "address": "",
+    "thread_name": ""
+  },
+  "message": ""
+}
