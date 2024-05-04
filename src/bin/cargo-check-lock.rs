@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsString;
+use std::io::Write;
 use std::process::{Command, Stdio};
 
 use RustPTA::parse_thread_sanitizer_report;
@@ -25,9 +26,6 @@ fn has_arg_flag(name: &str) -> bool {
 }
 
 fn in_cargo_pta() {
-    // Now we run `cargo build $FLAGS $ARGS`, giving the user the
-    // change to add additional arguments. `FLAGS` is set to identify
-    // this target. The user gets to control what gets actually passed to lockbud.
     let mut cmd = cargo();
     cmd.arg("build");
     cmd.env("RUSTC_WRAPPER", "pta");
@@ -54,9 +52,6 @@ fn in_cargo_pta() {
 }
 
 fn cargo_sanitizer() {
-    // Now we run `cargo build $FLAGS $ARGS`, giving the user the
-    // change to add additional arguments. `FLAGS` is set to identify
-    // this target. The user gets to control what gets actually passed to lockbud.
     let mut cmd = cargo();
     cmd.arg("run");
     cmd.env("RUSTFLAGS", "-Zsanitizer=thread");
@@ -77,9 +72,10 @@ fn cargo_sanitizer() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     let reports = parse_thread_sanitizer_report(&stderr);
+    let mut file = std::fs::File::create("data_race_report.txt").unwrap();
 
-    for report in reports.iter() {
-        let _ = report.save_to_file("data_race_report.txt");
+    for report in reports {
+        writeln!(file, "{}", report).unwrap();
     }
 }
 

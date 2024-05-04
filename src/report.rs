@@ -1,7 +1,8 @@
-use log::{debug, info};
+use core::fmt;
+use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::{collections::HashMap, fmt::write, io::Write};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActionDetail {
@@ -9,6 +10,7 @@ pub struct ActionDetail {
     size: usize,
     address: String,
     thread_name: String,
+    file_span: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +20,16 @@ pub struct DataRaceReport {
     pub current_action: ActionDetail,  // 当前操作
     pub previous_action: ActionDetail, // 之前操作
     pub message: String,               // 详细描述或附加消息
+}
+
+impl fmt::Display for ActionDetail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} {} in {}",
+            self.thread_name, self.action_type, self.file_span,
+        )
+    }
 }
 
 impl DataRaceReport {
@@ -37,28 +49,28 @@ impl DataRaceReport {
         }
     }
 
-    /// 打印报告的详细信息
-    fn display(&self) {
-        println!("Data Race Detected:");
-        println!("File: {}", self.filename);
-        println!("Line: {}", self.line_number);
-        println!("Message: {}", self.message);
-    }
-
     /// 将报告保存到文件中
     pub fn save_to_file(&self, file_path: &str) -> std::io::Result<()> {
-        let file = std::fs::File::create(file_path)?;
-        let mut writer = std::io::BufWriter::new(file);
-        let report = serde_json::to_string_pretty(&self)?;
-        writer.write_all(report.as_bytes())
+        let mut file = std::fs::File::create(file_path)?;
+        // let mut writer = std::io::BufWriter::new(file);
+        // let report = serde_json::to_string_pretty(&self)?;
+        // writer.write_all(report.as_bytes())
+        writeln!(file, "{}", self)
+    }
+}
+
+impl fmt::Display for DataRaceReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Data Race Report:\nLocation: {}\n{}--->{}",
+            self.message, self.previous_action, self.current_action,
+        )
     }
 }
 
 pub fn parse_thread_sanitizer_report(capture: &str) -> Vec<DataRaceReport> {
     let mut reports = Vec::new();
-    //let location_regex = Regex::new(r"Location is global '(.*?)' at").unwrap();
-    let _ = Regex::new(r"main\.rs:(\d+)").unwrap();
-
     let action_regex =
         Regex::new(r"(Read|Write) of size (\d+) at (0x[0-9a-f]+) by (thread T\d+|main thread)")
             .unwrap();
@@ -67,48 +79,12 @@ pub fn parse_thread_sanitizer_report(capture: &str) -> Vec<DataRaceReport> {
     )
     .unwrap();
 
-    let summary_regex = Regex::new(r"SUMMARY: ThreadSanitizer: data race (.*)").unwrap();
-
-    // let file = std::fs::File::create("stderr.txt").unwrap();
-    // let mut writer = std::io::BufWriter::new(file);
-    // let _ = writer.write_all(capture.clone().as_bytes());
-
-    // for line in capture.lines() {
-    //     let mut ready_to_build_report = false;
-    //     let mut summary = String::new();
-    //     let mut current_action = ActionDetail::default();
-    //     let mut previous_action = ActionDetail::default();
-    //     if let Some(caps) = summary_regex.captures(line) {
-    //         summary = caps[1].to_string();
-    //         ready_to_build_report = true;
-    //     }
-    //     if let Some(caps) = action_regex.captures(line) {
-    //         debug!("find current action");
-    //         current_action.action_type = caps.get(1).unwrap().as_str().to_string();
-    //         current_action.size = caps.get(2).unwrap().as_str().to_string().parse().unwrap();
-    //         current_action.address = caps.get(3).unwrap().as_str().to_string();
-    //         current_action.thread_name = caps.get(4).unwrap().as_str().to_string();
-    //         println!("{:?}", current_action);
-    //     }
-    //     if let Some(caps) = previous_action_regex.captures(line) {
-    //         debug!("find previous action");
-    //         previous_action.action_type = caps[1].to_string();
-    //         previous_action.size = caps[2].parse().unwrap();
-    //         previous_action.address = caps[3].to_string();
-    //         previous_action.thread_name = caps[4].to_string();
-    //         println!("{:?}", previous_action);
-    //     }
-
-    //     if ready_to_build_report && !summary.is_empty() {
-    //         let report = DataRaceReport::new(
-    //             "main.rs".to_string(),
-    //             summary.clone(),
-    //             current_action.clone(),
-    //             previous_action.clone(),
-    //         );
-    //         reports.push(report);
-    //     }
-    // }
+    //let summary_regex = Regex::new(r"SUMMARY: ThreadSanitizer: data race (.*)").unwrap();
+    let summary_regex = Regex::new(
+        r"(?P<file>[^:\s]+\.rs):(?P<line>\d+) in (?P<function>[^s:]+?::[^\s:]+)(?:::[^\s:]+)",
+    )
+    .unwrap();
+    let span_regex = Regex::new(r"(\w+\.rs):(\d+)").unwrap();
 
     for cap in capture.split("WARNING: ThreadSanitizer: data race").skip(1) {
         let mut ready_to_build_report = false;
@@ -116,9 +92,19 @@ pub fn parse_thread_sanitizer_report(capture: &str) -> Vec<DataRaceReport> {
         let mut current_action = ActionDetail::default();
         let mut previous_action = ActionDetail::default();
 
-        for line in cap.lines() {
+        let mut lines_map: HashMap<usize, &str> = HashMap::new();
+        for (index, line) in cap.lines().enumerate() {
+            lines_map.insert(index, line);
+        }
+
+        for (index, line) in cap.lines().enumerate() {
             if let Some(caps) = summary_regex.captures(line) {
-                summary = caps[1].to_string();
+                summary = caps.name("file").unwrap().as_str().to_string()
+                    + ":"
+                    + caps.name("line").unwrap().as_str()
+                    + "->"
+                    + caps.name("function").unwrap().as_str();
+                debug!("{}", summary);
                 ready_to_build_report = true;
             }
             if let Some(caps) = action_regex.captures(line) {
@@ -127,7 +113,12 @@ pub fn parse_thread_sanitizer_report(capture: &str) -> Vec<DataRaceReport> {
                 current_action.size = caps.get(2).unwrap().as_str().to_string().parse().unwrap();
                 current_action.address = caps.get(3).unwrap().as_str().to_string();
                 current_action.thread_name = caps.get(4).unwrap().as_str().to_string();
-                println!("{:?}", current_action);
+                if let Some(caps) = span_regex.captures(lines_map.get(&(index + 1)).unwrap()) {
+                    current_action.file_span = caps.get(1).unwrap().as_str().to_string()
+                        + ":"
+                        + caps.get(2).unwrap().as_str();
+                }
+                debug!("{:?}", current_action);
             }
             if let Some(caps) = previous_action_regex.captures(line) {
                 debug!("find previous action");
@@ -135,7 +126,12 @@ pub fn parse_thread_sanitizer_report(capture: &str) -> Vec<DataRaceReport> {
                 previous_action.size = caps[2].parse().unwrap();
                 previous_action.address = caps[3].to_string();
                 previous_action.thread_name = caps[4].to_string();
-                println!("{:?}", previous_action);
+                if let Some(caps) = span_regex.captures(lines_map.get(&(index + 1)).unwrap()) {
+                    previous_action.file_span = caps.get(1).unwrap().as_str().to_string()
+                        + ":"
+                        + caps.get(2).unwrap().as_str();
+                }
+                log::info!("{:?}", previous_action);
             }
         }
         if ready_to_build_report && !summary.is_empty() {
@@ -148,43 +144,11 @@ pub fn parse_thread_sanitizer_report(capture: &str) -> Vec<DataRaceReport> {
             reports.push(report);
         }
     }
-    //     let current_action_caps = action_regex.captures(cap).unwrap();
-
-    //     let previous_action_caps = previous_action_regex.captures(cap).unwrap();
-    //     // let _ = location_regex.captures(cap).unwrap();
-    //     let summary_caps = summary_regex.captures(cap).unwrap();
-
-    //     let current_action = ActionDetail {
-    //         action_type: current_action_caps[1].to_string(),
-    //         size: current_action_caps[2].parse().unwrap(),
-    //         address: current_action_caps[3].to_string(),
-    //         thread_name: current_action_caps[4].to_string(),
-    //     };
-
-    //     let previous_action = ActionDetail {
-    //         action_type: previous_action_caps[1].to_string(),
-    //         size: previous_action_caps[2].parse().unwrap(),
-    //         address: previous_action_caps[3].to_string(),
-    //         thread_name: previous_action_caps[4].to_string(),
-    //     };
-
-    //     let report = DataRaceReport::new(
-    //         "main.rs".to_string(),
-    //         summary_caps[1].to_string(),
-    //         current_action,
-    //         previous_action,
-    //     );
-
-    //     reports.push(report);
-    // }
-
     reports
 }
 
 #[cfg(test)]
 pub mod test_s {
-    use crate::ActionDetail;
-
     use super::parse_thread_sanitizer_report;
 
     #[test]
@@ -231,30 +195,7 @@ pub mod test_s {
         let actions = parse_thread_sanitizer_report(output);
 
         for action in actions {
-            println!("{:?}", action);
+            action.save_to_file("report.txt");
         }
-    }
-
-    #[test]
-    fn test_previous_regex() {
-        use regex::Regex;
-        let output =
-            include_str!("/Users/zhangkaiwen/RustAnalysis/RustPTA/test/data_race/stderr.txt");
-        let regex = Regex::new(r"(?i)^\s*Previous\s+(Read|Write)\s+of\s+size\s+(\d+)\s+at\s+(0x[0-9a-f]+)\s+by\s+(thread T\d+|main thread)").unwrap();
-        let mut A = ActionDetail::default();
-        for line in output.lines() {
-            if let Some(caps) = regex.captures(line) {
-                println!("Match found:");
-                println!("Operation: {}", caps.get(1).unwrap().as_str());
-                println!("Size: {}", caps.get(2).unwrap().as_str());
-                println!("Address: {}", caps.get(3).unwrap().as_str());
-                println!("Thread: {}", caps.get(4).unwrap().as_str());
-                A.action_type = caps.get(1).unwrap().as_str().to_string();
-                A.size = caps.get(2).unwrap().as_str().to_string().parse().unwrap();
-                A.address = caps.get(3).unwrap().as_str().to_string();
-                A.thread_name = caps.get(4).unwrap().as_str().to_string();
-            }
-        }
-        println!("{:?}", A);
     }
 }

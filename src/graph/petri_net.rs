@@ -165,13 +165,13 @@ impl Hash for Marking {
     }
 }
 
-pub struct PetriNet<'compilation, 'a, 'tcx> {
+pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
-    callgraph: &'a CallGraph<'tcx>,
-    alias: RefCell<AliasAnalysis<'a, 'tcx>>,
+    callgraph: &'pn CallGraph<'tcx>,
+    alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
     function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
@@ -197,12 +197,12 @@ pub struct PetriNet<'compilation, 'a, 'tcx> {
 //         write!(f, "{}", Dot::with_config(&self.net, &[config]))
 //     }
 // }
-impl<'compilation, 'a, 'tcx> PetriNet<'compilation, 'a, 'tcx> {
+impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn new(
         options: &'compilation Options,
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         param_env: ParamEnv<'tcx>,
-        callgraph: &'a CallGraph<'tcx>,
+        callgraph: &'pn CallGraph<'tcx>,
     ) -> Self {
         let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
         Self {
@@ -223,7 +223,7 @@ impl<'compilation, 'a, 'tcx> PetriNet<'compilation, 'a, 'tcx> {
         }
     }
 
-    pub fn construct(&mut self /*alias_analysis: &'a RefCell<AliasAnalysis<'a, 'tcx>>*/) {
+    pub fn construct(&mut self /*alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>*/) {
         self.construct_func();
         self.construct_lock_with_dfs();
         self.collect_handle();
@@ -254,7 +254,7 @@ impl<'compilation, 'a, 'tcx> PetriNet<'compilation, 'a, 'tcx> {
         &mut self,
         node: NodeIndex,
         caller: &CallGraphNode<'tcx>,
-        //alias_analysis: &'a RefCell<AliasAnalysis<'a, 'tcx>>,
+        //alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>,
     ) {
         let body = self.tcx.optimized_mir(caller.instance().def_id());
         // let body = self.tcx.instance_mir(caller.instance().def);
@@ -290,16 +290,7 @@ impl<'compilation, 'a, 'tcx> PetriNet<'compilation, 'a, 'tcx> {
                 let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
                 let func_id = func_instance.instance().def_id();
                 let func_name = self.tcx.def_path_str(func_id);
-                // if func_name.contains("core")
-                //     || func_name.contains("std")
-                //     || func_name.contains("alloc")
-                //     || func_name.contains("parking_lot::")
-                //     || func_name.contains("spin::")
-                //     || func_name.contains("::new")
-                //     || func_name.contains("libc")
-                // {
-                //     continue;
-                // }
+
                 if func_id == main_func {
                     let func_start = Place::new(format!("{}", func_name) + "start", 1);
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
@@ -388,62 +379,10 @@ impl<'compilation, 'a, 'tcx> PetriNet<'compilation, 'a, 'tcx> {
                             assert_eq!(*lock_map.get(a).unwrap(), *lock_map.get(b).unwrap());
                         }
                     }
-                    _ => {
-                        // if !lock_map.contains_key(a) && !lock_map.contains_key(b) {
-                        //     lock_map.insert(*a, counter);
-                        //     counter += 1;
-                        //     lock_map.insert(*b, counter);
-                        //     counter += 1;
-                        // } else if !lock_map.contains_key(a) {
-                        //     lock_map.insert(*a, counter);
-                        //     counter += 1;
-                        // } else if !lock_map.contains_key(b) {
-                        //     lock_map.insert(*b, counter);
-                        //     counter += 1;
-                        // } else {
-                        //     assert_ne!(*lock_map.get(a).unwrap(), *lock_map.get(b).unwrap());
-                        // }
-                    }
+                    _ => {}
                 }
             }
         }
-
-        // for (a, b) in &lockguard_relations {
-        //     let possibility = self.deadlock_possibility(a, b, &info, alias_analysis);
-        //     match possibility {
-        //         DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
-        //             if !lock_map.contains_key(a) && !lock_map.contains_key(b) {
-        //                 lock_map.insert(*a, counter);
-        //                 lock_map.insert(*b, counter);
-        //                 counter += 1;
-        //             } else if !lock_map.contains_key(a) {
-        //                 let value = *lock_map.get(b).unwrap();
-        //                 lock_map.insert(*a, value);
-        //             } else if !lock_map.contains_key(b) {
-        //                 let value = *lock_map.get(a).unwrap();
-        //                 lock_map.insert(*b, value);
-        //             } else {
-        //                 assert_eq!(*lock_map.get(a).unwrap(), *lock_map.get(b).unwrap());
-        //             }
-        //         }
-        //         _ => {
-        //             if !lock_map.contains_key(a) && !lock_map.contains_key(b) {
-        //                 lock_map.insert(*a, counter);
-        //                 counter += 1;
-        //                 lock_map.insert(*b, counter);
-        //                 counter += 1;
-        //             } else if !lock_map.contains_key(a) {
-        //                 lock_map.insert(*a, counter);
-        //                 counter += 1;
-        //             } else if !lock_map.contains_key(b) {
-        //                 lock_map.insert(*b, counter);
-        //                 counter += 1;
-        //             } else {
-        //                 assert_ne!(*lock_map.get(a).unwrap(), *lock_map.get(b).unwrap());
-        //             }
-        //         }
-        //     }
-        // }
 
         let mut lock_id_map: HashMap<u32, Vec<LockGuardId>> = HashMap::new();
         for (lock_id, value) in lock_map {

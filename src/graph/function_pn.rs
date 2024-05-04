@@ -34,41 +34,41 @@ pub fn find_key_by_id(
 }
 
 // Constructing Subsequent Graph based on function's CFG
-pub struct FunctionPN<'a, 'b, 'tcx> {
+pub struct FunctionPN<'translate, 'b, 'tcx> {
     instance_id: InstanceId,
-    instance: &'a Instance<'tcx>,
-    body: &'a Body<'tcx>,
+    instance: &'translate Instance<'tcx>,
+    body: &'translate Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     // param_env: ParamEnv<'tcx>,
-    pub net: &'a mut Graph<PetriNetNode, PetriNetEdge>,
+    pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
     //callgraph: &'b CallGraph<'tcx>,
-    alias: &'a RefCell<AliasAnalysis<'b, 'tcx>>,
+    alias: &'translate RefCell<AliasAnalysis<'b, 'tcx>>,
     pub lockguards: LockGuardMap<'tcx>,
-    function_counter: &'a HashMap<DefId, (NodeIndex, NodeIndex)>,
-    locks_counter: &'a HashMap<LockGuardId, NodeIndex>,
+    function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
+    locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
     bb_node_start_end: HashMap<BasicBlock, NodeIndex>,
     bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,
-    thread_id_handler: &'a mut HashMap<usize, Vec<JoinHanderId>>,
-    handler_id: &'a mut HashMap<JoinHanderId, DefId>,
-    condvar_id: &'a HashMap<CondVarId, NodeIndex>,
+    thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>,
+    handler_id: &'translate mut HashMap<JoinHanderId, DefId>,
+    condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
 }
 
-impl<'a, 'b, 'tcx> FunctionPN<'a, 'b, 'tcx> {
+impl<'translate, 'b, 'tcx> FunctionPN<'translate, 'b, 'tcx> {
     pub fn new(
         instance_id: InstanceId,
-        instance: &'a Instance<'tcx>,
-        body: &'a Body<'tcx>,
+        instance: &'translate Instance<'tcx>,
+        body: &'translate Body<'tcx>,
         tcx: TyCtxt<'tcx>,
         // param_env: ParamEnv<'tcx>,
-        net: &'a mut Graph<PetriNetNode, PetriNetEdge>,
+        net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
         // callgraph: &'b CallGraph<'tcx>,
-        alias: &'a RefCell<AliasAnalysis<'b, 'tcx>>,
+        alias: &'translate RefCell<AliasAnalysis<'b, 'tcx>>,
         lockguards: LockGuardMap<'tcx>,
-        function_counter: &'a HashMap<DefId, (NodeIndex, NodeIndex)>,
-        locks_counter: &'a HashMap<LockGuardId, NodeIndex>,
-        thread_id_handler: &'a mut HashMap<usize, Vec<JoinHanderId>>,
-        handler_id: &'a mut HashMap<JoinHanderId, DefId>,
-        condvar_id: &'a HashMap<CondVarId, NodeIndex>,
+        function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
+        locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
+        thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>,
+        handler_id: &'translate mut HashMap<JoinHanderId, DefId>,
+        condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
     ) -> Self {
         Self {
             instance_id,
@@ -95,21 +95,12 @@ impl<'a, 'b, 'tcx> FunctionPN<'a, 'b, 'tcx> {
     }
 }
 
-impl<'a, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'a, 'b, 'tcx> {
+impl<'translate, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'translate, 'b, 'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
         let func_id = self.instance.def_id();
 
         let fn_name = self.tcx.def_path_str(func_id);
-        // if fn_name.contains("core")
-        //     || fn_name.contains("std")
-        //     || fn_name.contains("alloc")
-        //     || fn_name.contains("parking_lot::")
-        //     || fn_name.contains("spin::")
-        //     || fn_name.contains("::new")
-        //     || fn_name.contains("libc")
-        //     || fn_name.contains("tokio")
-        // {
-        // } else {
+
         for (bb_idx, _) in body.basic_blocks.iter_enumerated() {
             let bb_name = fn_name.clone() + &format!("{:?}", bb_idx);
             let bb_start_place = Place::new_with_no_token(bb_name);
