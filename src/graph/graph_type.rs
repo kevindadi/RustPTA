@@ -19,7 +19,7 @@ impl<'compilation, 'tcx, 'a> OutputType for PetriNet<'compilation, 'tcx, 'a> {
             match &self.net[index] {
                 PetriNetNode::P(place) => {
                     places.push(place.name.clone());
-                    if (*place.tokens.borrow() > 0) {
+                    if *place.tokens.borrow() > 0 {
                         markings.push(format!(
                             "{}: {}",
                             place.name,

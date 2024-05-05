@@ -10,6 +10,8 @@ use crate::{
         locks::{LockGuardId, LockGuardMap, LockGuardTy},
     },
     graph::petri_net::Transition,
+    options::Options,
+    utils::format_name,
 };
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
@@ -34,15 +36,16 @@ pub fn find_key_by_id(
 }
 
 // Constructing Subsequent Graph based on function's CFG
-pub struct FunctionPN<'translate, 'b, 'tcx> {
+pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     instance_id: InstanceId,
     instance: &'translate Instance<'tcx>,
     body: &'translate Body<'tcx>,
     tcx: TyCtxt<'tcx>,
+    options: &'translate Options,
     // param_env: ParamEnv<'tcx>,
     pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
-    //callgraph: &'b CallGraph<'tcx>,
-    alias: &'translate RefCell<AliasAnalysis<'b, 'tcx>>,
+    //callgraph: &'analysis CallGraph<'tcx>,
+    alias: &'translate RefCell<AliasAnalysis<'analysis, 'tcx>>,
     pub lockguards: LockGuardMap<'tcx>,
     function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
     locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
@@ -53,16 +56,17 @@ pub struct FunctionPN<'translate, 'b, 'tcx> {
     condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
 }
 
-impl<'translate, 'b, 'tcx> FunctionPN<'translate, 'b, 'tcx> {
+impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     pub fn new(
         instance_id: InstanceId,
         instance: &'translate Instance<'tcx>,
         body: &'translate Body<'tcx>,
         tcx: TyCtxt<'tcx>,
+        options: &'translate Options,
         // param_env: ParamEnv<'tcx>,
         net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
-        // callgraph: &'b CallGraph<'tcx>,
-        alias: &'translate RefCell<AliasAnalysis<'b, 'tcx>>,
+        // callgraph: &'analysis CallGraph<'tcx>,
+        alias: &'translate RefCell<AliasAnalysis<'analysis, 'tcx>>,
         lockguards: LockGuardMap<'tcx>,
         function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
         locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
@@ -75,9 +79,8 @@ impl<'translate, 'b, 'tcx> FunctionPN<'translate, 'b, 'tcx> {
             instance,
             body,
             tcx,
-            // param_env,
+            options,
             net,
-            //    callgraph,
             alias,
             lockguards,
             function_counter,
@@ -90,20 +93,27 @@ impl<'translate, 'b, 'tcx> FunctionPN<'translate, 'b, 'tcx> {
         }
     }
 
-    pub fn analyze(&mut self) {
+    pub fn translate(&mut self) {
         self.visit_body(self.body);
     }
 }
 
-impl<'translate, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'translate, 'b, 'tcx> {
+impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
         let func_id = self.instance.def_id();
 
         let fn_name = self.tcx.def_path_str(func_id);
 
-        for (bb_idx, _) in body.basic_blocks.iter_enumerated() {
+        for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
+            let mut bb_span = String::new();
+            if let Some(ref term) = bb.terminator {
+                bb_span = format!("{:?}", term.source_info.span);
+            } else {
+                // debug:检测没有跳转的分支
+                bb_span = "".to_string();
+            };
             let bb_name = fn_name.clone() + &format!("{:?}", bb_idx);
-            let bb_start_place = Place::new_with_no_token(bb_name);
+            let bb_start_place = Place::new_with_span(bb_name, 0usize, bb_span);
             let bb_start = self.net.add_node(PetriNetNode::P(bb_start_place));
             self.bb_node_start_end
                 .insert(bb_idx.clone(), bb_start.clone());
@@ -127,6 +137,7 @@ impl<'translate, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'translate, 'b, 'tcx> {
                 );
             }
             if let Some(ref term) = bb.terminator {
+                let bb_span = format!("{:?}", term.source_info.span);
                 match &term.kind {
                     TerminatorKind::Goto { target } => {
                         let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "goto";
@@ -317,8 +328,21 @@ impl<'translate, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'translate, 'b, 'tcx> {
                             };
 
                             // 判断Caller是nofity或者wait
-                            let caller_func_name = self.tcx.def_path_str(callee_id);
-                            if caller_func_name.contains("Condvar::notify_one") {
+                            let caller_func_name = format_name(callee_id);
+
+                            if !caller_func_name.contains(&self.options.crate_name) {
+                                match (target, unwind) {
+                                    (Some(return_block), _) => {
+                                        self.net.add_edge(
+                                            bb_end,
+                                            *self.bb_node_start_end.get(return_block).unwrap(),
+                                            PetriNetEdge { label: 1usize },
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                                log::debug!("ignore function not include in main crate!");
+                            } else if caller_func_name.contains("Condvar::notify_one") {
                                 let condvar_local = args.get(0).unwrap().place().unwrap().local;
                                 let condvar_id = CondVarId::new(self.instance_id, condvar_local);
                                 println!("condvar nofity: {:?}", condvar_id);
@@ -357,7 +381,7 @@ impl<'translate, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'translate, 'b, 'tcx> {
                             } else if caller_func_name.contains("Condvar::wait") {
                                 let bb_wait_name =
                                     fn_name.clone() + &format!("{:?}", bb_idx) + "release lock";
-                                let bb_wait_place = Place::new_with_no_token(bb_wait_name);
+                                let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
                                 let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
 
                                 let bb_ret_name =
@@ -423,7 +447,7 @@ impl<'translate, 'b, 'tcx> Visitor<'tcx> for FunctionPN<'translate, 'b, 'tcx> {
                             } else {
                                 let bb_wait_name =
                                     fn_name.clone() + &format!("{:?}", bb_idx) + "wait";
-                                let bb_wait_place = Place::new_with_no_token(bb_wait_name);
+                                let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
                                 let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
 
                                 let bb_ret_name =

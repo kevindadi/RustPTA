@@ -42,10 +42,13 @@ fn main() {
     }
 
     let mut options = Options::default();
+
     let _ = options.parse_from_str(
         &std::env::var("PTA_FLAGS").unwrap_or_default(),
         &early_error_handler,
     );
+
+    //let _ = options.parse_from_str(&std::env::args().skip(2), &early_error_handler);
 
     log::debug!("PTA options from environment: {:?}", options);
     // panic!();

@@ -19,8 +19,8 @@ use std::collections::VecDeque;
 // };
 
 use rustc_middle::mir::{
-    Body, Constant, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef,
-    ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    Body, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef, ProjectionElem,
+    Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{Instance, TyCtxt, TyKind};
 
@@ -284,6 +284,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Store);
     }
 
+    #[allow(unused)]
     fn add_alias_copy(&mut self, lhs: PlaceRef<'tcx>, rhs: PlaceRef<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Place(rhs);

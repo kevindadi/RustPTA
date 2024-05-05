@@ -1,3 +1,4 @@
+use crate::utils::format_name;
 use crate::Options;
 use log::debug;
 use petgraph::graph::NodeIndex;
@@ -5,7 +6,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
 use petgraph::Graph;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
@@ -20,9 +21,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::hash::Hash;
+use std::io::Write;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use super::function_pn::FunctionPN;
+use super::function_pn::BodyToPetriNet;
 use super::state_graph::StateGraph;
 use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
@@ -50,8 +52,7 @@ pub struct Place {
     pub name: String,
     pub tokens: RefCell<usize>,
     pub capacity: usize,
-    shape: Shape,
-    terminal_mark: bool,
+    pub span: String,
     pub details: String,
 }
 
@@ -61,8 +62,17 @@ impl Place {
             name,
             tokens: RefCell::new(token),
             capacity: token,
-            shape: Shape::Circle,
-            terminal_mark: false,
+            span: String::new(),
+            details: String::new(),
+        }
+    }
+
+    pub fn new_with_span(name: String, token: usize, span: String) -> Self {
+        Self {
+            name,
+            tokens: RefCell::new(token),
+            capacity: 1usize,
+            span,
             details: String::new(),
         }
     }
@@ -72,19 +82,7 @@ impl Place {
             name,
             tokens: RefCell::new(0usize),
             capacity: 1usize,
-            shape: Shape::Circle,
-            terminal_mark: false,
-            details: String::new(),
-        }
-    }
-
-    pub fn new_with_terminal_mark(name: String, token: usize, terminal_mark: bool) -> Self {
-        Self {
-            name,
-            tokens: RefCell::new(token),
-            capacity: 1,
-            shape: Shape::Circle,
-            terminal_mark,
+            span: String::new(),
             details: String::new(),
         }
     }
@@ -96,6 +94,7 @@ impl std::fmt::Display for Place {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct Transition {
     pub name: String,
@@ -230,24 +229,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         self.collect_condvar();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
-                && self
-                    .format_name(caller.instance().def_id())
-                    .contains(&self.options.crate_name)
+                && format_name(caller.instance().def_id()).contains(&self.options.crate_name)
             {
                 self.visitor_function_body(node, caller);
             }
         }
         self.reduce_state();
-    }
-
-    /// Extracts a function name from the DefId of a function.
-    fn format_name(&self, def_id: DefId) -> String {
-        let tmp1 = format!("{def_id:?}");
-        let tmp2: &str = tmp1.split("~ ").collect::<Vec<&str>>()[1];
-        let tmp3 = tmp2.replace(')', "");
-        let lhs = tmp3.split('[').collect::<Vec<&str>>()[0];
-        let rhs = tmp3.split(']').collect::<Vec<&str>>()[1];
-        format!("{lhs}{rhs}").to_string()
     }
 
     pub fn visitor_function_body(
@@ -264,11 +251,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
         let lock_infos = self.lock_info.clone();
 
-        let mut func_construct = FunctionPN::new(
+        let mut func_body = BodyToPetriNet::new(
             node,
             caller.instance(),
             body,
             self.tcx,
+            &self.options,
             // self.param_env,
             &mut self.net,
             &self.alias,
@@ -279,7 +267,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &mut self.handler_id,
             &self.condvars,
         );
-        func_construct.analyze();
+        func_body.translate();
     }
 
     // Construct Function Start and End Place by callgraph
@@ -289,8 +277,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
                 let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
                 let func_id = func_instance.instance().def_id();
-                let func_name = self.tcx.def_path_str(func_id);
-
+                let func_name = format_name(func_id);
+                if !func_name.contains(&self.options.crate_name) {
+                    continue;
+                }
                 if func_id == main_func {
                     let func_start = Place::new(format!("{}", func_name) + "start", 1);
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
@@ -314,30 +304,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         } else {
             log::error!("cargo pta need a entry point!");
-            // for node_idx in self.callgraph.graph.node_indices() {
-            //     // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
-            //     let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
-            //     let func_id = func_instance.instance().def_id();
-            //     let func_name = self.tcx.def_path_str(func_id);
-            //     if func_name.contains("core")
-            //         || func_name.contains("std")
-            //         || func_name.contains("alloc")
-            //         || func_name.contains("parking_lot::")
-            //         || func_name.contains("spin::")
-            //         || func_name.contains("::new")
-            //         || func_name.contains("libc")
-            //     {
-            //         continue;
-            //     }
-            //     let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
-            //     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-            //     let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
-            //     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-
-            //     self.function_counter
-            //         .insert(func_id, (func_start_node_id, func_end_node_id));
-            //     self.function_vec.insert(func_id, vec![func_start_node_id]);
-            // }
         }
     }
 
@@ -345,7 +311,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn construct_lock(&mut self, alias_analysis: &RefCell<AliasAnalysis>) {
         let lockguards = self.collect_lockguards();
         // classify the lock point to the same memory location
-        let mut lockguard_relations = FxHashSet::<(LockGuardId, LockGuardId)>::default();
+        // let mut lockguard_relations = FxHashSet::<(LockGuardId, LockGuardId)>::default();
         let mut info = FxHashMap::default();
 
         for (_, map) in lockguards.clone().into_iter() {
@@ -735,8 +701,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     ) -> HashSet<(NodeIndex, usize)> {
         let mut new_state = HashSet::<(NodeIndex, usize)>::new();
         self.set_current_mark(mark);
-
+        log::debug!("The transition to fire is: {}", transition.index());
         // 从输入库所中减去token
+        log::debug!("sub token to source node!");
         for edge in self.net.edges_directed(transition, Direction::Incoming) {
             match self.net.node_weight(edge.source()).unwrap() {
                 PetriNetNode::P(place) => {
@@ -750,6 +717,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
 
         // 将token添加到输出库所中
+        log::debug!("add token to target node!");
         for edge in self.net.edges_directed(transition, Direction::Outgoing) {
             let place_node = self.net.node_weight(edge.target()).unwrap();
             match place_node {
@@ -764,7 +732,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
             }
         }
-
+        log::debug!("generate new state!");
         for node in self.net.node_indices() {
             match &self.net[node] {
                 PetriNetNode::P(place) => {
@@ -799,9 +767,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         let mut queue = VecDeque::<HashSet<(NodeIndex, usize)>>::new();
 
         let init_mark = self.get_current_mark();
-        // let init_index = state_graph
-        //     .graph
-        //     .add_node(StateNode::new(init_mark.clone()));
+        // let init_state_string: String = init_mark
+        //     .clone()
+        //     .iter()
+        //     .map(|(index, value)| format!("NodeIndex: {:?}, Value: {}", index, value))
+        //     .collect::<Vec<String>>()
+        //     .join(",");
+        // log::info!("initial state: {}", init_state_string);
         let mut init_usize: Vec<(usize, usize)> = init_mark
             .clone()
             .iter()
@@ -818,7 +790,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         init_usize.sort();
 
         all_state.insert(init_usize);
-        let mut state_node_map: RefCell<HashMap<Vec<(NodeIndex, usize)>, NodeIndex>> =
+        let state_node_map: RefCell<HashMap<Vec<(NodeIndex, usize)>, NodeIndex>> =
             RefCell::new(HashMap::new());
         let init_node = state_graph
             .graph
@@ -876,7 +848,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
         // info!("All states are: {:?}", all_state.len());
         use petgraph::dot::Dot;
-        use std::io::Write;
         let mut sg_file = std::fs::File::create("sg.dot").unwrap();
 
         write!(
@@ -912,7 +883,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     // Check Deadlock
-    pub fn check_deadlock(&mut self) {
+    pub fn check_deadlock(&mut self) -> String {
         use petgraph::graph::node_index;
         // Remove the terminal mark
         self.deadlock_marks.retain(|v| {
@@ -928,24 +899,29 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 _ => false,
             })
         });
-        for mark in &self.deadlock_marks {
-            // let joined = mark
-            //     .clone()
-            //     .iter()
-            //     .map(|x| x.to_string())
-            //     .collect::<Vec<String>>()
-            //     .join(", ");
-
-            let joined = mark
-                .clone()
-                .iter()
-                .map(|x| match &self.net[node_index(x.0)] {
-                    PetriNetNode::P(p) => p.name.clone() + ":" + (x.1).to_string().as_str(),
-                    PetriNetNode::T(t) => t.name.clone(),
-                })
-                .collect::<Vec<String>>()
-                .join(", ");
-            println!("{:?}", joined);
+        let mut result = String::new();
+        if self.deadlock_marks.is_empty() {
+            return "no detect deadlock!\n".to_string();
+        } else {
+            for mark in &self.deadlock_marks {
+                let joined = mark
+                    .clone()
+                    .iter()
+                    .map(|x| match &self.net[node_index(x.0)] {
+                        PetriNetNode::P(p) => {
+                            p.name.clone()
+                                + ":"
+                                + (x.1).to_string().as_str()
+                                + "span: "
+                                + &p.span.clone()
+                        }
+                        PetriNetNode::T(t) => t.name.clone(),
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                result = result + joined.clone().as_str() + "\n";
+            }
+            return result;
         }
     }
 
@@ -1023,13 +999,39 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             Entry::Occupied(node) => node.get().to_owned(),
             Entry::Vacant(v) => {
                 let func_name = self.tcx.def_path_str(def_id);
-                let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
+                let func_start = Place::new(format!("{}", func_name) + "start", 0);
                 let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
+                let func_end = Place::new(format!("{}", func_name) + "end", 0);
                 let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
                 *v.insert((func_start_node_id, func_end_node_id))
             }
         }
+    }
+
+    pub fn save_petri_net_to_file(&self) {
+        use petgraph::dot::Dot;
+        let pn_dot = Dot::with_attr_getters(
+            &self.net,
+            &[],
+            &|_, _| "arrowhead = vee".to_string(),
+            &|_, nr| {
+                format!(
+                    "shape = {}",
+                    match nr.1 {
+                        PetriNetNode::P(_) => {
+                            "circle"
+                        }
+                        PetriNetNode::T(_) => {
+                            "box"
+                        }
+                    }
+                )
+                .to_string()
+            },
+        );
+
+        let mut file = std::fs::File::create("graph.dot").unwrap();
+        let _ = file.write_all(format!("{:?}", pn_dot).as_bytes());
     }
 }
 
@@ -1124,7 +1126,7 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                             + &String::from("dropped")
                             + &format!("{:?}", lock_node.index());
                         let drop_lock_t = Transition::new(format!("{:?}", drop_t), (0, 0), 1);
-                        let drop_lock_p = Place::new_with_no_token(format!("{:?}", drop_p));
+                        let drop_lock_p = Place::new(format!("{:?}", drop_p), 0);
                         let drop_node_t = self.net.add_node(PetriNetNode::T(drop_lock_t));
                         let drop_node_p = self.net.add_node(PetriNetNode::P(drop_lock_p));
 
@@ -1161,7 +1163,7 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                             + &String::from("locked")
                             + &format!("{:?}", lock_node.index());
                         let genc_lock_t = Transition::new(format!("{:?}", genc_t), (0, 0), 1);
-                        let genc_lock_p = Place::new_with_no_token(format!("{:?}", genc_p));
+                        let genc_lock_p = Place::new(format!("{:?}", genc_p), 0);
                         let genc_node_t = self.net.add_node(PetriNetNode::T(genc_lock_t));
                         let genc_node_p = self.net.add_node(PetriNetNode::P(genc_lock_p));
 
@@ -1247,9 +1249,9 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                                     + &String::from("called")
                                     + &format!("{:?}", def_id);
                                 let call_t = Transition::new(call, (0, 0), 1);
-                                let wait_p = Place::new_with_no_token(wait);
+                                let wait_p = Place::new(wait, 0);
                                 let ret_t = Transition::new(ret, (0, 0), 1);
-                                let call_p = Place::new_with_no_token(called);
+                                let call_p = Place::new(called, 0);
 
                                 let call_node_t = self.net.add_node(PetriNetNode::T(call_t));
                                 let wait_node_p = self.net.add_node(PetriNetNode::P(wait_p));
@@ -1309,5 +1311,24 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
             }
         }
         self.super_terminator(terminator, location);
+    }
+}
+
+#[cfg(test)]
+pub mod test_s {
+    use petgraph::graph::Graph;
+    use std::fs::File;
+    use std::io::Read;
+
+    #[test]
+    pub fn parse_petri_net() {
+        let mut file =
+            File::open("/Users/zhangkaiwen/RustAnalysis/RustPTA/test/double_lock/graph.dot")
+                .expect("Unable to open file");
+
+        // 读取文件内容到字符串
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Unable to read file");
     }
 }

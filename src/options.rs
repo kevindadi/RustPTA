@@ -53,10 +53,7 @@ fn make_options_parser() -> clap::Command {
                 .default_value("diagnostics.json"), // 默认的文件路径
         )
         .arg(
-            Arg::new("main_crate")
-                .short('c')
-                .long("main_crate")
-                .default_value("inter"), // 默认要建模的crate
+            Arg::new("main_crate").short('c').long("main_crate"), // 默认要建模的crate
         );
     parser
 }

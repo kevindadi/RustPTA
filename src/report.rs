@@ -1,8 +1,8 @@
-use core::fmt;
 use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::write, io::Write};
+use std::fmt;
+use std::{collections::HashMap, io::Write};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActionDetail {

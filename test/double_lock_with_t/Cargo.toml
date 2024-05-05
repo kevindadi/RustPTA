@@ -1,7 +1,0 @@
-[package]
-name = "double_lock_with_t"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-tokio = { version = "1", features = ["full"] }

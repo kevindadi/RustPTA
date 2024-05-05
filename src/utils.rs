@@ -9,13 +9,23 @@ macro_rules! unrecoverable {
         panic!(concat!("unrecoverable: ", stringify!($fmt)));
     );
     ($fmt:expr, $($arg:tt)+) => (
-        panic!(concat!("unrecoverable: ", stringify!($fmt)), $($arg)+);
+        panic!(concat!("unrecoverable: ", stringify!($fmt)), $($arg)+)
     );
 }
 
 /// Constructs a name for the crate that contains the given def_id.
 fn crate_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     tcx.crate_name(def_id.krate).as_str().to_string()
+}
+
+/// Extracts a function name from the DefId of a function.
+pub fn format_name(def_id: DefId) -> String {
+    let tmp1 = format!("{def_id:?}");
+    let tmp2: &str = tmp1.split("~ ").collect::<Vec<&str>>()[1];
+    let tmp3 = tmp2.replace(')', "");
+    let lhs = tmp3.split('[').collect::<Vec<&str>>()[0];
+    let rhs = tmp3.split(']').collect::<Vec<&str>>()[1];
+    format!("{lhs}{rhs}").to_string()
 }
 
 pub fn def_id_as_qualified_name_str(tcx: TyCtxt<'_>, def_id: DefId) -> Rc<str> {

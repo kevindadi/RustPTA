@@ -4,11 +4,11 @@ extern crate rustc_driver;
 extern crate rustc_hir;
 
 use std::cell::RefCell;
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::graph_type::OutputType;
 use crate::graph::petri_net::{PetriNet, PetriNetNode};
 use crate::options::{CrateNameList, Options};
 use log::debug;
@@ -155,46 +155,16 @@ impl PTACallbacks {
 
         log::debug!("analysi crate is {:?}", self.options.crate_name);
         if !crate_name.contains(&self.options.crate_name) {
-            log::info!("No conversion is required for this crate {:?}!", crate_name);
+            log::debug!("No conversion is required for this crate {:?}!", crate_name);
             return;
         }
+        log::debug!("convert {} to Petri Net!", crate_name);
         let mut pn = PetriNet::new(&self.options, tcx, param_env, &callgraph);
         pn.construct();
 
-        // let stategraph = pn.generate_state_graph();
-        // pn.check_deadlock();
-
-        use std::io::Write;
-
-        // let pn_dot = Dot::with_attr_getters(
-        //     &pn.net,
-        //     &[],
-        //     &|_, _| "arrowhead = vee".to_string(),
-        //     &|_, nr| {
-        //         format!(
-        //             "shape = {}",
-        //             match nr.1 {
-        //                 PetriNetNode::P(_) => {
-        //                     "circle"
-        //                 }
-        //                 PetriNetNode::T(_) => {
-        //                     "box"
-        //                 }
-        //             }
-        //         )
-        //         .to_string()
-        //     },
-        // );
-
-        // let mut pn_file = std::fs::File::create("pn.dot").unwrap();
-        // write!(pn_file, "{}", pn_dot).unwrap();
-
-        // let lola_output = pn.lola();
-        // let lola_path = "output.lola";
-        // let mut lola_file = std::fs::File::create(lola_path).unwrap();
-        // lola_file
-        //     .write_all(lola_output.as_bytes())
-        //     .expect("Unable to write lola!");
-        // log::info!("export to Lola");
+        pn.save_petri_net_to_file();
+        let _ = pn.generate_state_graph();
+        let result = pn.check_deadlock();
+        println!("deadlock state: {}", result);
     }
 }
