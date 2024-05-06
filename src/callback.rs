@@ -108,15 +108,6 @@ impl PTACallbacks {
         // Skip crates by names (white or black list).
         // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
         let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-        // if crate_name.contains("lock_api")
-        //     || crate_name.contains("bytes")
-        //     || crate_name.contains("signal")
-        //     || crate_name.contains("num_cpus")
-        //     || crate_name.contains("syn")
-        //     || crate_name.contains("tokio")
-        // {
-        //     return;
-        // }
 
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
@@ -139,13 +130,8 @@ impl PTACallbacks {
         let param_env = ParamEnv::reveal_all();
         callgraph.analyze(instances.clone(), tcx, param_env);
 
-        // 基于调用图构造指针分析框架
-        let mut alias_analysis = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
+        //let mut alias_analysis = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
 
-        // TODO: reduce callgraph
-        // let mut pts_detecter = PtsDetecter::new(tcx, param_env);
-        // pts_detecter.output_pts(&callgraph, &mut alias_analysis);
-        // pts_detecter.generate_petri_net(&callgraph);
         let callgraph_output = callgraph.dot();
         let callgraph_path = "callgraph.dot";
         let mut callgraph_file = std::fs::File::create(callgraph_path).unwrap();

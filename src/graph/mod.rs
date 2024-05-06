@@ -6,4 +6,3 @@ pub mod petri_net;
 pub mod pts_test_graph;
 pub mod safedrop;
 pub mod state_graph;
-pub mod time_petri_net;
