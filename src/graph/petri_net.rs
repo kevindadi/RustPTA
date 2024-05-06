@@ -825,7 +825,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         .map(|node| (node.0.index(), node.1))
                         .collect();
                     new_state_usize.sort();
-                    // TODO: Implement for State Graph
+
                     if insert_with_comparison(&mut all_state, new_state_usize) {
                         queue.push_back(new_state.clone());
                         let state_node: Vec<(NodeIndex, usize)> = new_state
@@ -1111,10 +1111,10 @@ impl<'b, 'tcx> LinkConstruct<'b, 'tcx> {
 }
 
 impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
-    fn visit_local(&mut self, local: Local, context: PlaceContext, location: Location) {
+    fn visit_local(&mut self, local: Local, context: PlaceContext, _: Location) {
         let lockguard_id = LockGuardId::new(self.instance_id, local);
         // local is lockguard
-        if let Some(info) = self.lockguards.get_mut(&lockguard_id) {
+        if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
             match context {
                 PlaceContext::MutatingUse(context) => match context {
                     MutatingUseContext::Drop => {
@@ -1215,10 +1215,9 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
                     || func_name.contains("::new")
                 {
                 } else {
-                    if let Some(callee) =
-                        Instance::resolve(self.tcx, self.param_env, def_id, substs)
-                            .ok()
-                            .flatten()
+                    if let Some(_) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
+                        .ok()
+                        .flatten()
                     {
                         let func_name = self.tcx.def_path_str(def_id);
                         println!("{:?}", def_id);
@@ -1316,7 +1315,6 @@ impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
 
 #[cfg(test)]
 pub mod test_s {
-    use petgraph::graph::Graph;
     use std::fs::File;
     use std::io::Read;
 

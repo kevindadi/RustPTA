@@ -8,13 +8,16 @@
 
 1. 下载工具代码并进入 RustPTA 目录。
 2. 运行以下命令，安装必要的工具链和相关依赖：
+  ```bash
+   sudo apt-get install gcc g++ clang llvm
+  ```
 
-   ```bash
+  ```bash
    rustup component add rust-src
    rustup component add rustc-dev
    rustup component add llvm-tools-preview
    cargo install --path .
-   ```
+  ```
 3. 运行以下命令，对待检测文件进行死锁检测：
 
    `cd /path/crate; cargo clean; cargo pta`
