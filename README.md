@@ -3,8 +3,7 @@
 面向 Rust 程序的静态死锁检测工具，可检测的死锁类型包括双锁、冲突锁以及与条件变量相关的死锁。
 
 ## 1. 安装与使用
-
-当前使用的 Rust 编译器版本为 `nightly-2023-09-13`。为了进行死锁检测，首先需要安装必要的工具链和相关依赖，然后执行 `cargo pta` 命令。以下是具体的操作步骤：
+仅支持Linux：当前使用的 Rust 编译器版本为 `nightly-2023-09-13`。为了进行死锁检测，首先需要安装必要的工具链和相关依赖，然后执行 `cargo pta` 命令。以下是具体的操作步骤：
 
 1. 下载工具代码并进入 RustPTA 目录。
 2. 运行以下命令，安装必要的工具链和相关依赖：
@@ -54,11 +53,16 @@
 ```
 
 ### 2.2 基于 Petri 网的检测工具报告说明
-检测结果为死锁发生的当前程序状态，下表第一个状态示例如下，表示程序处于 `Foo::sync_rwlock_write_2bb1:1span:src/main.rs:65:10` 和 `Foo::sync_rwlock_write_1bb5wait:1span: src/main.rs:52:17: 52:43 (#0)` 处发生死锁，其他标识为当前状态下的资源。
-
+以 `example/inter` 为例，检测结果为死锁发生的当前程序状态，下表第三个状态示例如下，表示程序处于`Foo::sync_mutex_2bb2:1span: src/main.rs:35:10: 35:34 (#0)`: sync_mutex_2(), `mainbb1wait:1span: src/main.rs:162:5: 162:24 (#0)`: sync_mutex_1() 和 `Foo::sync_mutex_1bb5wait:1span: src/main.rs:29:17: 29:36 (#0)`: main() 处发生死锁，其他标识为当前状态下的资源, 即程序处于main()->sync_mutex_1()->sync_mutex_2();
+注： 如果程序不可达，那么Petri网将不会识别到死锁，修复死锁后可重新验证。`example/inter`示例中函数`foo1.sync_rwlock_write_1()`后不可达，故只有四个死锁。
 ```
-deadlock state:
-"rwlock0":10span:, "mutex3":1span:, "mutex1":1span:, "rwlock4":10span:, "mutex5":1span:, Foo::sync_rwlock_write_2bb1:1span: src/main.rs:65:10: 65:35 (#0), mainbb10wait:1span: src/main.rs:170:5: 170:31 (#0), Foo::sync_rwlock_write_1bb5wait:1span: src/main.rs:52:17: 52:43 (#0)
+deadlock state: "rwlock1":9span: , "mutex0":1span: , Foo::sync_rwlock_write_2bb1:1span: src/main.rs:65:10: 65:35 (#0), Foo::sync_rwlock_read_1bb5wait:1span: src/main.rs:41:17: 41:43 (#0), mainbb3wait:1span: src/main.rs:164:5: 164:30 (#0)
+
+"mutex0":1span: , Foo::sync_rwlock_read_2bb1:1span: src/main.rs:61:18: 61:42 (#0), mainbb4wait:1span: src/main.rs:165:5: 165:31 (#0), Foo::sync_rwlock_write_1bb4wait:1span: src/main.rs:55:17: 55:42 (#0)
+
+"rwlock1":10span: , Foo::sync_mutex_1bb5wait:1span: src/main.rs:29:17: 29:36 (#0), Foo::sync_mutex_2bb2:1span: src/main.rs:35:10: 35:34 (#0), mainbb1wait:1span: src/main.rs:162:5: 162:24 (#0)
+
+"mutex0":1span: , Foo::sync_rwlock_write_2bb1:1span: src/main.rs:65:10: 65:35 (#0), mainbb4wait:1span: src/main.rs:165:5: 165:31 (#0), Foo::sync_rwlock_write_1bb5wait:1span: src/main.rs:52:17: 52:43 (#0)
 
 ```
 

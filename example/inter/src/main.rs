@@ -158,19 +158,11 @@ impl Foo {
 
 fn main() {
     let foo1 = Foo::new();
-    // deadlock 1
+    // // deadlock 1
     foo1.sync_mutex_1();
-    println!("unreachable1");
     foo1.sync_mutex_2();
-    println!("unreachable2");
-    // deadlock 2
     foo1.sync_rwlock_read_1();
-    // deadlock 3 4
-    println!("unreachable34");
     foo1.sync_rwlock_write_1();
-    // deadlock 5
-
-    println!("unreachable5");
     foo1.parking_lot_mutex_1();
     foo1.parking_lot_mutex_2();
 
