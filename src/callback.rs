@@ -3,14 +3,12 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use std::cell::RefCell;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::petri_net::{PetriNet, PetriNetNode};
-use crate::options::{CrateNameList, Options};
+use crate::graph::petri_net::PetriNet;
+use crate::options::Options;
 use log::debug;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;

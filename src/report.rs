@@ -195,7 +195,7 @@ pub mod test_s {
         let actions = parse_thread_sanitizer_report(output);
 
         for action in actions {
-            action.save_to_file("report.txt");
+            let _ = action.save_to_file("report.txt");
         }
     }
 }
