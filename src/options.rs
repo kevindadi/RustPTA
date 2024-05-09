@@ -76,14 +76,6 @@ impl Default for Options {
 }
 
 impl Options {
-    fn new(detector_kind: DetectorKind, output: Option<String>, crate_name: String) -> Self {
-        Options {
-            detector_kind,
-            output,
-            crate_name,
-        }
-    }
-
     pub fn parse_from_str(&mut self, s: &str, handler: &EarlyErrorHandler) -> Vec<String> {
         let args = shellwords::split(s).unwrap_or_else(|e| {
             handler.early_error(format!("Cannot parse argument string: {e:?}"))
