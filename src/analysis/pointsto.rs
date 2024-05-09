@@ -6,24 +6,21 @@
 //! with limited support for inter-procedural analysis
 //! of methods and closures.
 //! See `Andersen` for more details.
+
 extern crate rustc_hash;
-extern crate rustc_hir;
-extern crate rustc_index;
-
-use std::cmp::{Ordering, PartialOrd};
-use std::collections::VecDeque;
-
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
+use std::cmp::{Ordering, PartialOrd};
+use std::collections::VecDeque;
 // use rustc_middle::mir::{
 //     Body, Const, ConstOperand, Local, Location, Operand, Place, PlaceElem, PlaceRef,
 //     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 // };
 
 use rustc_middle::mir::{
-    Body, Constant, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef,
-    ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    Body, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef, ProjectionElem,
+    Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{Instance, TyCtxt, TyKind};
 
@@ -287,6 +284,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Store);
     }
 
+    #[allow(unused)]
     fn add_alias_copy(&mut self, lhs: PlaceRef<'tcx>, rhs: PlaceRef<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Place(rhs);
@@ -483,11 +481,9 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     Operand::Move(place) | Operand::Copy(place) => {
                         Some(AccessPattern::Direct(place.as_ref()))
                     }
-                    Operand::Constant(box Constant {
-                        span: _,
-                        user_ty: _,
-                        literal,
-                    }) => Some(AccessPattern::Constant(*literal)),
+                    Operand::Constant(ref constant) => {
+                        Some(AccessPattern::Constant(constant.literal))
+                    }
                 }
             }
             // Regard `p = &*q` as `p = q`
@@ -532,10 +528,10 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     if p1.local == p2.local {
                         if p1.projection.len() > p2.projection.len() {
                             if &p1.projection[..p2.projection.len()] == p2.projection {
-                                self.graph.add_copy(*p2, *p1);
+                                self.graph.add_copy(p2.clone(), p1.clone());
                             }
                         } else if &p2.projection[..p1.projection.len()] == p1.projection {
-                            self.graph.add_copy(*p1, *p2);
+                            self.graph.add_copy(p1.clone(), p2.clone());
                         }
                     }
                 }
@@ -585,6 +581,10 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             ..
         } = &terminator.kind
         {
+            // let args = args
+            //     .iter()
+            //     .map(|arg| arg.node.clone())
+            //     .collect::<Vec<Operand>>();
             match (args.as_slice(), destination) {
                 (&[Operand::Move(arg)], dest) => {
                     let func_ty = func.ty(self.body, self.tcx);

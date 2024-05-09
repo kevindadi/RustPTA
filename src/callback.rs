@@ -3,23 +3,22 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use std::cell::RefCell;
+use std::io::Write;
 use std::path::PathBuf;
 
-use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::petri_net::{PetriNet, PetriNetNode};
-use crate::options::{CrateNameList, Options};
+use crate::graph::petri_net::PetriNet;
+use crate::options::Options;
 use log::debug;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
+use std::fmt::{Debug, Formatter, Result};
 
 pub struct PTACallbacks {
-    options: Options,
-
+    pub options: Options,
     file_name: String,
     output_directory: PathBuf,
     test_run: bool,
@@ -36,13 +35,25 @@ impl PTACallbacks {
     }
 }
 
+impl Debug for PTACallbacks {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        "PTACallbacks".fmt(f)
+    }
+}
+
+impl Default for PTACallbacks {
+    fn default() -> Self {
+        Self::new(Options::default())
+    }
+}
+
 impl rustc_driver::Callbacks for PTACallbacks {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
         self.file_name = config
             .input
             .source_name()
             .prefer_remapped() // nightly-2023-09-13
-            // .prefer_remapped_unconditionaly()
+            //.prefer_remapped_unconditionaly()
             .to_string();
 
         debug!("Processing input file: {}", self.file_name);
@@ -50,6 +61,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
             debug!("in test only mode");
             // self.options.test_only = true;
         }
+        config.crate_cfg.insert(("pta".to_string(), None));
         match &config.output_dir {
             None => {
                 self.output_directory = std::env::temp_dir();
@@ -92,18 +104,13 @@ impl rustc_driver::Callbacks for PTACallbacks {
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         // Skip crates by names (white or black list).
+        // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
         let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
 
-        match &self.options.crate_name_list {
-            CrateNameList::White(crates) if !crates.is_empty() && !crates.contains(&crate_name) => {
-                return
-            }
-            CrateNameList::Black(crates) if crates.contains(&crate_name) => return,
-            _ => {}
-        };
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
+
         let cgus = tcx.collect_and_partition_mono_items(()).1;
         let instances: Vec<Instance<'tcx>> = cgus
             .iter()
@@ -123,34 +130,10 @@ impl PTACallbacks {
 
         let mut pn = PetriNet::new(tcx, param_env, &callgraph);
         pn.construct();
-        let stategraph = pn.generate_state_graph();
-        pn.check_deadlock();
 
-        use petgraph::dot::Dot;
-        use std::io::Write;
-        // let graph = pn.net.take();
-
-        let pn_dot = Dot::with_attr_getters(
-            &pn.net,
-            &[],
-            &|_, _| "arrowhead = vee".to_string(),
-            &|_, nr| {
-                format!(
-                    "shape = {}",
-                    match nr.1 {
-                        PetriNetNode::P(_) => {
-                            "circle"
-                        }
-                        PetriNetNode::T(_) => {
-                            "box"
-                        }
-                    }
-                )
-                .to_string()
-            },
-        );
-
-        let mut pn_file = std::fs::File::create("pn.dot").unwrap();
-        write!(pn_file, "{}", pn_dot).unwrap();
+        pn.save_petri_net_to_file();
+        let _ = pn.generate_state_graph();
+        let result = pn.check_deadlock();
+        println!("deadlock state: {}", result);
     }
 }

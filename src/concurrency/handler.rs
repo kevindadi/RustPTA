@@ -2,7 +2,6 @@
 extern crate rustc_hash;
 extern crate rustc_span;
 
-use rustc_span::def_id::DefId;
 use smallvec::SmallVec;
 
 use rustc_hash::FxHashMap;

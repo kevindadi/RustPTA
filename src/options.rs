@@ -1,10 +1,11 @@
 //! Parsing Options.
 //! `--detector-kind {kind}` or `-k`, currently support only deadlock
-//! `--blacklist-mode` or `-b`, sets backlist than the default whitelist.
-//! `--crate-name-list [crate1,crate2]` or `-l`, white or black lists of crates decided by `-b`.
-//! if `-l` not specified, then do not white-or-black list the crates.
+
+use clap::error::ErrorKind;
+
 use clap::{Arg, Command};
-use std::error::Error;
+use itertools::Itertools;
+use rustc_session::EarlyErrorHandler;
 
 #[derive(Debug)]
 pub enum CrateNameList {
@@ -24,36 +25,35 @@ pub enum DetectorKind {
     All,
     Deadlock,
     AtomicityViolation,
-    Memory,
-    Panic,
+    SafeDrop,
+    DataRace,
     // More to be supported.
 }
 
-fn make_options_parser<'help>() -> Command<'help> {
-    let parser = Command::new("LOCKBUD")
+fn make_options_parser() -> clap::Command {
+    let parser = Command::new("PTA")
         .no_binary_name(true)
-        .version("v0.2.0")
+        .author("https://flml.tongji.edu.cn/")
+        .version("v0.1.0")
         .arg(
-            Arg::new("kind")
+            Arg::new("detector_kind")
                 .short('k')
-                .long("detector-kind")
-                .possible_values(["deadlock", "atomicity_violation", "memory", "all", "panic"])
+                .long("detector_kind")
+                .help("The detector kind")
                 .default_values(&["deadlock"])
-                .help("The detector kind"),
+                .value_parser(["deadlock", "race", "memory", "all"]),
+            //.possible_values(),
         )
         .arg(
-            Arg::new("black")
-                .short('b')
-                .long("blacklist-mode")
-                .takes_value(false)
-                .help("set `crates` as blacklist than whitelist"),
+            Arg::new("output_dir")
+                .short('o')
+                .long("output_dir")
+                .value_name("FILE")
+                .help("Path to file where diagnostic information will be stored")
+                .default_value("diagnostics.json"), // 默认的文件路径
         )
         .arg(
-            Arg::new("crates")
-                .short('l')
-                .long("crate-name-list")
-                .takes_value(true)
-                .help("The crate names seperated by ,"),
+            Arg::new("main_crate").short('c').long("main_crate"), // 默认要建模的crate
         );
     parser
 }
@@ -61,122 +61,77 @@ fn make_options_parser<'help>() -> Command<'help> {
 #[derive(Debug)]
 pub struct Options {
     pub detector_kind: DetectorKind,
-    pub crate_name_list: CrateNameList,
+    pub output: Option<String>,
+    pub crate_name: String,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
             detector_kind: DetectorKind::Deadlock,
-            crate_name_list: CrateNameList::Black(Vec::new()),
+            output: Option::default(),
+            crate_name: String::new(),
         }
     }
 }
 
 impl Options {
-    pub fn parse_from_str(s: &str) -> Result<Self, Box<dyn Error>> {
-        let flags = shellwords::split(s)?;
-        Self::parse_from_args(&flags)
+    pub fn parse_from_str(&mut self, s: &str, handler: &EarlyErrorHandler) -> Vec<String> {
+        let args = shellwords::split(s).unwrap_or_else(|e| {
+            handler.early_error(format!("Cannot parse argument string: {e:?}"))
+        });
+        self.parse_from_args(&args)
     }
 
-    pub fn parse_from_args(flags: &[String]) -> Result<Self, Box<dyn Error>> {
-        let app = make_options_parser();
-        let matches = app.try_get_matches_from(flags.iter())?;
-        let detector_kind = match matches.value_of("kind") {
-            Some("deadlock") => DetectorKind::Deadlock,
-            Some("atomicity_violation") => DetectorKind::AtomicityViolation,
-            Some("memory") => DetectorKind::Memory,
-            Some("all") => DetectorKind::All,
-            Some("panic") => DetectorKind::Panic,
-            _ => return Err("UnsupportedDetectorKind")?,
-        };
-        let black = matches.is_present("black");
-        let crate_name_list = matches
-            .value_of("crates")
-            .map(|crates| {
-                let crates: Vec<String> = crates.split(',').map(|s| s.into()).collect();
-                if black {
-                    CrateNameList::Black(crates)
-                } else {
-                    CrateNameList::White(crates)
+    pub fn parse_from_args(&mut self, args: &[String]) -> Vec<String> {
+        let mut pta_args_end = args.len();
+        let mut rustc_args_start = 0;
+        if let Some((p, _)) = args.iter().find_position(|s| s.as_str() == "--") {
+            pta_args_end = p;
+            rustc_args_start = p + 1;
+        }
+        let pta_args = &args[0..pta_args_end];
+        let matches = if rustc_args_start == 0 {
+            match make_options_parser().try_get_matches_from(pta_args.iter()) {
+                Ok(matches) => {
+                    rustc_args_start = args.len();
+                    matches
                 }
-            })
-            .unwrap_or_default();
-        Ok(Options {
-            detector_kind,
-            crate_name_list,
-        })
-    }
-}
+                Err(e) => match e.kind() {
+                    ErrorKind::DisplayHelp => {
+                        eprintln!("{e}");
+                        return args.to_vec();
+                    }
+                    ErrorKind::UnknownArgument => {
+                        return args.to_vec();
+                    }
+                    _ => {
+                        eprintln!("{e}");
+                        e.exit();
+                    }
+                },
+            }
+        } else {
+            make_options_parser().get_matches_from(pta_args.iter())
+        };
+        // let app = make_options_parser();
+        // let matches = app.try_get_matches_from(args.iter()).unwrap();
+        //log::info!("matches: {:?}", matches);
+        self.detector_kind = match matches.get_one::<String>("detector_kind").unwrap().as_str() {
+            "deadlock" => DetectorKind::Deadlock,
+            "atomicity_violation" => DetectorKind::AtomicityViolation,
+            "safedrop" => DetectorKind::SafeDrop,
+            "all" => DetectorKind::All,
+            "datarace" => DetectorKind::DataRace,
+            _ => DetectorKind::Deadlock,
+        };
+        if matches.contains_id("output_dir") {
+            self.output = matches.get_one::<String>("output_dir").cloned();
+        }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_from_str_blacklist_ok() {
-        let options = Options::parse_from_str("-k deadlock -b -l cc,tokio_util,indicatif").unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::Black(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
-    }
-
-    #[test]
-    fn test_parse_from_str_whitelist_ok() {
-        let options = Options::parse_from_str("-k deadlock -l cc,tokio_util,indicatif").unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::White(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
-    }
-
-    #[test]
-    fn test_parse_from_str_err() {
-        let options = Options::parse_from_str("-k unknown -b -l cc,tokio_util,indicatif");
-        assert!(options.is_err());
-    }
-
-    #[test]
-    fn test_parse_from_args_blacklist_ok() {
-        let options = Options::parse_from_args(&[
-            "-k".to_owned(),
-            "deadlock".to_owned(),
-            "-b".to_owned(),
-            "-l".to_owned(),
-            "cc,tokio_util,indicatif".to_owned(),
-        ])
-        .unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::Black(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
-    }
-
-    #[test]
-    fn test_parse_from_args_whitelist_ok() {
-        let options = Options::parse_from_args(&[
-            "-k".to_owned(),
-            "deadlock".to_owned(),
-            "-l".to_owned(),
-            "cc,tokio_util,indicatif".to_owned(),
-        ])
-        .unwrap();
-        assert!(matches!(options.detector_kind, DetectorKind::Deadlock));
-        assert!(
-            matches!(options.crate_name_list, CrateNameList::White(v) if v == vec!["cc".to_owned(), "tokio_util".to_owned(), "indicatif".to_owned()])
-        );
-    }
-
-    #[test]
-    fn test_parse_from_args_err() {
-        let options = Options::parse_from_args(&[
-            "-k".to_owned(),
-            "unknown".to_owned(),
-            "-b".to_owned(),
-            "-l".to_owned(),
-            "cc,tokio_util,indicatif".to_owned(),
-        ]);
-        assert!(options.is_err());
+        if matches.contains_id("main_crate") {
+            self.crate_name = matches.get_one::<String>("main_crate").unwrap().clone();
+        }
+        args[rustc_args_start..].to_vec()
     }
 }

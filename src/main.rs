@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 #![feature(box_patterns)]
+#![feature(saturating_int_impl)]
 
 pub mod analysis;
 pub mod callback;
@@ -7,18 +8,32 @@ pub mod concurrency;
 pub mod graph;
 pub mod memory;
 pub mod options;
+pub mod report;
+pub mod utils;
 
+extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
+extern crate rustc_span;
 
 use log::debug;
 use options::Options;
 
+use crate::options::DetectorKind;
+
 fn main() {
+    let early_error_handler =
+        rustc_session::EarlyErrorHandler::new(rustc_session::config::ErrorOutputType::default());
+
+    // Initialize loggers.
+    if std::env::var("RUSTC_LOG").is_ok() {
+        rustc_driver::init_rustc_env_logger(&early_error_handler);
+    }
+
     if std::env::var("PTA_LOG").is_ok() {
         let e = env_logger::Env::new()
             .filter("PTA_LOG")
@@ -26,19 +41,23 @@ fn main() {
         env_logger::init_from_env(e);
     }
 
-    let options = Options::parse_from_str(&std::env::var("PTA_FLAGS").unwrap_or_default())
-        .unwrap_or_default();
-    debug!("PTA options from environment: {:?}", options);
+    let mut options = Options::default();
+
+    let _ = options.parse_from_str(
+        &std::env::var("PTA_FLAGS").unwrap_or_default(),
+        &early_error_handler,
+    );
+
+    //let _ = options.parse_from_str(&std::env::args().skip(2), &early_error_handler);
+
+    log::debug!("PTA options from environment: {:?}", options);
+    // panic!();
     let mut args = std::env::args_os()
         .enumerate()
         .map(|(i, arg)| {
             arg.into_string().unwrap_or_else(|arg| {
-                // TODO: error handler
-                String::from("need to handle")
-                // early_error(
-                //     ErrorOutputType::default(),
-                //     &format!("Argument {} is not valid Unicode: {:?}", i, arg),
-                // )
+                early_error_handler
+                    .early_error(format!("Argument {i} is not valid Unicode: {arg:?}"))
             })
         })
         .collect::<Vec<_>>();
@@ -61,10 +80,6 @@ fn main() {
             .iter()
             .any(|arg| arg.starts_with(&print))
         {
-            // If a --print option is given on the command line we wont get called to analyze
-            // anything. We also don't want to the caller to know that LOCKBUD adds configuration
-            // parameters to the command line, lest the caller be cargo and it panics because
-            // the output from --print=cfg is not what it expects.
         } else {
             let sysroot: String = "--sysroot".into();
             if !rustc_command_line_arguments
@@ -86,6 +101,13 @@ fn main() {
                 rustc_command_line_arguments.push("-Z".into());
                 rustc_command_line_arguments.push(always_encode_mir);
             }
+
+            match options.detector_kind {
+                DetectorKind::DataRace => {
+                    rustc_command_line_arguments.push("-Zsanitizer=thread".into())
+                }
+                _ => {}
+            }
         }
 
         let mut callbacks = callback::PTACallbacks::new(options);
@@ -93,6 +115,7 @@ fn main() {
             "rustc_command_line_arguments {:?}",
             rustc_command_line_arguments
         );
+
         let compiler =
             rustc_driver::RunCompiler::new(&rustc_command_line_arguments, &mut callbacks);
         compiler.run()
