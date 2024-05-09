@@ -8,8 +8,7 @@ use std::path::PathBuf;
 
 use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::petri_net::{PetriNet, PetriNetNode, Shape};
-use crate::graph::pts_test_graph::PtsDetecter;
+use crate::graph::petri_net::{PetriNet, PetriNetNode};
 use crate::options::{CrateNameList, Options};
 use log::debug;
 use rustc_driver::Compilation;
@@ -122,17 +121,6 @@ impl PTACallbacks {
         let param_env = ParamEnv::reveal_all();
         callgraph.analyze(instances.clone(), tcx, param_env);
 
-        // TODO: 基于调用图构造指针分析框架
-        let mut alias_analysis = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
-
-        // TODO: 遍历所有的锁,判断其指向关系
-
-        // TODO: reduce callgraph
-        let mut pts_detecter = PtsDetecter::new(tcx, param_env);
-        pts_detecter.output_pts(&callgraph, &mut alias_analysis);
-        // pts_detecter.generate_petri_net(&callgraph);
-
-        // TODO: visit local recursive
         let mut pn = PetriNet::new(tcx, param_env, &callgraph);
         pn.construct();
         let stategraph = pn.generate_state_graph();
