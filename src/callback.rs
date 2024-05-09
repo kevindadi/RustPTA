@@ -3,7 +3,6 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use std::cell::RefCell;
 use std::io::Write;
 use std::path::PathBuf;
 
