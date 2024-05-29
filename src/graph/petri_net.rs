@@ -183,19 +183,6 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     condvars: HashMap<CondVarId, NodeIndex>,
 }
 
-// impl std::fmt::Display for PetriNet {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let config = Config::default()
-//             .node_shape(|node, _| match &self.net[node] {
-//                 PetriNetNode::P(_) => "circle",
-//                 PetriNetNode::T(_) => "rectangle",
-//             })
-//             .node_style(|_, _| "filled")
-//             .edge_style(|_, _| "solid");
-
-//         write!(f, "{}", Dot::with_config(&self.net, &[config]))
-//     }
-// }
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn new(
         options: &'compilation Options,
