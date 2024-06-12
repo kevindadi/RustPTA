@@ -452,18 +452,44 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    fn deal_post_function(&mut self) {
-        for (id, func_node_vec) in &self.function_vec {
-            if func_node_vec.len() < 3 {
-                let start = func_node_vec.first().unwrap();
-                let end = func_node_vec.last().unwrap();
-                let t = format!("{:?}", id) + &String::from("no_lock");
-                let transition = Transition::new(t, (0, 0), 1);
-                let t_node = self.net.add_node(PetriNetNode::T(transition));
+    fn prune_path(&mut self, start: NodeIndex, end: NodeIndex) {
+        let mut contains_label = vec![false; self.net.node_count()];
+        let mut stack = vec![start];
+        let mut path = vec![];
+        let mut vaild_path = vec![];
 
-                self.net.add_edge(*start, t_node, PetriNetEdge { label: 1 });
-                self.net.add_edge(t_node, *end, PetriNetEdge { label: 1 });
+        // Perform DFS to find all paths from start to end
+        while let Some(node) = stack.pop() {
+            path.push(node);
+            if node == end {
+                if path.iter().any(|&n| match &self.net[n] {
+                    PetriNetNode::P(place) => {
+                        if place.name.contains("lock") {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    PetriNetNode::T(_) => false,
+                }) {
+                    vaild_path.extend(path.clone());
+                }
+
+                path.pop();
+                continue;
             }
+
+            for edge in self.net.edges_directed(node, Direction::Outgoing) {
+                let target = edge.target();
+                if !path.contains(&target) {
+                    stack.push(target);
+                }
+            }
+        }
+
+        // Mark vaild path
+        for node in vaild_path {
+            contains_label[node.index()] = true;
         }
     }
 
