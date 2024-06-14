@@ -6,6 +6,7 @@ version = 3
 name = "RustPTA"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bitflags 1.3.2",
  "byteorder",
  "cargo_metadata",
@@ -18,6 +19,7 @@ dependencies = [
  "log",
  "once_cell",
  "petgraph",
+ "plex",
  "rand",
  "regex",
  "rustc_version",
@@ -26,6 +28,7 @@ dependencies = [
  "shell-escape",
  "shellwords",
  "smallvec",
+ "thiserror",
 ]
 
 [[package]]
@@ -84,6 +87,27 @@ dependencies = [
  "anstyle",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.86"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3d1d046238990b9cf5bcde22a3fb3584ee5cf65fb2765f454ed428c7a0063da"
+
+[[package]]
+name = "bit-set"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9bf6104718e80d7b26a68fdbacff3481cfc05df670821affc7e9cbc1884400c"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02b4ff8b16e6076c3e14220b39fbc1fabb6737522281a388998046859400895f"
 
 [[package]]
 name = "bitflags"
@@ -317,6 +341,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
+name = "lalr"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "106d7548f95adbe3019b4fc4954554d7b72535867aa9ce326d2f766b68958de7"
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -374,6 +404,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "plex"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23db74c6485b55f923692cda71d300e1d8f593d18ccba17fd54a90006299ff4b"
+dependencies = [
+ "lalr",
+ "proc-macro2",
+ "quote",
+ "redfa",
+ "syn",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -425,6 +468,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "redfa"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29cc2771cc9f5fb0061cdedc05a37170254694dffec6b89920a6e767f08c4220"
+dependencies = [
+ "bit-set",
+ "vec_map",
 ]
 
 [[package]]
@@ -639,6 +692,12 @@ name = "utf8parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "711b9620af191e0cdc7468a8d14e709c3dcdb115b36f838e601583af800a370a"
+
+[[package]]
+name = "vec_map"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cac5efe5cb0fa14ec2f84f83c701c562ee63f6dcc680861b21d65c682adfb05f"
 
 [[package]]
 name = "wasi"

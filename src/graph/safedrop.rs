@@ -112,14 +112,14 @@ impl ReturnAssign {
         let right = Vec::<usize>::new();
         ReturnAssign {
             left_index,
-            left: left,
-            left_so_so: left_so_so,
-            left_need_drop: left_need_drop,
-            right_index: right_index,
-            right: right,
-            right_so_so: right_so_so,
-            right_need_drop: right_need_drop,
-            atype: atype,
+            left,
+            left_so_so,
+            left_need_drop,
+            right_index,
+            right,
+            right_so_so,
+            right_need_drop,
+            atype,
         }
     }
 
@@ -140,9 +140,9 @@ impl ReturnResults {
         let assignments = Vec::<ReturnAssign>::new();
         let dead = FxHashSet::default();
         ReturnResults {
-            arg_size: arg_size,
-            assignments: assignments,
-            dead: dead,
+            arg_size,
+            assignments,
+            dead,
         }
     }
 }
@@ -164,10 +164,10 @@ impl<'tcx> Assignment<'tcx> {
         span: Span,
     ) -> Assignment<'tcx> {
         Assignment {
-            left: left,
-            right: right,
-            atype: atype,
-            span: span,
+            left,
+            right,
+            atype,
+            span,
         }
     }
 }
@@ -192,8 +192,8 @@ pub struct BlockNode<'tcx> {
 impl<'tcx> BlockNode<'tcx> {
     pub fn new(index: usize, is_cleanup: bool) -> BlockNode<'tcx> {
         BlockNode {
-            index: index,
-            is_cleanup: is_cleanup,
+            index,
+            is_cleanup,
             next: FxHashSet::<usize>::default(),
             assignments: Vec::<Assignment<'tcx>>::new(),
             calls: Vec::<Terminator<'tcx>>::new(),
@@ -598,10 +598,10 @@ impl<'tcx> SafeDropGraph<'tcx> {
         SafeDropGraph {
             def_id: def_id.clone(),
             span: my_body.span,
-            blocks: blocks,
-            nodes: nodes,
-            arg_size: arg_size,
-            father_block: father_block,
+            blocks,
+            nodes,
+            arg_size,
+            father_block,
             constant_bool: FxHashMap::default(),
             count: 0,
             return_results: ReturnResults::new(arg_size),

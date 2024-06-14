@@ -3,9 +3,11 @@
 #![feature(saturating_int_impl)]
 
 pub mod analysis;
+pub mod buchi;
 pub mod callback;
 pub mod concurrency;
 pub mod graph;
+pub mod ltl;
 pub mod memory;
 pub mod options;
 pub mod report;

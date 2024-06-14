@@ -283,13 +283,6 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LockGuardCollector<'a, 'b, 'tcx> {
                         if let LockGuardTy::ParkingLotRead(_) = info.lockguard_ty {
                             let term = self.body[location.block].terminator();
                             if let TerminatorKind::Call { ref func, .. } = term.kind {
-                                // Only after monomorphizing can Instance::resolve work
-                                // let func_ty =
-                                //     self.instance.instantiate_mir_and_normalize_erasing_regions(
-                                //         self.tcx,
-                                //         self.param_env,
-                                //         ty::EarlyBinder::bind(func.ty(self.body, self.tcx)),
-                                //     );
                                 let func_ty =
                                     self.instance.subst_mir_and_normalize_erasing_regions(
                                         self.tcx,

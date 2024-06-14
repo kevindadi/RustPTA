@@ -1,6 +1,9 @@
 use crate::utils::format_name;
 use crate::Options;
+use itertools::Itertools;
 use log::debug;
+use petgraph::algo::all_simple_paths;
+use petgraph::graph::node_index;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
@@ -183,19 +186,6 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     condvars: HashMap<CondVarId, NodeIndex>,
 }
 
-// impl std::fmt::Display for PetriNet {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let config = Config::default()
-//             .node_shape(|node, _| match &self.net[node] {
-//                 PetriNetNode::P(_) => "circle",
-//                 PetriNetNode::T(_) => "rectangle",
-//             })
-//             .node_style(|_, _| "filled")
-//             .edge_style(|_, _| "solid");
-
-//         write!(f, "{}", Dot::with_config(&self.net, &[config]))
-//     }
-// }
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn new(
         options: &'compilation Options,
@@ -465,17 +455,83 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    fn deal_post_function(&mut self) {
-        for (id, func_node_vec) in &self.function_vec {
-            if func_node_vec.len() < 3 {
-                let start = func_node_vec.first().unwrap();
-                let end = func_node_vec.last().unwrap();
-                let t = format!("{:?}", id) + &String::from("no_lock");
-                let transition = Transition::new(t, (0, 0), 1);
-                let t_node = self.net.add_node(PetriNetNode::T(transition));
+    fn prune_path(&mut self, start: NodeIndex, end: NodeIndex) {
+        // let mut contains_label = vec![false; self.net.node_count()];
+        // let mut stack = vec![start];
+        // let mut path = vec![];
+        // let mut vaild_path = vec![];
 
-                self.net.add_edge(*start, t_node, PetriNetEdge { label: 1 });
-                self.net.add_edge(t_node, *end, PetriNetEdge { label: 1 });
+        // // Perform DFS to find all paths from start to end
+        // while let Some(node) = stack.pop() {
+        //     path.push(node);
+        //     if node == end {
+        //         if path.iter().any(|&n| match &self.net[n] {
+        //             PetriNetNode::P(place) => {
+        //                 if place.name.contains("lock") {
+        //                     true
+        //                 } else {
+        //                     false
+        //                 }
+        //             }
+        //             PetriNetNode::T(_) => false,
+        //         }) {
+        //             vaild_path.extend(path.clone());
+        //         }
+
+        //         path.pop();
+        //         continue;
+        //     }
+
+        //     for edge in self.net.edges_directed(node, Direction::Outgoing) {
+        //         let target = edge.target();
+        //         if !path.contains(&target) {
+        //             stack.push(target);
+        //         }
+        //     }
+        // }
+
+        // // Mark vaild path
+        // for node in vaild_path {
+        //     contains_label[node.index()] = true;
+        // }
+
+        // let sync_keyword = "lock";
+        let sync_nodes: Vec<NodeIndex> = self
+            .net
+            .node_indices()
+            .filter(|&node| match &self.net[node] {
+                PetriNetNode::P(place) => {
+                    place.name.contains("lock") || place.name.contains("call")
+                }
+                PetriNetNode::T(_) => false,
+            })
+            .collect();
+
+        let all_paths: Vec<Vec<NodeIndex>> =
+            all_simple_paths::<Vec<_>, _>(&self.net, start, end, 0, None).collect();
+
+        // 筛选出包含同步库所的路径
+        let path_with_sync_nodes: Vec<Vec<NodeIndex>> = all_paths
+            .iter()
+            .filter(|path| path.iter().any(|&node| sync_nodes.contains(&node)))
+            .cloned()
+            .collect();
+        debug!("Path with sync places: {:?}", path_with_sync_nodes);
+
+        // 记录包含同步库所路径中的所有节点
+        let mut nodes_in_sync_paths: HashSet<NodeIndex> = HashSet::new();
+        for path in &path_with_sync_nodes {
+            nodes_in_sync_paths.extend(path);
+        }
+
+        // 删除不包含同步库所的路径
+        for path in all_paths {
+            if !path_with_sync_nodes.contains(&path) {
+                for node in path {
+                    if !sync_nodes.contains(&node) && !nodes_in_sync_paths.contains(&node) {
+                        self.net.remove_node(node);
+                    }
+                }
             }
         }
     }

@@ -85,9 +85,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
             // No need to analyze a build script, but do generate code.
             return Compilation::Continue;
         }
-        // queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-        //     self.analyze_with_lockbud(compiler, tcx);
-        // });
         queries.global_ctxt().unwrap().enter(|tcx| {
             self.analyze_with_pta(compiler, tcx);
         });
@@ -127,8 +124,6 @@ impl PTACallbacks {
         let mut callgraph = CallGraph::new();
         let param_env = ParamEnv::reveal_all();
         callgraph.analyze(instances.clone(), tcx, param_env);
-
-        //let mut alias_analysis = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
 
         let callgraph_output = callgraph.dot();
         let callgraph_path = "callgraph.dot";
