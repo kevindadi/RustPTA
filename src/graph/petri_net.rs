@@ -9,8 +9,10 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
 use petgraph::Graph;
+use regex::Regex;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
+use rustc_hir::def_id::DefIndex;
 use rustc_middle::{
     mir::{
         visit::{MutatingUseContext, PlaceContext, Visitor},
@@ -18,6 +20,7 @@ use rustc_middle::{
     },
     ty::{self, Instance, ParamEnv, TyCtxt},
 };
+use rustc_span::sym::format;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -218,13 +221,45 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         self.collect_handle();
         self.collect_condvar();
         for (node, caller) in self.callgraph.graph.node_references() {
-            if self.tcx.is_mir_available(caller.instance().def_id())
-                && format_name(caller.instance().def_id()).contains(&self.options.crate_name)
-            {
+            let func_id = caller.instance().def_id();
+            let func_name = format_name(func_id);
+            let f_name = func_name.split("::").next();
+            match f_name {
+                Some(f_n) => {
+                    if !f_n.eq(&self.options.crate_name) {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+            if self.tcx.is_mir_available(func_id) {
                 self.visitor_function_body(node, caller);
             }
         }
+        let elements = self.count_petri_net_elements();
+        log::info!(
+            "places:{},tranistions:{},edges:{}",
+            elements.0,
+            elements.1,
+            elements.2
+        );
         self.reduce_state();
+    }
+
+    fn count_petri_net_elements(&self) -> (usize, usize, usize) {
+        let mut place_count = 0;
+        let mut transition_count = 0;
+
+        for node in self.net.node_indices() {
+            match self.net[node] {
+                PetriNetNode::P(_) => place_count += 1,
+                PetriNetNode::T(_) => transition_count += 1,
+            }
+        }
+
+        let edge_count = self.net.edge_count();
+
+        (place_count, transition_count, edge_count)
     }
 
     pub fn visitor_function_body(
@@ -262,39 +297,51 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
     // Construct Function Start and End Place by callgraph
     pub fn construct_func(&mut self) {
-        if let Some((main_func, _)) = self.tcx.entry_fn(()) {
-            for node_idx in self.callgraph.graph.node_indices() {
-                // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
-                let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
-                let func_id = func_instance.instance().def_id();
-                let func_name = format_name(func_id);
-                if !func_name.contains(&self.options.crate_name) {
-                    continue;
-                }
-                if func_id == main_func {
-                    let func_start = Place::new(format!("{}", func_name) + "start", 1);
-                    let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                    let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
-                    let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-
-                    self.function_counter
-                        .insert(func_id, (func_start_node_id, func_end_node_id));
-                    // self.function_vec.push(func_start_node_id);
-                    self.function_vec.insert(func_id, vec![func_start_node_id]);
-                } else {
-                    let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
-                    let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                    let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
-                    let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                    // println!("function id: {:?}", func_id);
-                    self.function_counter
-                        .insert(func_id, (func_start_node_id, func_end_node_id));
-                    self.function_vec.insert(func_id, vec![func_start_node_id]);
-                }
-            }
+        let entry_fn_def_id = if let Some((def_id, _)) = self.tcx.entry_fn(()) {
+            def_id
         } else {
-            log::error!("cargo pta need a entry point!");
+            DefId::local(DefIndex::from_u32(0))
+        };
+        // if let Some((main_func, _)) = self.tcx.entry_fn(()) {
+        for node_idx in self.callgraph.graph.node_indices() {
+            // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
+            let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
+            let func_id = func_instance.instance().def_id();
+            let func_name = format_name(func_id);
+            let f_name = func_name.split("::").next();
+            match f_name {
+                Some(f_n) => {
+                    if !f_n.eq(&self.options.crate_name) {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+
+            if func_id == entry_fn_def_id {
+                let func_start = Place::new(format!("{}", func_name) + "start", 1);
+                let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
+                let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
+                let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
+
+                self.function_counter
+                    .insert(func_id, (func_start_node_id, func_end_node_id));
+                // self.function_vec.push(func_start_node_id);
+                self.function_vec.insert(func_id, vec![func_start_node_id]);
+            } else {
+                let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
+                let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
+                let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
+                let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
+                // println!("function id: {:?}", func_id);
+                self.function_counter
+                    .insert(func_id, (func_start_node_id, func_end_node_id));
+                self.function_vec.insert(func_id, vec![func_start_node_id]);
+            }
         }
+        // } else {
+        //     log::error!("cargo pta need a entry point!");
+        // }
     }
 
     // Construct lock for place

@@ -133,10 +133,11 @@ impl PTACallbacks {
             .expect("Unable to write callgraph!");
 
         log::debug!("analysi crate is {:?}", self.options.crate_name);
-        if !crate_name.contains(&self.options.crate_name) {
+        if !crate_name.eq(&self.options.crate_name) {
             log::debug!("No conversion is required for this crate {:?}!", crate_name);
             return;
         }
+
         log::debug!("convert {} to Petri Net!", crate_name);
         let mut pn = PetriNet::new(&self.options, tcx, param_env, &callgraph);
         pn.construct();
