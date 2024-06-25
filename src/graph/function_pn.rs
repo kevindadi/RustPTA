@@ -99,6 +99,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
 impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
+        //  TODO:中序遍历 CFG, 控制 Node 数量
         let func_id = self.instance.def_id();
 
         let fn_name = self.tcx.def_path_str(func_id);
