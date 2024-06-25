@@ -194,36 +194,36 @@ impl<'tcx> CallGraph<'tcx> {
     /// 根据调用序列删减无关调用
     /// 如果从 main 出发的某条执行路径上不包含 LockGuardId 中的函数 Id
     /// 那么此条路径上的函数不需要转换为网
-    pub fn reduce_from_main(
-        &mut self,
-        start: InstanceId,
-        end: InstanceId,
-        lockguard: HashSet<InstanceId>,
-    ) {
-        let paths = self.all_simple_paths(source, target);
+    // pub fn reduce_from_main(
+    //     &mut self,
+    //     start: InstanceId,
+    //     end: InstanceId,
+    //     lockguard: HashSet<InstanceId>,
+    // ) {
+    //     let paths = self.all_simple_paths(source, target);
 
-        for path in paths {
-            if path.iter().any(|&x| lockguard.contains(x)) {
-                continue;
-            }
+    //     for path in paths {
+    //         if path.iter().any(|&x| lockguard.contains(x)) {
+    //             continue;
+    //         }
 
-            let mut to_remove: HashSet<InstanceId> = path.iter().cloned().collect();
-            to_remove.remove(&path.first());
-            to_remove.remove(&path.last());
+    //         let mut to_remove: HashSet<InstanceId> = path.iter().cloned().collect();
+    //         to_remove.remove(&path.first());
+    //         to_remove.remove(&path.last());
 
-            // 删除节点
-            let mut removal_list: Vec<_> = to_remove.into_iter().collect();
-            removal_list.sort_by(|a, b| b.cmp(a));
-            for node in removal_list {
-                self.graph.remove_node(node);
-            }
-            self.graph.add_edge(
-                &path.first(),
-                &path.last(),
-                vec![CallSiteLocation::Direct(())],
-            )
-        }
-    }
+    //         // 删除节点
+    //         let mut removal_list: Vec<_> = to_remove.into_iter().collect();
+    //         removal_list.sort_by(|a, b| b.cmp(a));
+    //         for node in removal_list {
+    //             self.graph.remove_node(node);
+    //         }
+    //         self.graph.add_edge(
+    //     *path.first().unwrap(),
+    //     *path.last().unwrap(),
+    //     ,
+    // );
+    //     }
+    // }
 
     /// Print the callgraph in dot format.
     #[allow(dead_code)]
