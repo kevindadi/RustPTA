@@ -7,12 +7,14 @@
 //! We also track where a closure is defined rather than called
 //! to record the defined function and the parameter of the closure,
 //! which is pointed to by upvars.
+use std::collections::HashSet;
 use std::fmt::Debug;
 
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
+use petgraph::visit::{Dfs, Walker};
 use petgraph::Direction::Incoming;
 use petgraph::{Directed, Graph};
 
@@ -194,36 +196,46 @@ impl<'tcx> CallGraph<'tcx> {
     /// 根据调用序列删减无关调用
     /// 如果从 main 出发的某条执行路径上不包含 LockGuardId 中的函数 Id
     /// 那么此条路径上的函数不需要转换为网
-    // pub fn reduce_from_main(
-    //     &mut self,
-    //     start: InstanceId,
-    //     end: InstanceId,
-    //     lockguard: HashSet<InstanceId>,
-    // ) {
-    //     let paths = self.all_simple_paths(source, target);
+    /// 找到所有从 start 节点到 target_nodes 集合中任何一个节点的路径
+    /// 并删除不在这些路径上的节点和边
+    pub fn filter_paths(&mut self, start: NodeIndex, target_nodes: Vec<NodeIndex>) {
+        let mut reachable_nodes = HashSet::new();
+        let mut reachable_edges = HashSet::new();
 
-    //     for path in paths {
-    //         if path.iter().any(|&x| lockguard.contains(x)) {
-    //             continue;
-    //         }
+        for &target in &target_nodes {
+            for path in algo::all_simple_paths::<Vec<_>, _>(&self.graph, start, target, 0, None) {
+                reachable_nodes.extend(path.iter().cloned());
+                for edge in path.windows(2) {
+                    if let Some(e) = self.graph.find_edge(edge[0], edge[1]) {
+                        reachable_edges.insert(e);
+                    }
+                }
+            }
+        }
 
-    //         let mut to_remove: HashSet<InstanceId> = path.iter().cloned().collect();
-    //         to_remove.remove(&path.first());
-    //         to_remove.remove(&path.last());
+        // 删除不在路径上的节点和边
+        let mut to_remove_nodes = vec![];
+        for node in self.graph.node_indices() {
+            if !reachable_nodes.contains(&node) && node != start {
+                to_remove_nodes.push(node);
+            }
+        }
 
-    //         // 删除节点
-    //         let mut removal_list: Vec<_> = to_remove.into_iter().collect();
-    //         removal_list.sort_by(|a, b| b.cmp(a));
-    //         for node in removal_list {
-    //             self.graph.remove_node(node);
-    //         }
-    //         self.graph.add_edge(
-    //     *path.first().unwrap(),
-    //     *path.last().unwrap(),
-    //     ,
-    // );
-    //     }
-    // }
+        for node in to_remove_nodes {
+            self.graph.remove_node(node);
+        }
+
+        let mut to_remove_edges = vec![];
+        for edge in self.graph.edge_indices() {
+            if !reachable_edges.contains(&edge) {
+                to_remove_edges.push(edge);
+            }
+        }
+
+        for edge in to_remove_edges {
+            self.graph.remove_edge(edge);
+        }
+    }
 
     /// Print the callgraph in dot format.
     #[allow(dead_code)]

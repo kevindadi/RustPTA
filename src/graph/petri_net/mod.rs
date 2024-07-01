@@ -1,3 +1,7 @@
+pub mod cfg2pn;
+pub mod reduce;
+pub mod state_graph;
+
 use crate::utils::format_name;
 use crate::Options;
 use itertools::Itertools;
@@ -29,17 +33,17 @@ use std::collections::VecDeque;
 use std::hash::Hash;
 use std::io::Write;
 
-use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use super::function_pn::BodyToPetriNet;
-use super::state_graph::StateGraph;
 use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::candvar::CondVarInfo;
 use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::handler::JoinHandlerCollector;
 use crate::concurrency::handler::JoinHandlerMap;
-use crate::graph::state_graph::StateEdge;
-use crate::graph::state_graph::StateNode;
+use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use crate::graph::petri_net::cfg2pn::CfgToPetriNet;
+use crate::graph::petri_net::state_graph::StateEdge;
+use crate::graph::petri_net::state_graph::StateGraph;
+use crate::graph::petri_net::state_graph::StateNode;
 use crate::{
     analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
     concurrency::locks::{
@@ -276,7 +280,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
         let lock_infos = self.lock_info.clone();
 
-        let mut func_body = BodyToPetriNet::new(
+        let mut func_body = CfgToPetriNet::new(
             node,
             caller.instance(),
             body,
@@ -339,9 +343,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 self.function_vec.insert(func_id, vec![func_start_node_id]);
             }
         }
-        // } else {
-        //     log::error!("cargo pta need a entry point!");
-        // }
     }
 
     // Construct lock for place
@@ -482,7 +483,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_name = format!("{:?}", "mutex".to_string() + id.to_string().as_str());
+                    let lock_name = format!("{:?}", &info[&lock_vec[0]].lockguard_ty)
+                        + &format!("{:?}", &info[&lock_vec[0]].span);
 
                     let lock_p = Place::new(lock_name, 1);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
@@ -491,7 +493,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     }
                 }
                 _ => {
-                    let lock_name = format!("{:?}", "rwlock".to_string() + id.to_string().as_str());
+                    let lock_name = format!("{:?}", &info[&lock_vec[0]].lockguard_ty)
+                        + &format!("{:?}", &info[&lock_vec[0]].span);
                     let lock_p = Place::new(lock_name, 10);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
@@ -503,45 +506,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     fn prune_path(&mut self, start: NodeIndex, end: NodeIndex) {
-        // let mut contains_label = vec![false; self.net.node_count()];
-        // let mut stack = vec![start];
-        // let mut path = vec![];
-        // let mut vaild_path = vec![];
-
-        // // Perform DFS to find all paths from start to end
-        // while let Some(node) = stack.pop() {
-        //     path.push(node);
-        //     if node == end {
-        //         if path.iter().any(|&n| match &self.net[n] {
-        //             PetriNetNode::P(place) => {
-        //                 if place.name.contains("lock") {
-        //                     true
-        //                 } else {
-        //                     false
-        //                 }
-        //             }
-        //             PetriNetNode::T(_) => false,
-        //         }) {
-        //             vaild_path.extend(path.clone());
-        //         }
-
-        //         path.pop();
-        //         continue;
-        //     }
-
-        //     for edge in self.net.edges_directed(node, Direction::Outgoing) {
-        //         let target = edge.target();
-        //         if !path.contains(&target) {
-        //             stack.push(target);
-        //         }
-        //     }
-        // }
-
-        // // Mark vaild path
-        // for node in vaild_path {
-        //     contains_label[node.index()] = true;
-        // }
-
         // let sync_keyword = "lock";
         let sync_nodes: Vec<NodeIndex> = self
             .net
@@ -781,7 +745,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                                     }
                                 }
                                 _ => {
-                                    println!("The predecessor set of transition is not place");
+                                    log::error!("The predecessor set of transition is not place");
                                 }
                             }
                         }
@@ -790,7 +754,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         }
                     }
                 },
-                None => println!("Node {}: no weight", node_index.index()),
+                None => log::warn!("Node {}: no weight", node_index.index()),
             }
         }
         sched_transiton
@@ -859,6 +823,48 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
             PetriNetNode::T(_) => {
                 println!("{}", "this error!");
+            }
+        }
+    }
+
+    // Get the current marking
+    pub fn get_current_mark(&self) -> HashSet<(NodeIndex, usize)> {
+        let mut current_mark = HashSet::<(NodeIndex, usize)>::new();
+        for node in self.net.node_indices() {
+            match &self.net[node] {
+                PetriNetNode::P(place) => {
+                    if *place.tokens.borrow() > 0 {
+                        current_mark.insert((node.clone(), *place.tokens.borrow() as usize));
+                    }
+                }
+                PetriNetNode::T(_) => {
+                    debug!("{}", "this error!");
+                }
+            }
+        }
+        current_mark
+    }
+
+    // Set the current marking
+    pub fn set_current_mark(&mut self, mark: HashSet<(NodeIndex, usize)>) {
+        for node in self.net.node_indices() {
+            match &mut self.net[node] {
+                PetriNetNode::P(place) => {
+                    *place.tokens.borrow_mut() = 0;
+                }
+                PetriNetNode::T(_) => {
+                    debug!("{}", "this error!");
+                }
+            }
+        }
+        for (m, n) in mark {
+            match &mut self.net[m] {
+                PetriNetNode::P(place) => {
+                    *place.tokens.borrow_mut() = n;
+                }
+                PetriNetNode::T(_) => {
+                    debug!("{}", "this error!");
+                }
             }
         }
     }
@@ -950,38 +956,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
         // info!("All states are: {:?}", all_state.len());
-        use petgraph::dot::Dot;
-        let mut sg_file = std::fs::File::create("sg.dot").unwrap();
-
-        write!(
-            sg_file,
-            "{:?}",
-            Dot::with_attr_getters(
-                &state_graph.graph,
-                &[],
-                &|_, _| "arrowhead = vee".to_string(),
-                &|_, nr| {
-                    format!(
-                        "label = {:?}",
-                        "\"".to_string()
-                            + &nr
-                                .1
-                                .mark
-                                .clone()
-                                .iter()
-                                .map(|x| match &self.net[x.0] {
-                                    PetriNetNode::P(p) =>
-                                        p.name.clone() + ":" + (x.1).to_string().as_str(),
-                                    PetriNetNode::T(t) => t.name.clone(),
-                                })
-                                .collect::<Vec<String>>()
-                                .join(", ")
-                            + "\""
-                    )
-                },
-            )
-        )
-        .unwrap();
         state_graph
     }
 
@@ -1026,48 +1000,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
             return result;
         }
-    }
-
-    // Set the current marking
-    pub fn set_current_mark(&mut self, mark: HashSet<(NodeIndex, usize)>) {
-        for node in self.net.node_indices() {
-            match &mut self.net[node] {
-                PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() = 0;
-                }
-                PetriNetNode::T(_) => {
-                    debug!("{}", "this error!");
-                }
-            }
-        }
-        for (m, n) in mark {
-            match &mut self.net[m] {
-                PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() = n;
-                }
-                PetriNetNode::T(_) => {
-                    debug!("{}", "this error!");
-                }
-            }
-        }
-    }
-
-    // Get the current marking
-    pub fn get_current_mark(&self) -> HashSet<(NodeIndex, usize)> {
-        let mut current_mark = HashSet::<(NodeIndex, usize)>::new();
-        for node in self.net.node_indices() {
-            match &self.net[node] {
-                PetriNetNode::P(place) => {
-                    if *place.tokens.borrow() > 0 {
-                        current_mark.insert((node.clone(), *place.tokens.borrow() as usize));
-                    }
-                }
-                PetriNetNode::T(_) => {
-                    debug!("{}", "this error!");
-                }
-            }
-        }
-        current_mark
     }
 
     // Reduce the size of the Petri net and merge edges without branches
@@ -1133,303 +1065,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             },
         );
 
-        let mut file = std::fs::File::create("graph.dot").unwrap();
+        let mut file = std::fs::File::create("pn.dot").unwrap();
         let _ = file.write_all(format!("{:?}", pn_dot).as_bytes());
-    }
-}
-
-/// Collect lockguard info.
-pub struct LinkConstruct<'b, 'tcx> {
-    instance_id: InstanceId,
-    instance: &'b Instance<'tcx>,
-    body: &'b Body<'tcx>,
-    tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
-    pub net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
-    pub lockguards: LockGuardMap<'tcx>,
-    function_counter: &'b HashMap<DefId, (NodeIndex, NodeIndex)>,
-    pub function_vec: &'b mut HashMap<DefId, Vec<NodeIndex>>,
-    locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
-}
-
-impl<'b, 'tcx> LinkConstruct<'b, 'tcx> {
-    pub fn new(
-        instance_id: InstanceId,
-        instance: &'b Instance<'tcx>,
-        body: &'b Body<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-        net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
-        lockguards: LockGuardMap<'tcx>,
-        function_counter: &'b HashMap<DefId, (NodeIndex, NodeIndex)>,
-        function_vec: &'b mut HashMap<DefId, Vec<NodeIndex>>,
-        locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
-    ) -> Self {
-        Self {
-            instance_id,
-            instance,
-            body,
-            tcx,
-            param_env,
-            net,
-            lockguards,
-            function_counter,
-            function_vec,
-            locks_counter,
-        }
-    }
-
-    pub fn analyze(&mut self) {
-        self.visit_body(self.body);
-    }
-
-    // pub fn extract_def_id_of_called_function_from_operand(
-    //     operand: &rustc_middle::mir::Operand<'tcx>,
-    //     caller_function_def_id: rustc_hir::def_id::DefId,
-    //     tcx: rustc_middle::ty::TyCtxt<'tcx>,
-    // ) -> rustc_hir::def_id::DefId {
-    //     let function_type = match operand {
-    //         rustc_middle::mir::Operand::Copy(place) | rustc_middle::mir::Operand::Move(place) => {
-    //             // Find the type through the local declarations of the caller function.
-    //             // The `Place` (memory location) of the called function should be declared there and we can query its type.
-    //             let body = tcx.optimized_mir(caller_function_def_id);
-    //             let place_ty = place.ty(body, tcx);
-    //             place_ty.ty
-    //         }
-    //         rustc_middle::mir::Operand::Constant(constant) => constant.ty(),
-    //     };
-    //     match function_type.kind() {
-    //         rustc_middle::ty::TyKind::FnPtr(_) => {
-    //             unimplemented!(
-    //                 "TyKind::FnPtr not implemented yet. Function pointers are present in the MIR"
-    //             );
-    //         }
-    //         rustc_middle::ty::TyKind::FnDef(def_id, _)
-    //         | rustc_middle::ty::TyKind::Closure(def_id, _) => *def_id,
-    //         _ => {
-    //             panic!("TyKind::FnDef, a function definition, but got: {function_type:?}");
-    //         }
-    //     }
-    // }
-}
-
-impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
-    fn visit_local(&mut self, local: Local, context: PlaceContext, _: Location) {
-        let lockguard_id = LockGuardId::new(self.instance_id, local);
-        // local is lockguard
-        if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
-            match context {
-                PlaceContext::MutatingUse(context) => match context {
-                    MutatingUseContext::Drop => {
-                        let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
-                        let drop_t = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("drop")
-                            + &format!("{:?}", lock_node.index());
-                        let drop_p = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("dropped")
-                            + &format!("{:?}", lock_node.index());
-                        let drop_lock_t = Transition::new(format!("{:?}", drop_t), (0, 0), 1);
-                        let drop_lock_p = Place::new(format!("{:?}", drop_p), 0);
-                        let drop_node_t = self.net.add_node(PetriNetNode::T(drop_lock_t));
-                        let drop_node_p = self.net.add_node(PetriNetNode::P(drop_lock_p));
-
-                        let prev_node = self.function_vec[&self.instance.def_id()].last().unwrap();
-                        self.net
-                            .add_edge(*prev_node, drop_node_t, PetriNetEdge { label: 1usize });
-                        self.net
-                            .add_edge(drop_node_t, drop_node_p, PetriNetEdge { label: 1usize });
-                        match &self.lockguards[&lockguard_id].lockguard_ty {
-                            LockGuardTy::StdMutex(_)
-                            | LockGuardTy::ParkingLotMutex(_)
-                            | LockGuardTy::SpinMutex(_) => {
-                                self.net.add_edge(
-                                    drop_node_t,
-                                    *lock_node,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                            }
-                            _ => {
-                                self.net.add_edge(
-                                    drop_node_t,
-                                    *lock_node,
-                                    PetriNetEdge { label: 10usize },
-                                );
-                            }
-                        }
-                    }
-                    MutatingUseContext::Call => {
-                        let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
-                        let genc_t = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("genc")
-                            + &format!("{:?}", lock_node.index());
-                        let genc_p = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("locked")
-                            + &format!("{:?}", lock_node.index());
-                        let genc_lock_t = Transition::new(format!("{:?}", genc_t), (0, 0), 1);
-                        let genc_lock_p = Place::new(format!("{:?}", genc_p), 0);
-                        let genc_node_t = self.net.add_node(PetriNetNode::T(genc_lock_t));
-                        let genc_node_p = self.net.add_node(PetriNetNode::P(genc_lock_p));
-
-                        let prev_node = self.function_vec[&self.instance.def_id()].last().unwrap();
-                        self.net
-                            .add_edge(*prev_node, genc_node_t, PetriNetEdge { label: 1usize });
-                        self.net
-                            .add_edge(genc_node_t, genc_node_p, PetriNetEdge { label: 1usize });
-                        match &self.lockguards[&lockguard_id].lockguard_ty {
-                            LockGuardTy::StdMutex(_)
-                            | LockGuardTy::ParkingLotMutex(_)
-                            | LockGuardTy::SpinMutex(_) => {
-                                self.net.add_edge(
-                                    *lock_node,
-                                    genc_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                            }
-                            _ => {
-                                self.net.add_edge(
-                                    *lock_node,
-                                    genc_node_t,
-                                    PetriNetEdge { label: 10usize },
-                                );
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    }
-
-    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        if let TerminatorKind::Call {
-            ref func, fn_span, ..
-        } = terminator.kind
-        {
-            let func_ty = func.ty(self.body, self.tcx);
-
-            if let ty::FnDef(def_id, substs) = *func_ty.kind() {
-                let func_name = self.tcx.def_path_str(def_id);
-                if func_name.contains("core")
-                    || func_name.contains("std")
-                    || func_name.contains("alloc")
-                    || func_name.contains("parking_lot::")
-                    || func_name.contains("spin::")
-                    || func_name.contains("::new")
-                {
-                } else {
-                    if let Some(_) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
-                        .ok()
-                        .flatten()
-                    {
-                        let func_name = self.tcx.def_path_str(def_id);
-                        println!("{:?}", def_id);
-                        let func_start_end = self.function_counter.get(&def_id);
-                        match func_start_end {
-                            Some(_) => {
-                                if func_name == "std::mem::drop"
-                                    || func_name == "std::ops::Deref::deref"
-                                    || func_name == "std::ops::DerefMut::deref_mut"
-                                    || func_name == "std::result::Result::<T, E>::unwrap"
-                                {
-                                    return;
-                                }
-                                if func_name == "std::thread::spawn" {
-                                    // thread
-                                    return;
-                                }
-                                let call = format!("{:?}", fn_span)
-                                    + &String::from("call")
-                                    + &format!("{:?}", def_id);
-                                let wait = format!("{:?}", fn_span)
-                                    + &String::from("wait")
-                                    + &format!("{:?}", def_id);
-                                let ret = format!("{:?}", fn_span)
-                                    + &String::from("return")
-                                    + &format!("{:?}", def_id);
-                                let called = format!("{:?}", fn_span)
-                                    + &String::from("called")
-                                    + &format!("{:?}", def_id);
-                                let call_t = Transition::new(call, (0, 0), 1);
-                                let wait_p = Place::new(wait, 0);
-                                let ret_t = Transition::new(ret, (0, 0), 1);
-                                let call_p = Place::new(called, 0);
-
-                                let call_node_t = self.net.add_node(PetriNetNode::T(call_t));
-                                let wait_node_p = self.net.add_node(PetriNetNode::P(wait_p));
-                                let ret_node_t = self.net.add_node(PetriNetNode::T(ret_t));
-                                let call_node_p = self.net.add_node(PetriNetNode::P(call_p));
-
-                                let prev_node = self.function_vec[&def_id].last().unwrap();
-
-                                self.net.add_edge(
-                                    *prev_node,
-                                    call_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    call_node_t,
-                                    wait_node_p,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    wait_node_p,
-                                    ret_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    ret_node_t,
-                                    call_node_p,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.function_vec
-                                    .get_mut(&def_id)
-                                    .unwrap()
-                                    .push(call_node_t);
-                                self.function_vec
-                                    .get_mut(&def_id)
-                                    .unwrap()
-                                    .push(wait_node_p);
-                                self.function_vec.get_mut(&def_id).unwrap().push(ret_node_t);
-                                self.function_vec
-                                    .get_mut(&def_id)
-                                    .unwrap()
-                                    .push(call_node_p);
-                                self.net.add_edge(
-                                    call_node_t,
-                                    func_start_end.unwrap().0,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    func_start_end.unwrap().1,
-                                    ret_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-        self.super_terminator(terminator, location);
-    }
-}
-
-#[cfg(test)]
-pub mod test_s {
-    use std::fs::File;
-    use std::io::Read;
-
-    #[test]
-    pub fn parse_petri_net() {
-        let mut file =
-            File::open("/Users/zhangkaiwen/RustAnalysis/RustPTA/test/double_lock/graph.dot")
-                .expect("Unable to open file");
-
-        // 读取文件内容到字符串
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .expect("Unable to read file");
     }
 }

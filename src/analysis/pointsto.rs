@@ -6,17 +6,15 @@
 //! with limited support for inter-procedural analysis
 //! of methods and closures.
 //! See `Andersen` for more details.
-
 extern crate rustc_hash;
+extern crate rustc_hir;
+extern crate rustc_index;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::VecDeque;
-// use rustc_middle::mir::{
-//     Body, Const, ConstOperand, Local, Location, Operand, Place, PlaceElem, PlaceRef,
-//     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
-// };
 
 use rustc_middle::mir::{
     Body, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef, ProjectionElem,
@@ -64,6 +62,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
         }
     }
 
+    /// 构造约束图,并基于规则建立别名集合
     pub fn analyze(&mut self) {
         let mut collector = ConstraintGraphCollector::new(self.body, self.tcx);
         collector.visit_body(self.body);
@@ -632,6 +631,17 @@ pub enum ApproximateAliasKind {
     Possibly,
     Unlikely,
     Unknown,
+}
+
+impl ApproximateAliasKind {
+    pub fn to_string(&self) -> String {
+        match self {
+            ApproximateAliasKind::Probably => String::from("Probably"),
+            ApproximateAliasKind::Possibly => String::from("Possibly"),
+            ApproximateAliasKind::Unlikely => String::from("Unlikely"),
+            ApproximateAliasKind::Unknown => String::from("Unknown"),
+        }
+    }
 }
 
 /// Probably > Possibly > Unlikey > Unknown

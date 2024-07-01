@@ -1,6 +1,6 @@
-use super::{
+use crate::graph::{
     callgraph::InstanceId,
-    petri_net::{PetriNetEdge, PetriNetNode, Place},
+    petri_net::{PetriNetEdge, PetriNetNode, Place, Transition},
 };
 use crate::{
     analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
@@ -9,7 +9,6 @@ use crate::{
         handler::JoinHanderId,
         locks::{LockGuardId, LockGuardMap, LockGuardTy},
     },
-    graph::petri_net::Transition,
     options::Options,
     utils::format_name,
 };
@@ -37,7 +36,7 @@ pub fn find_key_by_id(
 }
 
 // Constructing Subsequent Graph based on function's CFG
-pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
+pub struct CfgToPetriNet<'translate, 'analysis, 'tcx> {
     instance_id: InstanceId,
     instance: &'translate Instance<'tcx>,
     body: &'translate Body<'tcx>,
@@ -57,7 +56,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
 }
 
-impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
+impl<'translate, 'analysis, 'tcx> CfgToPetriNet<'translate, 'analysis, 'tcx> {
     pub fn new(
         instance_id: InstanceId,
         instance: &'translate Instance<'tcx>,
@@ -97,7 +96,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 }
 
-impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, 'analysis, 'tcx> {
+impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for CfgToPetriNet<'translate, 'analysis, 'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
         //  TODO:中序遍历 CFG, 控制 Node 数量
         let func_id = self.instance.def_id();
@@ -316,7 +315,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
     }
 }
 
-impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
+impl<'translate, 'analysis, 'tcx> CfgToPetriNet<'translate, 'analysis, 'tcx> {
     fn translate_term_call(
         &mut self,
         fn_name: String,

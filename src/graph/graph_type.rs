@@ -1,7 +1,7 @@
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
-use super::petri_net::{PetriNet, PetriNetNode};
+use crate::graph::petri_net::{PetriNet, PetriNetNode};
 
 pub trait OutputType {
     fn lola(&self) -> String;

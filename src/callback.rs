@@ -138,6 +138,20 @@ impl PTACallbacks {
             return;
         }
 
+        // 输出锁的指向关系
+        match self.options.lock_pts {
+            Some(_) => {
+                use crate::analysis::pointsto::AliasAnalysis;
+                use crate::graph::pts_graph::PtsGraph;
+                log::info!("generate lockguard points map!");
+                let mut alias = AliasAnalysis::new(tcx, &callgraph);
+                let mut lock_pts_graph = PtsGraph::new(tcx, param_env);
+                lock_pts_graph.output_pts(&callgraph, &mut alias, param_env);
+                return;
+            }
+            None => {}
+        }
+
         log::debug!("convert {} to Petri Net!", crate_name);
         let mut pn = PetriNet::new(&self.options, tcx, param_env, &callgraph);
         pn.construct();
