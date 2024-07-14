@@ -53,35 +53,5 @@ impl StateGraph {
         use petgraph::dot::Dot;
         use std::io::Write;
         let mut sg_file = std::fs::File::create("sg.dot").unwrap();
-
-        // write!(
-        //     sg_file,
-        //     "{:?}",
-        //     Dot::with_attr_getters(
-        //         &self.graph,
-        //         &[],
-        //         &|_, _| "arrowhead = vee".to_string(),
-        //         &|_, nr| {
-        //             format!(
-        //                 "label = {:?}",
-        //                 "\"".to_string()
-        //                     + &nr
-        //                         .1
-        //                         .mark
-        //                         .clone()
-        //                         .iter()
-        //                         .map(|x| match &self.pn.net[x.0] {
-        //                             PetriNetNode::P(p) =>
-        //                                 p.name.clone() + ":" + (x.1).to_string().as_str(),
-        //                             PetriNetNode::T(t) => t.name.clone(),
-        //                         })
-        //                         .collect::<Vec<String>>()
-        //                         .join(", ")
-        //                     + "\""
-        //             )
-        //         },
-        //     )
-        // )
-        // .unwrap();
     }
 }
