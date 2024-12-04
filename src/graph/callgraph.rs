@@ -19,7 +19,7 @@ use petgraph::{Directed, Graph};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind};
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind};
+use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind, TypingEnv};
 
 /// The NodeIndex in CallGraph, denoting a unique instance in CallGraph.
 pub type InstanceId = NodeIndex;
@@ -52,7 +52,7 @@ pub struct FunctionNode<'tcx> {
 }
 
 impl<'tcx> FunctionNode<'tcx> {
-    pub fn new_node(instance: Instance<'tcx>, def_id: DefId) -> FunctionNode {
+    pub fn new_node(instance: Instance<'tcx>, def_id: DefId) -> FunctionNode<'tcx> {
         FunctionNode {
             instance,
             def_id,
@@ -244,14 +244,15 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
             //     self.param_env,
             //     ty::EarlyBinder::bind(func.ty(&self.body.local_decls, self.tcx)),
             // );
-            let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
+            let typing_env = TypingEnv::post_analysis(self.tcx, self.caller.def_id());
+            let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
-                self.param_env,
+                typing_env,
                 ty::EarlyBinder::bind(func.ty(self.body, self.tcx)),
             );
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
                 // println!("func kind error");
-                if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
+                if let Some(callee) = Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                     .ok()
                     .flatten()
                 {
@@ -277,9 +278,10 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
         //     self.param_env,
         //     ty::EarlyBinder::bind(local_decl.ty),
         // );
-        let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
+        let typing_env = TypingEnv::post_analysis(self.tcx, self.caller.def_id());
+        let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,
-            self.param_env,
+            typing_env,
             ty::EarlyBinder::bind(local_decl.ty),
         );
         if let TyKind::Closure(def_id, substs) = *func_ty.kind() {
@@ -287,7 +289,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                 LocalKind::Arg | LocalKind::ReturnPointer => {}
                 _ => {
                     if let Some(callee_instance) =
-                        Instance::resolve(self.tcx, self.param_env, def_id, substs)
+                        Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                             .ok()
                             .flatten()
                     {

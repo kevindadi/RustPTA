@@ -5,7 +5,7 @@ use clap::error::ErrorKind;
 
 use clap::{Arg, Command};
 use itertools::Itertools;
-use rustc_session::EarlyErrorHandler;
+use rustc_session::EarlyDiagCtxt;
 
 #[derive(Debug)]
 pub enum CrateNameList {
@@ -76,9 +76,9 @@ impl Default for Options {
 }
 
 impl Options {
-    pub fn parse_from_str(&mut self, s: &str, handler: &EarlyErrorHandler) -> Vec<String> {
+    pub fn parse_from_str(&mut self, s: &str, handler: &EarlyDiagCtxt) -> Vec<String> {
         let args = shellwords::split(s).unwrap_or_else(|e| {
-            handler.early_error(format!("Cannot parse argument string: {e:?}"))
+            handler.early_fatal(format!("Cannot parse argument string: {e:?}"))
         });
         self.parse_from_args(&args)
     }

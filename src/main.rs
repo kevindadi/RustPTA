@@ -1,6 +1,6 @@
 #![feature(rustc_private)]
 #![feature(box_patterns)]
-#![feature(saturating_int_impl)]
+#![warn(non_snake_case)]
 
 pub mod analysis;
 pub mod callback;
@@ -22,16 +22,15 @@ extern crate rustc_span;
 
 use log::debug;
 use options::Options;
+use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
 
 use crate::options::DetectorKind;
 
 fn main() {
-    let early_error_handler =
-        rustc_session::EarlyErrorHandler::new(rustc_session::config::ErrorOutputType::default());
-
+    let handler = EarlyDiagCtxt::new(ErrorOutputType::default());
     // Initialize loggers.
     if std::env::var("RUSTC_LOG").is_ok() {
-        rustc_driver::init_rustc_env_logger(&early_error_handler);
+        rustc_driver::init_rustc_env_logger(&handler);
     }
 
     if std::env::var("PTA_LOG").is_ok() {
@@ -43,10 +42,7 @@ fn main() {
 
     let mut options = Options::default();
 
-    let _ = options.parse_from_str(
-        &std::env::var("PTA_FLAGS").unwrap_or_default(),
-        &early_error_handler,
-    );
+    let _ = options.parse_from_str(&std::env::var("PTA_FLAGS").unwrap_or_default(), &handler);
 
     //let _ = options.parse_from_str(&std::env::args().skip(2), &early_error_handler);
 
@@ -56,8 +52,7 @@ fn main() {
         .enumerate()
         .map(|(i, arg)| {
             arg.into_string().unwrap_or_else(|arg| {
-                early_error_handler
-                    .early_error(format!("Argument {i} is not valid Unicode: {arg:?}"))
+                handler.early_fatal(format!("Argument {i} is not valid Unicode: {arg:?}"))
             })
         })
         .collect::<Vec<_>>();
@@ -119,8 +114,8 @@ fn main() {
         let compiler =
             rustc_driver::RunCompiler::new(&rustc_command_line_arguments, &mut callbacks);
         compiler.run()
-    })
-    .and_then(|result| result);
+    });
+
     let exit_code = match result {
         Ok(_) => rustc_driver::EXIT_SUCCESS,
         Err(_) => rustc_driver::EXIT_FAILURE,

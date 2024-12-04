@@ -16,7 +16,7 @@ use crate::{
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{visit::Visitor, BasicBlock, TerminatorKind, UnwindAction};
+use rustc_middle::mir::{visit::Visitor, BasicBlock, TerminatorKind};
 use rustc_middle::{
     mir::Body,
     ty::{Instance, TyCtxt},
@@ -94,6 +94,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     pub fn translate(&mut self) {
+        // TODO: 如果函数中不包含同步原图, Skip
         self.visit_body(self.body);
     }
 }
@@ -105,6 +106,9 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
         let fn_name = self.tcx.def_path_str(func_id);
 
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
+            if bb.is_cleanup {
+                continue;
+            }
             let mut bb_span = String::new();
             if let Some(ref term) = bb.terminator {
                 bb_span = format!("{:?}", term.source_info.span);
@@ -120,8 +124,13 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
             self.bb_node_vec.insert(bb_idx.clone(), vec![bb_start]);
         }
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
+            // 不检测cleanup的块，所有的unwind操作忽略
+            if bb.is_cleanup {
+                continue;
+            }
+
             if bb_idx.index() == 0 {
-                let bb_start_name = fn_name.clone() + &format!("{:?}", bb_idx) + "start";
+                let bb_start_name = format!("{}_{}_start", fn_name, bb_idx.index());
                 let bb_start_transition = Transition::new(bb_start_name, (0, 0), 1);
                 let bb_start = self.net.add_node(PetriNetNode::T(bb_start_transition));
 
@@ -140,7 +149,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                 let bb_span = format!("{:?}", term.source_info.span);
                 match &term.kind {
                     TerminatorKind::Goto { target } => {
-                        let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "goto";
+                        let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "goto");
                         let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
@@ -157,10 +166,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                     TerminatorKind::SwitchInt { discr: _, targets } => {
                         let mut t_num = 1usize;
                         for t in targets.all_targets() {
-                            let bb_term_name = fn_name.clone()
-                                + &format!("{:?}", bb_idx)
-                                + "switch"
-                                + t_num.to_string().as_str();
+                            let bb_term_name =
+                                format!("{}_{}_{}", fn_name, bb_idx.index(), "switch")
+                                    + "switch"
+                                    + t_num.to_string().as_str();
                             t_num += 1;
                             let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                             let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
@@ -179,7 +188,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                         }
                     }
                     TerminatorKind::UnwindResume => {
-                        let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "resume";
+                        let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "resume");
                         let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
                         self.net.add_edge(
@@ -193,7 +202,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                     }
                     TerminatorKind::UnwindTerminate(_) => {}
                     TerminatorKind::Return => {
-                        let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "return";
+                        let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "return");
                         let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
                         self.net.add_edge(
@@ -207,8 +216,8 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             .add_edge(bb_end, return_node, PetriNetEdge { label: 1usize });
                     }
                     TerminatorKind::Unreachable => {}
-                    TerminatorKind::Assert { target, unwind, .. } => {
-                        let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "assert";
+                    TerminatorKind::Assert { target, .. } => {
+                        let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "assert");
                         let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
@@ -223,27 +232,6 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             *self.bb_node_start_end.get(target).unwrap(),
                             PetriNetEdge { label: 1usize },
                         );
-                        // match unwind {
-                        //     UnwindAction::Cleanup(bb_clean) => {
-                        //         let bb_unwind_name =
-                        //             fn_name.clone() + &format!("{:?}", bb_idx) + "unwind";
-                        //         let bb_unwind_transition =
-                        //             Transition::new(bb_unwind_name, (0, 0), 1);
-                        //         let bb_unwind =
-                        //             self.net.add_node(PetriNetNode::T(bb_unwind_transition));
-                        //         self.net.add_edge(
-                        //             *self.bb_node_start_end.get(&bb_idx).unwrap(),
-                        //             bb_unwind,
-                        //             PetriNetEdge { label: 1usize },
-                        //         );
-                        //         self.net.add_edge(
-                        //             bb_unwind,
-                        //             *self.bb_node_start_end.get(&bb_clean).unwrap(),
-                        //             PetriNetEdge { label: 1usize },
-                        //         );
-                        //     }
-                        //     _ => {}
-                        // }
                     }
                     TerminatorKind::Call {
                         func,
@@ -266,7 +254,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                         let lockguard_id = LockGuardId::new(self.instance_id, destination.local);
                         let handle_id = JoinHanderId::new(self.instance_id, destination.local);
 
-                        let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "call";
+                        let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "call");
                         let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
@@ -314,7 +302,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             let callee_ty = func.ty(self.body, self.tcx);
 
                             let callee_id = match callee_ty.kind() {
-                                rustc_middle::ty::TyKind::FnPtr(_) => {
+                                rustc_middle::ty::TyKind::FnPtr(..) => {
                                     return;
                                 }
                                 rustc_middle::ty::TyKind::FnDef(def_id, _)
@@ -343,7 +331,8 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 }
                                 log::debug!("ignore function not include in main crate!");
                             } else if caller_func_name.contains("Condvar::notify_one") {
-                                let condvar_local = args.get(0).unwrap().place().unwrap().local;
+                                let condvar_local =
+                                    args.get(0).unwrap().node.place().unwrap().local;
                                 let condvar_id = CondVarId::new(self.instance_id, condvar_local);
                                 println!("condvar nofity: {:?}", condvar_id);
                                 for condvar_e in self.condvar_id.into_iter() {
@@ -380,12 +369,13 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 }
                             } else if caller_func_name.contains("Condvar::wait") {
                                 let bb_wait_name =
-                                    fn_name.clone() + &format!("{:?}", bb_idx) + "release lock";
+                                    format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
+
                                 let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
                                 let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
 
                                 let bb_ret_name =
-                                    fn_name.clone() + &format!("{:?}", bb_idx) + "wait";
+                                    format!("{}_{}_{}", fn_name, bb_idx.index(), "ret");
                                 let bb_ret_transition = Transition::new(bb_ret_name, (0, 0), 1);
                                 let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
 
@@ -394,7 +384,8 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 self.net
                                     .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
 
-                                let condvar_local = args.get(0).unwrap().place().unwrap().local;
+                                let condvar_local =
+                                    args.get(0).unwrap().node.place().unwrap().local;
                                 let condvar_id = CondVarId::new(self.instance_id, condvar_local);
                                 println!("condvar wait: {:?}", condvar_id);
                                 for condvar_e in self.condvar_id.into_iter() {
@@ -418,7 +409,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
 
                                 let condvar_lockguard = LockGuardId::new(
                                     self.instance_id,
-                                    args.get(1).unwrap().place().unwrap().local,
+                                    args.get(1).unwrap().node.place().unwrap().local,
                                 );
                                 let condvar_lock_node =
                                     self.locks_counter.get(&condvar_lockguard).unwrap();
@@ -446,12 +437,12 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 }
                             } else {
                                 let bb_wait_name =
-                                    fn_name.clone() + &format!("{:?}", bb_idx) + "wait";
+                                    format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
                                 let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
                                 let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
 
                                 let bb_ret_name =
-                                    fn_name.clone() + &format!("{:?}", bb_idx) + "return";
+                                    format!("{}_{}_{}", fn_name, bb_idx.index(), "return");
                                 let bb_ret_transition = Transition::new(bb_ret_name, (0, 0), 1);
                                 let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
 
@@ -461,7 +452,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                     .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
 
                                 if args.len() > 0 {
-                                    let args_ty = args.get(0).unwrap().ty(self.body, self.tcx);
+                                    let args_ty = args.get(0).unwrap().node.ty(self.body, self.tcx);
                                     let _: Option<DefId> = match args_ty.kind() {
                                         rustc_middle::ty::TyKind::Closure(def_id, _) => {
                                             if let Some((callee_start, _)) =
@@ -493,7 +484,12 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                             if path.contains("JoinHandle") {
                                                 let move_handle_id = JoinHanderId::new(
                                                     self.instance_id,
-                                                    args.get(0).unwrap().place().unwrap().local,
+                                                    args.get(0)
+                                                        .unwrap()
+                                                        .node
+                                                        .place()
+                                                        .unwrap()
+                                                        .local,
                                                 );
                                                 if let Some(join_id) =
                                                     self.handler_id.get(&move_handle_id)
@@ -563,7 +559,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                         unwind: _,
                         replace: _,
                     } => {
-                        let bb_term_name = fn_name.clone() + &format!("{:?}", bb_idx) + "drop";
+                        let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "drop");
                         let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
@@ -603,41 +599,6 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 }
                             }
                         }
-                        // match (target, unwind) {
-                        //     (return_block, UnwindAction::Continue | UnwindAction::Terminate(_)) => {
-                        //         self.net.add_edge(
-                        //             bb_end,
-                        //             *self.bb_node_start_end.get(return_block).unwrap(),
-                        //             PetriNetEdge { label: 1usize },
-                        //         );
-                        //     }
-
-                        //     (return_block, UnwindAction::Cleanup(bb_clean)) => {
-                        //         self.net.add_edge(
-                        //             bb_end,
-                        //             *self.bb_node_start_end.get(return_block).unwrap(),
-                        //             PetriNetEdge { label: 1usize },
-                        //         );
-                        //         let bb_unwind_name =
-                        //             fn_name.clone() + &format!("{:?}", bb_idx) + "unwind";
-                        //         let bb_unwind_transition =
-                        //             Transition::new(bb_unwind_name, (0, 0), 1);
-                        //         let bb_unwind =
-                        //             self.net.add_node(PetriNetNode::T(bb_unwind_transition));
-                        //         self.net.add_edge(
-                        //             *self.bb_node_start_end.get(&bb_idx).unwrap(),
-                        //             bb_unwind,
-                        //             PetriNetEdge { label: 1usize },
-                        //         );
-                        //         self.net.add_edge(
-                        //             bb_unwind,
-                        //             *self.bb_node_start_end.get(&bb_clean).unwrap(),
-                        //             PetriNetEdge { label: 1usize },
-                        //         );
-                        //     }
-
-                        //     _ => {}
-                        // }
 
                         self.net.add_edge(
                             bb_end,

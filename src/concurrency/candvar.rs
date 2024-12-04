@@ -13,7 +13,7 @@ use smallvec::SmallVec;
 
 use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
 use rustc_middle::mir::{Body, Local, Location};
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt};
+use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TypingEnv};
 use rustc_span::Span;
 
 use crate::graph::callgraph::InstanceId;
@@ -201,7 +201,6 @@ pub struct CondVarCollector<'a, 'b, 'tcx> {
     instance: &'a Instance<'tcx>,
     body: &'b Body<'tcx>,
     tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
     pub condvars: CondvarMap<'tcx>,
 }
 
@@ -211,14 +210,12 @@ impl<'a, 'b, 'tcx> CondVarCollector<'a, 'b, 'tcx> {
         instance: &'a Instance<'tcx>,
         body: &'b Body<'tcx>,
         tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
     ) -> Self {
         Self {
             instance_id,
             instance,
             body,
             tcx,
-            param_env,
             condvars: Default::default(),
         }
     }
@@ -230,9 +227,10 @@ impl<'a, 'b, 'tcx> CondVarCollector<'a, 'b, 'tcx> {
             //     self.param_env,
             //     ty::EarlyBinder::bind(local_decl.ty),
             // );
-            let local_ty = self.instance.subst_mir_and_normalize_erasing_regions(
+            let typing_env = TypingEnv::post_analysis(self.tcx, self.instance.def_id());
+            let local_ty = self.instance.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
-                self.param_env,
+                typing_env,
                 ty::EarlyBinder::bind(local_decl.ty),
             );
             if let Some(condvar_ty) = CondVarTy::from_local_ty(local_ty, self.tcx) {

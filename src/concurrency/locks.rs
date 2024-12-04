@@ -2,6 +2,7 @@
 extern crate rustc_hash;
 extern crate rustc_span;
 
+use rustc_middle::ty::{EarlyBinder, TypingEnv};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
@@ -248,10 +249,11 @@ impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
             //     self.param_env,
             //     ty::EarlyBinder::bind(local_decl.ty),
             // );
-            let local_ty = self.instance.subst_mir_and_normalize_erasing_regions(
+            let typing_env = TypingEnv::post_analysis(self.tcx, self.instance.def_id());
+            let local_ty = self.instance.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
-                self.param_env,
-                ty::EarlyBinder::bind(local_decl.ty),
+                typing_env,
+                EarlyBinder::bind(local_decl.ty),
             );
             if let Some(lockguard_ty) = LockGuardTy::from_local_ty(local_ty, self.tcx) {
                 let lockguard_id = LockGuardId::new(self.instance_id, local);
@@ -290,11 +292,12 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for LockGuardCollector<'a, 'b, 'tcx> {
                                 //         self.param_env,
                                 //         ty::EarlyBinder::bind(func.ty(self.body, self.tcx)),
                                 //     );
+                                let typing_env =
+                                    TypingEnv::post_analysis(self.tcx, self.instance.def_id());
+                                let func_ty = ty::EarlyBinder::bind(func.ty(self.body, self.tcx));
                                 let func_ty =
-                                    self.instance.subst_mir_and_normalize_erasing_regions(
-                                        self.tcx,
-                                        self.param_env,
-                                        ty::EarlyBinder::bind(func.ty(self.body, self.tcx)),
+                                    self.instance.instantiate_mir_and_normalize_erasing_regions(
+                                        self.tcx, typing_env, func_ty,
                                     );
                                 if let ty::FnDef(def_id, _) = *func_ty.kind() {
                                     let fn_name = self.tcx.def_path_str(def_id);

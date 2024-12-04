@@ -8,7 +8,7 @@ use regex::Regex;
 
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{GenericArg, Instance, TyCtxt};
+use rustc_middle::ty::{GenericArg, Instance, List, TyCtxt};
 
 static ATOMIC_API_REGEX: Lazy<FxHashMap<&'static str, Regex>> = Lazy::new(|| {
     macro_rules! atomic_api_prefix {
@@ -77,10 +77,10 @@ static ATOMIC_PTR_STORE: Lazy<Regex> =
 
 pub fn is_atomic_ptr_store<'tcx>(
     def_id: DefId,
-    substs: GenericArg<'tcx>,
+    substs: &'tcx List<GenericArg<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> bool {
-    let path = tcx.def_path_str(def_id);
+    let path = tcx.def_path_str_with_args(def_id, substs);
     ATOMIC_PTR_STORE.is_match(&path)
 }
 

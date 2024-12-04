@@ -6,22 +6,21 @@
 //! with limited support for inter-procedural analysis
 //! of methods and closures.
 //! See `Andersen` for more details.
+extern crate rustc_hir;
+extern crate rustc_index;
 
-extern crate rustc_hash;
+use std::cmp::{Ordering, PartialOrd};
+use std::collections::VecDeque;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
-use std::cmp::{Ordering, PartialOrd};
-use std::collections::VecDeque;
-// use rustc_middle::mir::{
-//     Body, Const, ConstOperand, Local, Location, Operand, Place, PlaceElem, PlaceRef,
-//     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
-// };
-
 use rustc_middle::mir::{
-    Body, ConstantKind, Local, Location, Operand, Place, PlaceElem, PlaceRef, ProjectionElem,
-    Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    AggregateKind, Body, ConstOperand, Local, Location, Operand, Place, PlaceElem, PlaceRef,
+    ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
+
+use rustc_middle::mir::Const;
 use rustc_middle::ty::{Instance, TyCtxt, TyKind};
 
 use petgraph::dot::{Config, Dot};
@@ -29,6 +28,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Directed, Direction, Graph};
 
+use crate::concurrency::atomic::is_atomic_ptr_store;
 use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::locks::LockGuardId;
@@ -75,10 +75,10 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                 ConstraintNode::Place(place) => {
                     graph.add_alloc(place);
                 }
-                ConstraintNode::Constant(constant) => {
-                    graph.add_constant(constant);
+                ConstraintNode::Constant(ref constant) => {
+                    graph.add_constant(*constant);
                     // For constant C, track *C.
-                    worklist.push_back(ConstraintNode::ConstantDeref(constant));
+                    worklist.push_back(ConstraintNode::ConstantDeref(*constant));
                 }
                 _ => {}
             }
@@ -88,7 +88,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
         // address: target = &source
         for (source, target, weight) in graph.edges() {
             if weight == ConstraintEdge::Address {
-                self.pts.entry(target).or_default().insert(source);
+                self.pts.entry(target.clone()).or_default().insert(source);
                 worklist.push_back(target);
             }
         }
@@ -100,21 +100,21 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
             for o in self.pts.get(&node).unwrap() {
                 // store: *node = source
                 for source in graph.store_sources(&node) {
-                    if graph.insert_edge(source, *o, ConstraintEdge::Copy) {
+                    if graph.insert_edge(source.clone(), o.clone(), ConstraintEdge::Copy) {
                         worklist.push_back(source);
                     }
                 }
                 // load: target = *node
                 for target in graph.load_targets(&node) {
-                    if graph.insert_edge(*o, target, ConstraintEdge::Copy) {
-                        worklist.push_back(*o);
+                    if graph.insert_edge(o.clone(), target, ConstraintEdge::Copy) {
+                        worklist.push_back(o.clone());
                     }
                 }
             }
             // alias_copy: target = &X; X = ptr::read(node)
             for target in graph.alias_copy_targets(&node) {
-                if graph.insert_edge(node, target, ConstraintEdge::Copy) {
-                    worklist.push_back(node);
+                if graph.insert_edge(node.clone(), target, ConstraintEdge::Copy) {
+                    worklist.push_back(node.clone());
                 }
             }
             // copy: target = node
@@ -135,7 +135,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
         let old_len = self.pts.get(target).unwrap().len();
         let source_pts = self.pts.get(source).unwrap().clone();
         let target_pts = self.pts.get_mut(target).unwrap();
-        target_pts.extend(source_pts.into_iter());
+        target_pts.extend(source_pts);
         old_len != target_pts.len()
     }
 
@@ -155,12 +155,12 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
 /// To enable the propagtion of points-to info for `Constant`,
 /// we introduce `ConstantDeref` to denote the points-to node of `Constant`,
 /// namely, forall Constant(c), Constant(c)--|address|-->ConstantDeref(c).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstraintNode<'tcx> {
     Alloc(PlaceRef<'tcx>),
     Place(PlaceRef<'tcx>),
-    Constant(ConstantKind<'tcx>),
-    ConstantDeref(ConstantKind<'tcx>),
+    Constant(Const<'tcx>),
+    ConstantDeref(Const<'tcx>),
 }
 
 /// The assignments in MIR with default `mir-opt-level` (level 1) are simplified
@@ -189,11 +189,12 @@ enum ConstraintEdge {
     AliasCopy, // Special: y=Arc::clone(x) or y=ptr::read(x)
 }
 
+#[derive(Debug)]
 enum AccessPattern<'tcx> {
     Ref(PlaceRef<'tcx>),
     Indirect(PlaceRef<'tcx>),
     Direct(PlaceRef<'tcx>),
-    Constant(ConstantKind<'tcx>),
+    Constant(Const<'tcx>),
 }
 
 #[derive(Default)]
@@ -207,7 +208,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         if let Some(idx) = self.node_map.get(&node) {
             *idx
         } else {
-            let idx = self.graph.add_node(node);
+            let idx = self.graph.add_node(node.clone());
             self.node_map.insert(node, idx);
             idx
         }
@@ -225,7 +226,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Address);
     }
 
-    fn add_constant(&mut self, constant: ConstantKind<'tcx>) {
+    fn add_constant(&mut self, constant: Const<'tcx>) {
         let lhs = ConstraintNode::Constant(constant);
         let rhs = ConstraintNode::ConstantDeref(constant);
         let lhs = self.get_or_insert_node(lhs);
@@ -252,7 +253,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Copy);
     }
 
-    fn add_copy_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: ConstantKind<'tcx>) {
+    fn add_copy_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: Const<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Constant(rhs);
         let lhs = self.get_or_insert_node(lhs);
@@ -276,7 +277,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Store);
     }
 
-    fn add_store_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: ConstantKind<'tcx>) {
+    fn add_store_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: Const<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Constant(rhs);
         let lhs = self.get_or_insert_node(lhs);
@@ -284,7 +285,6 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Store);
     }
 
-    #[allow(unused)]
     fn add_alias_copy(&mut self, lhs: PlaceRef<'tcx>, rhs: PlaceRef<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Place(rhs);
@@ -294,14 +294,14 @@ impl<'tcx> ConstraintGraph<'tcx> {
     }
 
     fn nodes(&self) -> Vec<ConstraintNode<'tcx>> {
-        self.node_map.keys().copied().collect::<_>()
+        self.node_map.keys().cloned().collect::<_>()
     }
 
     fn edges(&self) -> Vec<(ConstraintNode<'tcx>, ConstraintNode<'tcx>, ConstraintEdge)> {
         let mut v = Vec::new();
         for edge in self.graph.edge_references() {
-            let source = self.graph.node_weight(edge.source()).copied().unwrap();
-            let target = self.graph.node_weight(edge.target()).copied().unwrap();
+            let source = self.graph.node_weight(edge.source()).cloned().unwrap();
+            let target = self.graph.node_weight(edge.target()).cloned().unwrap();
             let weight = *edge.weight();
             v.push((source, target, weight));
         }
@@ -315,7 +315,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         let mut sources = Vec::new();
         for edge in self.graph.edges_directed(lhs, Direction::Incoming) {
             if *edge.weight() == ConstraintEdge::Store {
-                let source = self.graph.node_weight(edge.source()).copied().unwrap();
+                let source = self.graph.node_weight(edge.source()).cloned().unwrap();
                 sources.push(source);
             }
         }
@@ -329,7 +329,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         let mut targets = Vec::new();
         for edge in self.graph.edges_directed(rhs, Direction::Outgoing) {
             if *edge.weight() == ConstraintEdge::Load {
-                let target = self.graph.node_weight(edge.target()).copied().unwrap();
+                let target = self.graph.node_weight(edge.target()).cloned().unwrap();
                 targets.push(target);
             }
         }
@@ -343,7 +343,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         let mut targets = Vec::new();
         for edge in self.graph.edges_directed(rhs, Direction::Outgoing) {
             if *edge.weight() == ConstraintEdge::Copy {
-                let target = self.graph.node_weight(edge.target()).copied().unwrap();
+                let target = self.graph.node_weight(edge.target()).cloned().unwrap();
                 targets.push(target);
             }
         }
@@ -372,7 +372,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
                     .edges_directed(copy_alias_target, Direction::Outgoing)
                     .filter_map(|edge| {
                         if *edge.weight() == ConstraintEdge::Address {
-                            Some(self.graph.node_weight(edge.target()).copied().unwrap())
+                            Some(self.graph.node_weight(edge.target()).cloned().unwrap())
                         } else {
                             None
                         }
@@ -431,33 +431,52 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
 
     fn process_assignment(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>) {
         let lhs_pattern = Self::process_place(place.as_ref());
-        let rhs_pattern = Self::process_rvalue(rvalue);
-        match (lhs_pattern, rhs_pattern) {
-            // a = &b
-            (AccessPattern::Direct(lhs), Some(AccessPattern::Ref(rhs))) => {
-                self.graph.add_address(lhs, rhs);
+        let rhs_patterns = Self::process_rvalue(rvalue);
+        // TODO(boqin): check if mk_place_field work for all places.
+        // original closure impl:
+        //   _x = closure => _x[0], _x[1], ... are upvars. Inside the closure, I check if a local var aliases with the upvars.
+        // current closure impl:
+        //   _x = closure(def_id, args, fields) => fields[0], fields[1], ... are upvars
+        // For compatibility, I create new places: _x[0], _x[1], ...
+        // and add constraints for _x[0] = fields[0], _x[1] = fields[1], ...
+        // Note that creating new places with mk_place_field is a hack. I need to check it against large projects.
+        if let Rvalue::Aggregate(box AggregateKind::Closure(_def_id, _args), fields) = rvalue {
+            for (idx, operand) in fields.iter_enumerated() {
+                if let Some(rhs) = operand.place() {
+                    let op_ty = operand.ty(&self.body.local_decls, self.tcx);
+                    let lhs = self.tcx.mk_place_field(*place, idx, op_ty);
+                    self.graph.add_copy(lhs.as_ref(), rhs.as_ref());
+                }
             }
-            // a = b
-            (AccessPattern::Direct(lhs), Some(AccessPattern::Direct(rhs))) => {
-                self.graph.add_copy(lhs, rhs);
+        }
+        for rhs_pattern in rhs_patterns.into_iter() {
+            match (&lhs_pattern, rhs_pattern) {
+                // a = &b
+                (AccessPattern::Direct(lhs), Some(AccessPattern::Ref(rhs))) => {
+                    self.graph.add_address(*lhs, rhs);
+                }
+                // a = b
+                (AccessPattern::Direct(lhs), Some(AccessPattern::Direct(rhs))) => {
+                    self.graph.add_copy(*lhs, rhs);
+                }
+                // a = Constant
+                (AccessPattern::Direct(lhs), Some(AccessPattern::Constant(rhs))) => {
+                    self.graph.add_copy_constant(*lhs, rhs);
+                }
+                // a = *b
+                (AccessPattern::Direct(lhs), Some(AccessPattern::Indirect(rhs))) => {
+                    self.graph.add_load(*lhs, rhs);
+                }
+                // *a = b
+                (AccessPattern::Indirect(lhs), Some(AccessPattern::Direct(rhs))) => {
+                    self.graph.add_store(*lhs, rhs);
+                }
+                // *a = Constant
+                (AccessPattern::Indirect(lhs), Some(AccessPattern::Constant(rhs))) => {
+                    self.graph.add_store_constant(*lhs, rhs);
+                }
+                _ => {}
             }
-            // a = Constant
-            (AccessPattern::Direct(lhs), Some(AccessPattern::Constant(rhs))) => {
-                self.graph.add_copy_constant(lhs, rhs);
-            }
-            // a = *b
-            (AccessPattern::Direct(lhs), Some(AccessPattern::Indirect(rhs))) => {
-                self.graph.add_load(lhs, rhs);
-            }
-            // *a = b
-            (AccessPattern::Indirect(lhs), Some(AccessPattern::Direct(rhs))) => {
-                self.graph.add_store(lhs, rhs);
-            }
-            // *a = Constant
-            (AccessPattern::Indirect(lhs), Some(AccessPattern::Constant(rhs))) => {
-                self.graph.add_store_constant(lhs, rhs);
-            }
-            _ => {}
         }
     }
 
@@ -474,30 +493,40 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
 
-    fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Option<AccessPattern<'tcx>> {
+    fn process_operand(operand: &Operand<'tcx>) -> Option<AccessPattern<'tcx>> {
+        match operand {
+            Operand::Move(place) | Operand::Copy(place) => {
+                Some(AccessPattern::Direct(place.as_ref()))
+            }
+            Operand::Constant(box ConstOperand {
+                span: _,
+                user_ty: _,
+                const_,
+            }) => Some(AccessPattern::Constant(*const_)),
+        }
+    }
+
+    fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Vec<Option<AccessPattern<'tcx>>> {
         match rvalue {
             Rvalue::Use(operand) | Rvalue::Repeat(operand, _) | Rvalue::Cast(_, operand, _) => {
-                match operand {
-                    Operand::Move(place) | Operand::Copy(place) => {
-                        Some(AccessPattern::Direct(place.as_ref()))
-                    }
-                    Operand::Constant(ref constant) => {
-                        Some(AccessPattern::Constant(constant.literal))
-                    }
-                }
+                vec![Self::process_operand(operand)]
             }
             // Regard `p = &*q` as `p = q`
-            Rvalue::Ref(_, _, place) | Rvalue::AddressOf(_, place) => match place.as_ref() {
+            Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) => match place.as_ref() {
                 PlaceRef {
                     local: l,
                     projection: [ProjectionElem::Deref, ref remain @ ..],
-                } => Some(AccessPattern::Direct(PlaceRef {
+                } => vec![Some(AccessPattern::Direct(PlaceRef {
                     local: l,
                     projection: remain,
-                })),
-                _ => Some(AccessPattern::Ref(place.as_ref())),
+                }))],
+                _ => vec![Some(AccessPattern::Ref(place.as_ref()))],
             },
-            _ => None,
+            Rvalue::Aggregate(_, fields) => {
+                let fields = fields.iter().map(Self::process_operand).collect::<Vec<_>>();
+                fields
+            }
+            _ => vec![],
         }
     }
 
@@ -528,10 +557,10 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     if p1.local == p2.local {
                         if p1.projection.len() > p2.projection.len() {
                             if &p1.projection[..p2.projection.len()] == p2.projection {
-                                self.graph.add_copy(p2.clone(), p1.clone());
+                                self.graph.add_copy(*p2, *p1);
                             }
                         } else if &p2.projection[..p1.projection.len()] == p1.projection {
-                            self.graph.add_copy(p1.clone(), p2.clone());
+                            self.graph.add_copy(*p1, *p2);
                         }
                     }
                 }
@@ -560,9 +589,10 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             | StatementKind::AscribeUserType(_, _)
             | StatementKind::Coverage(_)
             | StatementKind::Nop
-            | StatementKind::Intrinsic(_)
             | StatementKind::PlaceMention(_)
-            | StatementKind::ConstEvalCounter => {}
+            | StatementKind::ConstEvalCounter
+            | StatementKind::Intrinsic(_)
+            | StatementKind::BackwardIncompatibleDropHint { .. } => {}
         }
     }
 
@@ -581,19 +611,21 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             ..
         } = &terminator.kind
         {
-            // let args = args
-            //     .iter()
-            //     .map(|arg| arg.node.clone())
-            //     .collect::<Vec<Operand>>();
-            match (args.as_slice(), destination) {
-                (&[Operand::Move(arg)], dest) => {
+            match (
+                args.iter()
+                    .map(|x| x.node.clone())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                destination,
+            ) {
+                (&[Operand::Move(arg)], dest) | (&[Operand::Copy(arg)], dest) => {
                     let func_ty = func.ty(self.body, self.tcx);
                     if let TyKind::FnDef(def_id, substs) = func_ty.kind() {
-                        // if ownership::is_arc_or_rc_clone(*def_id, substs, self.tcx)
-                        //     || ownership::is_ptr_read(*def_id, self.tcx)
-                        // {
-                        //     return self.process_alias_copy(arg.as_ref(), dest.as_ref());
-                        // }
+                        if ownership::is_arc_or_rc_clone(*def_id, substs, self.tcx)
+                            || ownership::is_ptr_read(*def_id, self.tcx)
+                        {
+                            return self.process_alias_copy(arg.as_ref(), dest.as_ref());
+                        }
                     }
                     self.process_call_arg_dest(arg.as_ref(), dest.as_ref());
                 }
@@ -607,14 +639,14 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                         }
                     }
                 }
-                (&[Operand::Move(arg0), Operand::Move(arg1), Operand::Move(_arg2)], _dest) => {
+                (&[Operand::Move(arg0), Operand::Move(arg1), Operand::Move(_arg2)], _dest)
+                | (&[Operand::Move(arg0), Operand::Move(arg1), Operand::Copy(_arg2)], _dest) => {
                     let func_ty = func.ty(self.body, self.tcx);
-                    if let TyKind::FnDef(def_id, substs) = func_ty.kind() {
-                        // if is_atomic_ptr_store(*def_id, substs, self.tcx) {
-                        //     // AtomicPtr::store(arg0, arg1, ord) equals to arg0 = call(arg1)
-                        //     return self.process_call_arg_dest(arg1.as_ref(), arg0.as_ref());
-                        // }
-                        {}
+                    if let TyKind::FnDef(def_id, list) = func_ty.kind() {
+                        if is_atomic_ptr_store(*def_id, list, self.tcx) {
+                            // AtomicPtr::store(arg0, arg1, ord) equals to arg0 = call(arg1)
+                            return self.process_call_arg_dest(arg1.as_ref(), arg0.as_ref());
+                        }
                     }
                 }
                 _ => {}
@@ -1022,8 +1054,8 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         // 3. Check if `node1` and `node2` point to upvars of closures and the upvars alias in the def func.
         // 3.1 Get defsite upvars of `node1` then check if `node2` points to the upvar.
         let mut defsite_upvars1 = None;
-        if self.tcx.is_closure(instance1.def_id()) {
-            let pts_paths = points_to_paths_to_param(*node1, body1, &points_to_map1);
+        if self.tcx.is_closure_like(instance1.def_id()) {
+            let pts_paths = points_to_paths_to_param(node1.clone(), body1, &points_to_map1);
             for pts_path in pts_paths {
                 let defsite_upvars = match self.closure_defsite_upvars(instance1, pts_path) {
                     Some(defsite_upvars) => defsite_upvars,
@@ -1032,7 +1064,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance2.def_id() {
                         let alias_kind = self
-                            .intraproc_points_to(def_inst, *node2, *upvar)
+                            .intraproc_points_to(def_inst, node2.clone(), upvar.clone())
                             .unwrap_or(ApproximateAliasKind::Unknown);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);
@@ -1047,8 +1079,8 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
         // 3.2 Get defsite upvars of `node2` then check if `node1` points to the upvar.
         let mut defsite_upvars2 = None;
-        if self.tcx.is_closure(instance2.def_id()) {
-            let pts_paths = points_to_paths_to_param(*node2, body2, &points_to_map2);
+        if self.tcx.is_closure_like(instance2.def_id()) {
+            let pts_paths = points_to_paths_to_param(node2.clone(), body2, &points_to_map2);
             for pts_path in pts_paths {
                 let defsite_upvars = match self.closure_defsite_upvars(instance2, pts_path) {
                     Some(defsite_upvars) => defsite_upvars,
@@ -1057,7 +1089,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance1.def_id() {
                         let alias_kind = self
-                            .intraproc_points_to(def_inst, *node1, *upvar)
+                            .intraproc_points_to(def_inst, node1.clone(), upvar.clone())
                             .unwrap_or(ApproximateAliasKind::Unknown);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);
@@ -1217,10 +1249,10 @@ type PointsToPath<'tcx> = Vec<(&'tcx [PlaceElem<'tcx>], ConstraintNode<'tcx>)>;
 /// Due to the above reason, pts(_8) does not contain _1.1 and fails to be identified as an upvar.
 /// Thus we need to track the pts-to paths from the given node to the parameter.
 /// If there exists such a path, then the node is an upvar.
-fn points_to_paths_to_param<'a, 'tcx>(
+fn points_to_paths_to_param<'tcx>(
     node: ConstraintNode<'tcx>,
     body: &'tcx Body<'tcx>,
-    points_to_map: &'a PointsToMap<'tcx>,
+    points_to_map: &PointsToMap<'tcx>,
 ) -> Vec<PointsToPath<'tcx>> {
     let mut result = Vec::new();
     let mut path = Vec::new();
@@ -1238,24 +1270,24 @@ fn points_to_paths_to_param<'a, 'tcx>(
 }
 
 /// DFS search for points-to paths from `node` to the parameter.
-fn dfs_paths_recur<'a, 'tcx>(
+fn dfs_paths_recur<'tcx>(
     prev_proj: &'tcx [PlaceElem<'tcx>],
     node: ConstraintNode<'tcx>,
     body: &'tcx Body<'tcx>,
-    points_to_map: &'a PointsToMap<'tcx>,
+    points_to_map: &PointsToMap<'tcx>,
     visited: &mut FxHashSet<ConstraintNode<'tcx>>,
     path: &mut PointsToPath<'tcx>,
     result: &mut Vec<PointsToPath<'tcx>>,
 ) {
     // Exit if the node has been visited or is not Alloc or Place.
-    if !visited.insert(node) {
+    if !visited.insert(node.clone()) {
         return;
     }
     let place = match node {
         ConstraintNode::Alloc(place) | ConstraintNode::Place(place) => place,
         _ => return,
     };
-    path.push((prev_proj, node));
+    path.push((prev_proj, node.clone()));
     // If found a path to the parameter, then output it to result.
     if is_parameter(place.local, body) {
         result.push(path.clone());

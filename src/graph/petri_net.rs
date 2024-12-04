@@ -1,3 +1,6 @@
+use crate::graph::state_graph::normalize_state;
+use crate::graph::state_graph::StateEdge;
+use crate::graph::state_graph::StateNode;
 use crate::utils::format_name;
 use crate::Options;
 use log::debug;
@@ -8,13 +11,7 @@ use petgraph::Direction;
 use petgraph::Graph;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::{
-    mir::{
-        visit::{MutatingUseContext, PlaceContext, Visitor},
-        Body, Local, Location, Terminator, TerminatorKind,
-    },
-    ty::{self, Instance, ParamEnv, TyCtxt},
-};
+use rustc_middle::ty::ParamEnv;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -22,6 +19,7 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::io::Write;
+use std::sync::{Arc, RwLock};
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::function_pn::BodyToPetriNet;
@@ -32,8 +30,6 @@ use crate::concurrency::candvar::CondVarInfo;
 use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::handler::JoinHandlerCollector;
 use crate::concurrency::handler::JoinHandlerMap;
-use crate::graph::state_graph::StateEdge;
-use crate::graph::state_graph::StateNode;
 use crate::{
     analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
     concurrency::locks::{
@@ -50,7 +46,7 @@ pub enum Shape {
 #[derive(Debug, Clone)]
 pub struct Place {
     pub name: String,
-    pub tokens: RefCell<usize>,
+    pub tokens: Arc<RwLock<usize>>,
     pub capacity: usize,
     pub span: String,
     pub details: String,
@@ -60,7 +56,7 @@ impl Place {
     pub fn new(name: String, token: usize) -> Self {
         Self {
             name,
-            tokens: RefCell::new(token),
+            tokens: Arc::new(RwLock::new(token)),
             capacity: token,
             span: String::new(),
             details: String::new(),
@@ -70,7 +66,7 @@ impl Place {
     pub fn new_with_span(name: String, token: usize, span: String) -> Self {
         Self {
             name,
-            tokens: RefCell::new(token),
+            tokens: Arc::new(RwLock::new(token)),
             capacity: 1usize,
             span,
             details: String::new(),
@@ -80,7 +76,7 @@ impl Place {
     pub fn new_with_no_token(name: String) -> Self {
         Self {
             name,
-            tokens: RefCell::new(0usize),
+            tokens: Arc::new(RwLock::new(0)),
             capacity: 1usize,
             span: String::new(),
             details: String::new(),
@@ -175,27 +171,14 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
-    deadlock_marks: HashSet<Vec<(usize, usize)>>,
     // thread id and handler
     thread_id_handler: HashMap<usize, Vec<JoinHanderId>>,
     handler_id: HashMap<JoinHanderId, DefId>,
     // all condvars
     condvars: HashMap<CondVarId, NodeIndex>,
+    pub entry_node: NodeIndex,
 }
 
-// impl std::fmt::Display for PetriNet {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let config = Config::default()
-//             .node_shape(|node, _| match &self.net[node] {
-//                 PetriNetNode::P(_) => "circle",
-//                 PetriNetNode::T(_) => "rectangle",
-//             })
-//             .node_style(|_, _| "filled")
-//             .edge_style(|_, _| "solid");
-
-//         write!(f, "{}", Dot::with_config(&self.net, &[config]))
-//     }
-// }
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn new(
         options: &'compilation Options,
@@ -215,10 +198,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             function_vec: HashMap::<DefId, Vec<NodeIndex>>::new(),
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
-            deadlock_marks: HashSet::<Vec<(usize, usize)>>::new(),
             thread_id_handler: HashMap::<usize, Vec<JoinHanderId>>::new(),
             handler_id: HashMap::<JoinHanderId, DefId>::new(),
             condvars: HashMap::<CondVarId, NodeIndex>::new(),
+            entry_node: NodeIndex::new(0),
         }
     }
 
@@ -229,12 +212,17 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         self.collect_condvar();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
-                && format_name(caller.instance().def_id()).contains(&self.options.crate_name)
+                && format_name(caller.instance().def_id()).starts_with(&self.options.crate_name)
             {
+                log::debug!(
+                    "visitor function body: {:?}",
+                    format_name(caller.instance().def_id())
+                );
                 self.visitor_function_body(node, caller);
             }
         }
         self.reduce_state();
+        //self.reduce_state_from(self.entry_node);
     }
 
     pub fn visitor_function_body(
@@ -282,19 +270,20 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     continue;
                 }
                 if func_id == main_func {
-                    let func_start = Place::new(format!("{}", func_name) + "start", 1);
+                    let func_start = Place::new(format!("{}_start", func_name), 1);
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                    let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
+                    let func_end = Place::new_with_no_token(format!("{}_end", func_name));
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
 
                     self.function_counter
                         .insert(func_id, (func_start_node_id, func_end_node_id));
                     // self.function_vec.push(func_start_node_id);
                     self.function_vec.insert(func_id, vec![func_start_node_id]);
+                    self.entry_node = func_start_node_id;
                 } else {
-                    let func_start = Place::new_with_no_token(format!("{}", func_name) + "start");
+                    let func_start = Place::new_with_no_token(format!("{}_start", func_name));
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                    let func_end = Place::new_with_no_token(format!("{}", func_name) + "end");
+                    let func_end = Place::new_with_no_token(format!("{}_end", func_name));
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
                     // println!("function id: {:?}", func_id);
                     self.function_counter
@@ -303,7 +292,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
             }
         } else {
-            log::error!("cargo pta need a entry point!");
+            log::debug!("cargo pta need a entry point!");
         }
     }
 
@@ -319,7 +308,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             self.lock_info.extend(map.into_iter());
         }
 
-        println!("The count of locks: {:?}", info.keys().count());
+        log::debug!("The count of locks: {:?}", info.keys().count());
         let mut lock_map: HashMap<LockGuardId, u32> = HashMap::new();
         let mut counter: u32 = 0;
         for (a, _) in info.iter() {
@@ -361,24 +350,21 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 lock_id_map.insert(value, vec);
             }
         }
-        println!("The lock_id_map count?: {:?}", lock_id_map.keys().count());
+        log::debug!("The lock_id_map count?: {:?}", lock_id_map.keys().count());
 
         for (id, lock_vec) in lock_id_map {
             match &info[&lock_vec[0]].lockguard_ty {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_name = "Mutex".to_string() + &format!("{:?}", id);
-
-                    let lock_p = Place::new(format!("{:?}", lock_name), 1);
+                    let lock_p = Place::new(format!("Mutex_{}", id), 1);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
                 }
                 _ => {
-                    let lock_name = "RwLock".to_string() + &format!("{:?}", id);
-                    let lock_p = Place::new(format!("{:?}", lock_name), 10);
+                    let lock_p = Place::new(format!("RwLock_{}", id), 10);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -445,7 +431,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_name = format!("{:?}", "mutex".to_string() + id.to_string().as_str());
+                    let lock_name = format!("Mutex_{}", id);
 
                     let lock_p = Place::new(lock_name, 1);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
@@ -454,7 +440,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     }
                 }
                 _ => {
-                    let lock_name = format!("{:?}", "rwlock".to_string() + id.to_string().as_str());
+                    let lock_name = format!("RwLock_{}", id);
                     let lock_p = Place::new(lock_name, 10);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
@@ -465,19 +451,260 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    fn deal_post_function(&mut self) {
-        for (id, func_node_vec) in &self.function_vec {
-            if func_node_vec.len() < 3 {
-                let start = func_node_vec.first().unwrap();
-                let end = func_node_vec.last().unwrap();
-                let t = format!("{:?}", id) + &String::from("no_lock");
-                let transition = Transition::new(t, (0, 0), 1);
-                let t_node = self.net.add_node(PetriNetNode::T(transition));
+    /// 简化 Petri 网中的状态,通过合并简单路径来减少网络的复杂度
+    ///
+    /// 具体步骤:
+    /// 1. 找到所有入度和出度都≤1的节点作为起始点
+    /// 2. 从每个起始点开始,向两个方向(前向和后向)搜索,找到可以合并的路径
+    /// 3. 对于每条找到的路径:
+    ///    - 确保路径的起点和终点都是 Place 节点
+    ///    - 如果路径长度>3,则创建一个新的 Transition 节点来替代中间的节点
+    ///    - 保持路径两端的 Place 节点不变,删除中间的所有节点
+    /// 4. 最后统一删除所有被标记为需要移除的节点
+    ///
+    /// 这种简化可以显著减少 Petri 网的大小,同时保持其基本行为特性不变
+    pub fn reduce_state(&mut self) {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut all_nodes_to_remove = Vec::new();
+        // 找到所有入度和出度都≤1的点
+        for node in self.net.node_indices() {
+            let in_degree = self.net.edges_directed(node, Direction::Incoming).count();
+            let out_degree = self.net.edges_directed(node, Direction::Outgoing).count();
 
-                self.net.add_edge(*start, t_node, PetriNetEdge { label: 1 });
-                self.net.add_edge(t_node, *end, PetriNetEdge { label: 1 });
+            if in_degree <= 1 && out_degree <= 1 {
+                queue.push_back(node);
             }
         }
+
+        while let Some(start) = queue.pop_front() {
+            if visited.contains(&start) {
+                continue;
+            }
+
+            // 从start开始BFS，找到一条链
+            let mut chain = vec![start];
+            let mut current = start;
+            visited.insert(start);
+
+            // 向两个方向遍历
+            for direction in &[Direction::Outgoing, Direction::Incoming] {
+                current = start;
+                loop {
+                    let neighbors: Vec<_> =
+                        self.net.neighbors_directed(current, *direction).collect();
+
+                    if neighbors.len() != 1 {
+                        break;
+                    }
+
+                    let next = neighbors[0];
+                    let next_in_degree = self.net.edges_directed(next, Direction::Incoming).count();
+                    let next_out_degree =
+                        self.net.edges_directed(next, Direction::Outgoing).count();
+
+                    if next_in_degree > 1 || next_out_degree > 1 || visited.contains(&next) {
+                        break;
+                    }
+
+                    visited.insert(next);
+                    if *direction == Direction::Outgoing {
+                        chain.push(next);
+                    } else {
+                        chain.insert(0, next);
+                    }
+                    current = next;
+                }
+            }
+
+            let chain_len = chain.len();
+            // 调整链，确保起始和结束都是Place
+            if !chain.is_empty() {
+                if let PetriNetNode::T(_) = &self.net[chain[0]] {
+                    chain.remove(0);
+                }
+            }
+            if !chain.is_empty() {
+                if let PetriNetNode::T(_) = &self.net[chain[chain.len() - 1]] {
+                    chain.pop();
+                    assert_eq!(chain.len(), chain_len - 1);
+                }
+            }
+            // 检查调整后的链长度是否满足简化条件
+            if chain.len() > 3 {
+                // 确保chain不为空
+                if chain.is_empty() {
+                    continue;
+                }
+                let p1 = chain[0];
+                let p2 = chain[chain.len() - 1];
+
+                // 确保p1和p2都是Place
+                if let (PetriNetNode::P(_), PetriNetNode::P(_)) = (&self.net[p1], &self.net[p2]) {
+                    // 创建新的Transition
+                    let new_trans = Transition::new(
+                        format!("merged_trans_{}_{}", p1.index(), p2.index()),
+                        (0, 0),
+                        1,
+                    );
+                    let new_trans_idx = self.net.add_node(PetriNetNode::T(new_trans));
+
+                    // 添加新边
+                    self.net
+                        .add_edge(p1, new_trans_idx, PetriNetEdge { label: 1 });
+                    self.net
+                        .add_edge(new_trans_idx, p2, PetriNetEdge { label: 1 });
+
+                    // 将路径上的节点信息合并成一行输出
+                    let path_info = chain[1..chain.len()]
+                        .iter()
+                        .map(|&node| match &self.net[node] {
+                            PetriNetNode::P(place) => format!("P({})", place.name),
+                            PetriNetNode::T(transition) => format!("T({})", transition.name),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" -> ");
+                    log::debug!("Path: {}", path_info);
+                    // 收集要删除的节点
+                    all_nodes_to_remove.extend(chain[1..chain.len() - 1].iter().cloned());
+                }
+            }
+        }
+        // 在循环结束后统一删除节点
+        if !all_nodes_to_remove.is_empty() {
+            // 按索引从大到小排序
+            all_nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+            // 删除节点
+            for node in all_nodes_to_remove {
+                self.net.remove_node(node);
+            }
+        }
+    }
+
+    /// 分析并简化从起始节点到终止节点的路径，保留与特殊节点相连的路径
+    ///
+    /// # Arguments
+    /// * `start_node` - 起始Place节点
+    /// * `end_node` - 终止Place节点
+    /// * `special_nodes` - 特殊节点集合，与这些节点相连的路径将被保留
+    ///
+    /// # 工作流程
+    /// 1. 使用DFS收集所有从start_node到end_node的路径
+    /// 2. 标记与特殊节点相连的路径为有效路径
+    /// 3. 收集需要保留的节点（出现在有效路径中的节点）
+    /// 4. 删除仅出现在无效路径中的节点
+    pub fn reduce_state_from(
+        &mut self,
+        start_node: NodeIndex,
+        end_node: NodeIndex,
+        special_nodes: &[NodeIndex],
+    ) {
+        // 存储所有从start到end的路径
+        let mut all_paths: Vec<Vec<NodeIndex>> = Vec::new();
+        // 存储有效路径（与特殊节点相连的路径）
+        let mut valid_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
+        // 存储当前正在探索的路径
+        let mut current_path: Vec<NodeIndex> = vec![start_node];
+        // 记录已访问节点，避免简单环路
+        let mut visited: HashSet<NodeIndex> = HashSet::new();
+
+        // DFS收集所有路径
+        self.collect_paths(
+            start_node,
+            end_node,
+            &mut all_paths,
+            &mut current_path,
+            &mut visited,
+            special_nodes,
+            &mut valid_paths,
+        );
+
+        // 收集所有需要保留的节点（出现在有效路径中的节点）
+        let mut nodes_to_keep: HashSet<NodeIndex> = HashSet::new();
+        for path in &valid_paths {
+            nodes_to_keep.extend(path.iter().cloned());
+        }
+
+        // 收集所有可以删除的节点（出现在无效路径中且不在有效路径中的节点）
+        let mut nodes_to_remove: HashSet<NodeIndex> = HashSet::new();
+        for path in &all_paths {
+            if !valid_paths.contains(path) {
+                for &node in path {
+                    if !nodes_to_keep.contains(&node) && node != start_node && node != end_node {
+                        nodes_to_remove.insert(node);
+                    }
+                }
+            }
+        }
+
+        let mut nodes_to_remove: Vec<_> = nodes_to_remove.into_iter().collect();
+        nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+        for node in nodes_to_remove {
+            self.net.remove_node(node);
+        }
+    }
+
+    /// 递归收集从起点到终点的所有路径
+    ///
+    /// # Arguments
+    /// * `current` - 当前正在访问的节点
+    /// * `end` - 目标终点节点
+    /// * `all_paths` - 存储所有发现的路径
+    /// * `current_path` - 当前正在构建的路径
+    /// * `visited` - 记录已访问节点，用于避免环路
+    /// * `special_nodes` - 特殊节点集合
+    /// * `valid_paths` - 存储与特殊节点相连的有效路径
+    ///
+    /// # 工作流程
+    /// 1. 如果到达终点，检查当前路径是否与特殊节点相连
+    /// 2. 如果路径有效，添加到valid_paths中
+    /// 3. 将当前路径添加到all_paths中
+    /// 4. 递归探索所有未访问的邻居节点
+    /// 5. 回溯时移除访问标记，允许节点在其他路径中被重复访问
+    fn collect_paths(
+        &self,
+        current: NodeIndex,
+        end: NodeIndex,
+        all_paths: &mut Vec<Vec<NodeIndex>>,
+        current_path: &mut Vec<NodeIndex>,
+        visited: &mut HashSet<NodeIndex>,
+        special_nodes: &[NodeIndex],
+        valid_paths: &mut HashSet<Vec<NodeIndex>>,
+    ) {
+        if current == end {
+            // 检查路径是否与特殊节点相连
+            let path_has_special_connection = current_path.iter().any(|&node| {
+                self.net
+                    .neighbors(node)
+                    .any(|neighbor| special_nodes.contains(&neighbor))
+            });
+
+            if path_has_special_connection {
+                valid_paths.insert(current_path.clone());
+            }
+            all_paths.push(current_path.clone());
+            return;
+        }
+
+        visited.insert(current);
+
+        for neighbor in self.net.neighbors_directed(current, Direction::Outgoing) {
+            if !visited.contains(&neighbor) {
+                current_path.push(neighbor);
+                self.collect_paths(
+                    neighbor,
+                    end,
+                    all_paths,
+                    current_path,
+                    visited,
+                    special_nodes,
+                    valid_paths,
+                );
+                current_path.pop();
+            }
+        }
+
+        visited.remove(&current);
     }
 
     // Mapping JoinHandle To Thread DefId
@@ -546,7 +773,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         adj_list.entry(i).or_insert_with(Vec::new).push(j);
                         adj_list.entry(j).or_insert_with(Vec::new).push(i);
                     }
-                    _ => {}
+                    ApproximateAliasKind::Unlikely => todo!(),
+                    ApproximateAliasKind::Unknown => todo!(),
                 }
             }
         }
@@ -596,7 +824,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
             let body = self.tcx.instance_mir(instance.def);
             let mut condvar_collector =
-                CondVarCollector::new(instance_id, instance, body, self.tcx, self.param_env);
+                CondVarCollector::new(instance_id, instance, body, self.tcx);
             condvar_collector.analyze();
             if !condvar_collector.condvars.is_empty() {
                 condvars.insert(instance_id, condvar_collector.condvars);
@@ -614,6 +842,23 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
             }
         }
+    }
+
+    pub fn get_current_mark(&self) -> HashSet<(NodeIndex, usize)> {
+        let mut current_mark = HashSet::<(NodeIndex, usize)>::new();
+        for node in self.net.node_indices() {
+            match &self.net[node] {
+                PetriNetNode::P(place) => {
+                    if *place.tokens.read().unwrap() > 0 {
+                        current_mark.insert((node.clone(), *place.tokens.read().unwrap() as usize));
+                    }
+                }
+                PetriNetNode::T(_) => {
+                    debug!("{}", "this error!");
+                }
+            }
+        }
+        current_mark
     }
 
     fn deadlock_possibility(
@@ -658,350 +903,14 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         possibility
     }
 
-    pub fn get_sched_transitions(&self) -> Vec<NodeIndex> {
-        let mut sched_transiton = Vec::<NodeIndex>::new();
-        for node_index in self.net.node_indices() {
-            let node_weight = self.net.node_weight(node_index);
-            match node_weight {
-                Some(node) => match node {
-                    PetriNetNode::P(_) => {
-                        continue;
-                    }
-                    PetriNetNode::T(_) => {
-                        let mut enabled = true;
-                        for edge in self.net.edges_directed(node_index, Direction::Incoming) {
-                            match self.net.node_weight(edge.source()).unwrap() {
-                                PetriNetNode::P(place) => {
-                                    if *(place.tokens.borrow()) < edge.weight().label {
-                                        enabled = false;
-                                        break;
-                                    }
-                                }
-                                _ => {
-                                    println!("The predecessor set of transition is not place");
-                                }
-                            }
-                        }
-                        if enabled {
-                            sched_transiton.push(node_index);
-                        }
-                    }
-                },
-                None => println!("Node {}: no weight", node_index.index()),
-            }
-        }
-        sched_transiton
-    }
-
-    // Choose a transition to fire
-    pub fn fire_transition(
-        &mut self,
-        transition: NodeIndex,
-        mark: HashSet<(NodeIndex, usize)>,
-    ) -> HashSet<(NodeIndex, usize)> {
-        let mut new_state = HashSet::<(NodeIndex, usize)>::new();
-        self.set_current_mark(mark);
-        log::debug!("The transition to fire is: {}", transition.index());
-        // 从输入库所中减去token
-        log::debug!("sub token to source node!");
-        for edge in self.net.edges_directed(transition, Direction::Incoming) {
-            match self.net.node_weight(edge.source()).unwrap() {
-                PetriNetNode::P(place) => {
-                    *(place.tokens.borrow_mut()) -= edge.weight().label;
-                    // assert!(*place.tokens.borrow() >= 0);
-                }
-                PetriNetNode::T(_) => {
-                    println!("{}", "this error!");
-                }
-            }
-        }
-
-        // 将token添加到输出库所中
-        log::debug!("add token to target node!");
-        for edge in self.net.edges_directed(transition, Direction::Outgoing) {
-            let place_node = self.net.node_weight(edge.target()).unwrap();
-            match place_node {
-                PetriNetNode::P(place) => {
-                    *(place.tokens.borrow_mut()) += edge.weight().label;
-                    if *(place.tokens.borrow()) > place.capacity {
-                        *(place.tokens.borrow_mut()) = place.capacity
-                    }
-                }
-                PetriNetNode::T(_) => {
-                    println!("{}", "this error!");
-                }
-            }
-        }
-        log::debug!("generate new state!");
-        for node in self.net.node_indices() {
-            match &self.net[node] {
-                PetriNetNode::P(place) => {
-                    if *(place.tokens.borrow()) > 0 {
-                        new_state.insert((node, *place.tokens.borrow()));
-                    }
-                }
-                PetriNetNode::T(_) => {
-                    //println!("{}", "no record");
-                }
-            }
-        }
-
-        new_state
-    }
-
-    pub fn add_token(&mut self, place_index: NodeIndex, weight: usize) {
-        match &mut self.net[place_index] {
-            PetriNetNode::P(place) => {
-                *(place.tokens.borrow_mut()) = *(place.tokens.borrow_mut()) - weight;
-            }
-            PetriNetNode::T(_) => {
-                println!("{}", "this error!");
-            }
-        }
-    }
-
-    // Generate state graph for Petri net
-    // #[cfg(not(feature = "multi-threaded"))]
-    pub fn generate_state_graph(&mut self) -> StateGraph {
-        let mut state_graph = StateGraph::new();
-        let mut queue = VecDeque::<HashSet<(NodeIndex, usize)>>::new();
-
-        let init_mark = self.get_current_mark();
-        // let init_state_string: String = init_mark
-        //     .clone()
-        //     .iter()
-        //     .map(|(index, value)| format!("NodeIndex: {:?}, Value: {}", index, value))
-        //     .collect::<Vec<String>>()
-        //     .join(",");
-        // log::info!("initial state: {}", init_state_string);
-        let mut init_usize: Vec<(usize, usize)> = init_mark
-            .clone()
-            .iter()
-            .map(|node| (node.0.index(), node.1))
-            .collect();
-        let state_node: Vec<(NodeIndex, usize)> = init_mark
-            .clone()
-            .iter()
-            .map(|node| (node.0, node.1))
-            .collect();
-        queue.push_back(init_mark);
-
-        let mut all_state = HashSet::<Vec<(usize, usize)>>::new();
-        init_usize.sort();
-
-        all_state.insert(init_usize);
-        let state_node_map: RefCell<HashMap<Vec<(NodeIndex, usize)>, NodeIndex>> =
-            RefCell::new(HashMap::new());
-        let init_node = state_graph
-            .graph
-            .add_node(StateNode::new(state_node.clone()));
-        state_node_map.borrow_mut().insert(state_node, init_node);
-        while let Some(current_state_index) = queue.pop_front() {
-            self.set_current_mark(current_state_index.clone());
-            let current_node: Vec<(NodeIndex, usize)> = current_state_index
-                .clone()
-                .iter()
-                .map(|node| (node.0, node.1))
-                .collect();
-            let current_node = state_node_map.borrow().get(&current_node).unwrap().clone();
-            let current_sched_transition = self.get_sched_transitions();
-
-            if current_sched_transition.is_empty() {
-                // println!("No transitions scheduled");
-                let mut current_state_usize: Vec<(usize, usize)> = current_state_index
-                    .clone()
-                    .iter()
-                    .map(|node| (node.0.index(), node.1))
-                    .collect();
-                current_state_usize.sort();
-                self.deadlock_marks.insert(current_state_usize);
-                continue;
-            } else {
-                for t in current_sched_transition {
-                    let new_state = self.fire_transition(t, current_state_index.clone());
-                    let mut new_state_usize: Vec<(usize, usize)> = new_state
-                        .clone()
-                        .iter()
-                        .map(|node| (node.0.index(), node.1))
-                        .collect();
-                    new_state_usize.sort();
-
-                    if insert_with_comparison(&mut all_state, new_state_usize) {
-                        queue.push_back(new_state.clone());
-                        let state_node: Vec<(NodeIndex, usize)> = new_state
-                            .clone()
-                            .iter()
-                            .map(|node| (node.0, node.1))
-                            .collect();
-                        let new_node = state_graph.graph.add_node(StateNode {
-                            mark: state_node.clone(),
-                        });
-                        state_graph.graph.add_edge(
-                            current_node,
-                            new_node,
-                            StateEdge::new(format!("{:?}", self.net[t]), 0),
-                        );
-                        state_node_map.borrow_mut().insert(state_node, new_node);
-                    }
-                }
-            }
-        }
-        // info!("All states are: {:?}", all_state.len());
-        use petgraph::dot::Dot;
-        let mut sg_file = std::fs::File::create("sg.dot").unwrap();
-
-        write!(
-            sg_file,
-            "{:?}",
-            Dot::with_attr_getters(
-                &state_graph.graph,
-                &[],
-                &|_, _| "arrowhead = vee".to_string(),
-                &|_, nr| {
-                    format!(
-                        "label = {:?}",
-                        "\"".to_string()
-                            + &nr
-                                .1
-                                .mark
-                                .clone()
-                                .iter()
-                                .map(|x| match &self.net[x.0] {
-                                    PetriNetNode::P(p) =>
-                                        p.name.clone() + ":" + (x.1).to_string().as_str(),
-                                    PetriNetNode::T(t) => t.name.clone(),
-                                })
-                                .collect::<Vec<String>>()
-                                .join(", ")
-                            + "\""
-                    )
-                },
-            )
-        )
-        .unwrap();
-        state_graph
-    }
-
-    // Check Deadlock
-    pub fn check_deadlock(&mut self) -> String {
-        use petgraph::graph::node_index;
-        // Remove the terminal mark
-        self.deadlock_marks.retain(|v| {
-            v.iter().all(|m| match &self.net[node_index(m.0)] {
-                PetriNetNode::P(p) => {
-                    // p.name.contains("mainpanic") ||
-                    if p.name.contains("mainend") {
-                        false
-                    } else {
-                        true
-                    }
-                }
-                _ => false,
-            })
-        });
-        let mut result = String::new();
-        if self.deadlock_marks.is_empty() {
-            return "no detect deadlock!\n".to_string();
-        } else {
-            for mark in &self.deadlock_marks {
-                let joined = mark
-                    .clone()
-                    .iter()
-                    .map(|x| match &self.net[node_index(x.0)] {
-                        PetriNetNode::P(p) => {
-                            p.name.clone()
-                                + ":"
-                                + (x.1).to_string().as_str()
-                                + "span: "
-                                + &p.span.clone()
-                        }
-                        PetriNetNode::T(t) => t.name.clone(),
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                result = result + joined.clone().as_str() + "\n";
-            }
-            return result;
-        }
-    }
-
-    // Set the current marking
-    pub fn set_current_mark(&mut self, mark: HashSet<(NodeIndex, usize)>) {
-        for node in self.net.node_indices() {
-            match &mut self.net[node] {
-                PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() = 0;
-                }
-                PetriNetNode::T(_) => {
-                    debug!("{}", "this error!");
-                }
-            }
-        }
-        for (m, n) in mark {
-            match &mut self.net[m] {
-                PetriNetNode::P(place) => {
-                    *place.tokens.borrow_mut() = n;
-                }
-                PetriNetNode::T(_) => {
-                    debug!("{}", "this error!");
-                }
-            }
-        }
-    }
-
-    // Get the current marking
-    pub fn get_current_mark(&self) -> HashSet<(NodeIndex, usize)> {
-        let mut current_mark = HashSet::<(NodeIndex, usize)>::new();
-        for node in self.net.node_indices() {
-            match &self.net[node] {
-                PetriNetNode::P(place) => {
-                    if *place.tokens.borrow() > 0 {
-                        current_mark.insert((node.clone(), *place.tokens.borrow() as usize));
-                    }
-                }
-                PetriNetNode::T(_) => {
-                    debug!("{}", "this error!");
-                }
-            }
-        }
-        current_mark
-    }
-
-    // Reduce the size of the Petri net and merge edges without branches
-    pub fn reduce_state(&mut self) {
-        // 删除孤独节点
-        // 收集孤立节点
-        let mut isolated_nodes = Vec::new();
-        for node in self.net.node_indices() {
-            if self
-                .net
-                .edges_directed(node, petgraph::Direction::Incoming)
-                .count()
-                == 0
-                && self
-                    .net
-                    .edges_directed(node, petgraph::Direction::Outgoing)
-                    .count()
-                    == 0
-            {
-                isolated_nodes.push(node);
-            }
-        }
-
-        // 删除孤立节点
-        for node in isolated_nodes {
-            self.net.remove_node(node);
-        }
-    }
-
     pub fn get_or_insert_node(&mut self, def_id: DefId) -> (NodeIndex, NodeIndex) {
         match self.function_counter.entry(def_id) {
             Entry::Occupied(node) => node.get().to_owned(),
             Entry::Vacant(v) => {
                 let func_name = self.tcx.def_path_str(def_id);
-                let func_start = Place::new(format!("{}", func_name) + "start", 0);
+                let func_start = Place::new(format!("{}_start", func_name), 0);
                 let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                let func_end = Place::new(format!("{}", func_name) + "end", 0);
+                let func_end = Place::new(format!("{}_end", func_name), 0);
                 let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
                 *v.insert((func_start_node_id, func_end_node_id))
             }
@@ -1009,324 +918,25 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn save_petri_net_to_file(&self) {
-        use petgraph::dot::Dot;
+        use petgraph::dot::{Config, Dot};
         let pn_dot = Dot::with_attr_getters(
             &self.net,
-            &[],
+            &[Config::NodeNoLabel],
             &|_, _| "arrowhead = vee".to_string(),
             &|_, nr| {
-                format!(
-                    "shape = {}",
-                    match nr.1 {
-                        PetriNetNode::P(_) => {
-                            "circle"
-                        }
-                        PetriNetNode::T(_) => {
-                            "box"
-                        }
+                let label = match &nr.1 {
+                    PetriNetNode::P(place) => {
+                        format!("label = \"{}\", shape = circle", place.name)
                     }
-                )
-                .to_string()
+                    PetriNetNode::T(transition) => {
+                        format!("label = \"{}\", shape = box", transition.name)
+                    }
+                };
+                label
             },
         );
 
         let mut file = std::fs::File::create("graph.dot").unwrap();
         let _ = file.write_all(format!("{:?}", pn_dot).as_bytes());
-    }
-}
-
-/// Collect lockguard info.
-pub struct LinkConstruct<'b, 'tcx> {
-    instance_id: InstanceId,
-    instance: &'b Instance<'tcx>,
-    body: &'b Body<'tcx>,
-    tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
-    pub net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
-    pub lockguards: LockGuardMap<'tcx>,
-    function_counter: &'b HashMap<DefId, (NodeIndex, NodeIndex)>,
-    pub function_vec: &'b mut HashMap<DefId, Vec<NodeIndex>>,
-    locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
-}
-
-impl<'b, 'tcx> LinkConstruct<'b, 'tcx> {
-    pub fn new(
-        instance_id: InstanceId,
-        instance: &'b Instance<'tcx>,
-        body: &'b Body<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-        net: &'b mut Graph<PetriNetNode, PetriNetEdge>,
-        lockguards: LockGuardMap<'tcx>,
-        function_counter: &'b HashMap<DefId, (NodeIndex, NodeIndex)>,
-        function_vec: &'b mut HashMap<DefId, Vec<NodeIndex>>,
-        locks_counter: &'b HashMap<LockGuardId, NodeIndex>,
-    ) -> Self {
-        Self {
-            instance_id,
-            instance,
-            body,
-            tcx,
-            param_env,
-            net,
-            lockguards,
-            function_counter,
-            function_vec,
-            locks_counter,
-        }
-    }
-
-    pub fn analyze(&mut self) {
-        self.visit_body(self.body);
-    }
-
-    // pub fn extract_def_id_of_called_function_from_operand(
-    //     operand: &rustc_middle::mir::Operand<'tcx>,
-    //     caller_function_def_id: rustc_hir::def_id::DefId,
-    //     tcx: rustc_middle::ty::TyCtxt<'tcx>,
-    // ) -> rustc_hir::def_id::DefId {
-    //     let function_type = match operand {
-    //         rustc_middle::mir::Operand::Copy(place) | rustc_middle::mir::Operand::Move(place) => {
-    //             // Find the type through the local declarations of the caller function.
-    //             // The `Place` (memory location) of the called function should be declared there and we can query its type.
-    //             let body = tcx.optimized_mir(caller_function_def_id);
-    //             let place_ty = place.ty(body, tcx);
-    //             place_ty.ty
-    //         }
-    //         rustc_middle::mir::Operand::Constant(constant) => constant.ty(),
-    //     };
-    //     match function_type.kind() {
-    //         rustc_middle::ty::TyKind::FnPtr(_) => {
-    //             unimplemented!(
-    //                 "TyKind::FnPtr not implemented yet. Function pointers are present in the MIR"
-    //             );
-    //         }
-    //         rustc_middle::ty::TyKind::FnDef(def_id, _)
-    //         | rustc_middle::ty::TyKind::Closure(def_id, _) => *def_id,
-    //         _ => {
-    //             panic!("TyKind::FnDef, a function definition, but got: {function_type:?}");
-    //         }
-    //     }
-    // }
-}
-
-impl<'b, 'tcx> Visitor<'tcx> for LinkConstruct<'b, 'tcx> {
-    fn visit_local(&mut self, local: Local, context: PlaceContext, _: Location) {
-        let lockguard_id = LockGuardId::new(self.instance_id, local);
-        // local is lockguard
-        if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
-            match context {
-                PlaceContext::MutatingUse(context) => match context {
-                    MutatingUseContext::Drop => {
-                        let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
-                        let drop_t = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("drop")
-                            + &format!("{:?}", lock_node.index());
-                        let drop_p = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("dropped")
-                            + &format!("{:?}", lock_node.index());
-                        let drop_lock_t = Transition::new(format!("{:?}", drop_t), (0, 0), 1);
-                        let drop_lock_p = Place::new(format!("{:?}", drop_p), 0);
-                        let drop_node_t = self.net.add_node(PetriNetNode::T(drop_lock_t));
-                        let drop_node_p = self.net.add_node(PetriNetNode::P(drop_lock_p));
-
-                        let prev_node = self.function_vec[&self.instance.def_id()].last().unwrap();
-                        self.net
-                            .add_edge(*prev_node, drop_node_t, PetriNetEdge { label: 1usize });
-                        self.net
-                            .add_edge(drop_node_t, drop_node_p, PetriNetEdge { label: 1usize });
-                        match &self.lockguards[&lockguard_id].lockguard_ty {
-                            LockGuardTy::StdMutex(_)
-                            | LockGuardTy::ParkingLotMutex(_)
-                            | LockGuardTy::SpinMutex(_) => {
-                                self.net.add_edge(
-                                    drop_node_t,
-                                    *lock_node,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                            }
-                            _ => {
-                                self.net.add_edge(
-                                    drop_node_t,
-                                    *lock_node,
-                                    PetriNetEdge { label: 10usize },
-                                );
-                            }
-                        }
-                    }
-                    MutatingUseContext::Call => {
-                        let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
-                        let genc_t = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("genc")
-                            + &format!("{:?}", lock_node.index());
-                        let genc_p = format!("{:?}", lockguard_id.instance_id)
-                            + &String::from("locked")
-                            + &format!("{:?}", lock_node.index());
-                        let genc_lock_t = Transition::new(format!("{:?}", genc_t), (0, 0), 1);
-                        let genc_lock_p = Place::new(format!("{:?}", genc_p), 0);
-                        let genc_node_t = self.net.add_node(PetriNetNode::T(genc_lock_t));
-                        let genc_node_p = self.net.add_node(PetriNetNode::P(genc_lock_p));
-
-                        let prev_node = self.function_vec[&self.instance.def_id()].last().unwrap();
-                        self.net
-                            .add_edge(*prev_node, genc_node_t, PetriNetEdge { label: 1usize });
-                        self.net
-                            .add_edge(genc_node_t, genc_node_p, PetriNetEdge { label: 1usize });
-                        match &self.lockguards[&lockguard_id].lockguard_ty {
-                            LockGuardTy::StdMutex(_)
-                            | LockGuardTy::ParkingLotMutex(_)
-                            | LockGuardTy::SpinMutex(_) => {
-                                self.net.add_edge(
-                                    *lock_node,
-                                    genc_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                            }
-                            _ => {
-                                self.net.add_edge(
-                                    *lock_node,
-                                    genc_node_t,
-                                    PetriNetEdge { label: 10usize },
-                                );
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    }
-
-    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        if let TerminatorKind::Call {
-            ref func, fn_span, ..
-        } = terminator.kind
-        {
-            let func_ty = func.ty(self.body, self.tcx);
-
-            if let ty::FnDef(def_id, substs) = *func_ty.kind() {
-                let func_name = self.tcx.def_path_str(def_id);
-                if func_name.contains("core")
-                    || func_name.contains("std")
-                    || func_name.contains("alloc")
-                    || func_name.contains("parking_lot::")
-                    || func_name.contains("spin::")
-                    || func_name.contains("::new")
-                {
-                } else {
-                    if let Some(_) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
-                        .ok()
-                        .flatten()
-                    {
-                        let func_name = self.tcx.def_path_str(def_id);
-                        println!("{:?}", def_id);
-                        let func_start_end = self.function_counter.get(&def_id);
-                        match func_start_end {
-                            Some(_) => {
-                                if func_name == "std::mem::drop"
-                                    || func_name == "std::ops::Deref::deref"
-                                    || func_name == "std::ops::DerefMut::deref_mut"
-                                    || func_name == "std::result::Result::<T, E>::unwrap"
-                                {
-                                    return;
-                                }
-                                if func_name == "std::thread::spawn" {
-                                    // thread
-                                    return;
-                                }
-                                let call = format!("{:?}", fn_span)
-                                    + &String::from("call")
-                                    + &format!("{:?}", def_id);
-                                let wait = format!("{:?}", fn_span)
-                                    + &String::from("wait")
-                                    + &format!("{:?}", def_id);
-                                let ret = format!("{:?}", fn_span)
-                                    + &String::from("return")
-                                    + &format!("{:?}", def_id);
-                                let called = format!("{:?}", fn_span)
-                                    + &String::from("called")
-                                    + &format!("{:?}", def_id);
-                                let call_t = Transition::new(call, (0, 0), 1);
-                                let wait_p = Place::new(wait, 0);
-                                let ret_t = Transition::new(ret, (0, 0), 1);
-                                let call_p = Place::new(called, 0);
-
-                                let call_node_t = self.net.add_node(PetriNetNode::T(call_t));
-                                let wait_node_p = self.net.add_node(PetriNetNode::P(wait_p));
-                                let ret_node_t = self.net.add_node(PetriNetNode::T(ret_t));
-                                let call_node_p = self.net.add_node(PetriNetNode::P(call_p));
-
-                                let prev_node = self.function_vec[&def_id].last().unwrap();
-
-                                self.net.add_edge(
-                                    *prev_node,
-                                    call_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    call_node_t,
-                                    wait_node_p,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    wait_node_p,
-                                    ret_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    ret_node_t,
-                                    call_node_p,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.function_vec
-                                    .get_mut(&def_id)
-                                    .unwrap()
-                                    .push(call_node_t);
-                                self.function_vec
-                                    .get_mut(&def_id)
-                                    .unwrap()
-                                    .push(wait_node_p);
-                                self.function_vec.get_mut(&def_id).unwrap().push(ret_node_t);
-                                self.function_vec
-                                    .get_mut(&def_id)
-                                    .unwrap()
-                                    .push(call_node_p);
-                                self.net.add_edge(
-                                    call_node_t,
-                                    func_start_end.unwrap().0,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                                self.net.add_edge(
-                                    func_start_end.unwrap().1,
-                                    ret_node_t,
-                                    PetriNetEdge { label: 1usize },
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-        self.super_terminator(terminator, location);
-    }
-}
-
-#[cfg(test)]
-pub mod test_s {
-    use std::fs::File;
-    use std::io::Read;
-
-    #[test]
-    pub fn parse_petri_net() {
-        let mut file =
-            File::open("/Users/zhangkaiwen/RustAnalysis/RustPTA/test/double_lock/graph.dot")
-                .expect("Unable to open file");
-
-        // 读取文件内容到字符串
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .expect("Unable to read file");
     }
 }

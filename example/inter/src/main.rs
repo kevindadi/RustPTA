@@ -156,7 +156,7 @@ impl Foo {
     }
 }
 
-fn main() {
+pub fn main() {
     let foo1 = Foo::new();
     // // deadlock 1
     foo1.sync_mutex_1();

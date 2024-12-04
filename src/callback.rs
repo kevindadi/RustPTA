@@ -3,11 +3,11 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use crate::graph::callgraph::CallGraph;
 use crate::graph::petri_net::PetriNet;
+use crate::graph::state_graph::StateGraph;
 use crate::options::Options;
 use log::debug;
 use rustc_driver::Compilation;
@@ -52,8 +52,8 @@ impl rustc_driver::Callbacks for PTACallbacks {
         self.file_name = config
             .input
             .source_name()
-            .prefer_remapped() // nightly-2023-09-13
-            //.prefer_remapped_unconditionaly()
+            //.prefer_remapped() // nightly-2023-09-13
+            .prefer_remapped_unconditionaly()
             .to_string();
 
         debug!("Processing input file: {}", self.file_name);
@@ -61,7 +61,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
             debug!("in test only mode");
             // self.options.test_only = true;
         }
-        config.crate_cfg.insert(("pta".to_string(), None));
+        //config.crate_cfg.insert("pta".to_string(), None);
         match &config.output_dir {
             None => {
                 self.output_directory = std::env::temp_dir();
@@ -70,12 +70,13 @@ impl rustc_driver::Callbacks for PTACallbacks {
             Some(path_buf) => self.output_directory.push(path_buf.as_path()),
         }
     }
+
     fn after_analysis<'tcx>(
         &mut self,
         compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
-        compiler.session().abort_if_errors();
+        compiler.sess.dcx().abort_if_errors();
         if self
             .output_directory
             .to_str()
@@ -88,9 +89,9 @@ impl rustc_driver::Callbacks for PTACallbacks {
         // queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
         //     self.analyze_with_lockbud(compiler, tcx);
         // });
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            self.analyze_with_pta(compiler, tcx);
-        });
+
+        self.analyze_with_pta(compiler, tcx);
+
         if self.test_run {
             // We avoid code gen for test cases because LLVM is not used in a thread safe manner.
             Compilation::Stop
@@ -125,15 +126,16 @@ impl PTACallbacks {
             })
             .collect();
         let mut callgraph = CallGraph::new();
-        let param_env = ParamEnv::reveal_all();
+        let param_env = ParamEnv::empty();
         callgraph.analyze(instances.clone(), tcx, param_env);
 
-        let mut pn = PetriNet::new(tcx, param_env, &callgraph);
+        let mut pn = PetriNet::new(&self.options, tcx, param_env, &callgraph);
         pn.construct();
-
         pn.save_petri_net_to_file();
-        let _ = pn.generate_state_graph();
-        let result = pn.check_deadlock();
-        println!("deadlock state: {}", result);
+
+        let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+        state_graph.generate_states();
+        let result = state_graph.check_deadlock();
+        log::info!("deadlock state: {}", result);
     }
 }
