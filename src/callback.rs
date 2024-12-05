@@ -11,7 +11,6 @@ use crate::graph::state_graph::StateGraph;
 use crate::options::Options;
 use log::debug;
 use rustc_driver::Compilation;
-use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
@@ -104,10 +103,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
 
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
-        // Skip crates by names (white or black list).
-        // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-        let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
@@ -128,8 +123,9 @@ impl PTACallbacks {
         let mut callgraph = CallGraph::new();
         let param_env = ParamEnv::empty();
         callgraph.analyze(instances.clone(), tcx, param_env);
+        log::info!("callgraph:\n{}", callgraph.format_spawn_calls());
 
-        let mut pn = PetriNet::new(&self.options, tcx, param_env, &callgraph);
+        let mut pn = PetriNet::new(&self.options, tcx, &callgraph);
         pn.construct();
         pn.save_petri_net_to_file();
 

@@ -36,7 +36,6 @@ serde = { version = "1.0.215", features = ["derive"] }
 regex = "1.6.0"
 once_cell = "1.13.1"
 itertools = "*"
-rayon = "1.10.0"
 
 [profile.dev]
 incremental = false

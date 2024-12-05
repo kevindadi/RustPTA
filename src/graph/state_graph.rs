@@ -9,7 +9,6 @@ use std::hash::Hasher;
 
 use super::petri_net::{PetriNetEdge, PetriNetNode};
 
-use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
@@ -111,13 +110,13 @@ impl StateGraph {
         }
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
             // 获取当前状态下所有使能的变迁
+
             let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
 
             // 如果没有使能的变迁，将当前状态添加到死锁标识集合中
             if enabled_transitions.is_empty() {
                 let current_state_normalized = normalize_state(&current_mark);
                 self.deadlock_marks.insert(current_state_normalized.clone());
-                log::error!("deadlock state: {:?}", current_state_normalized);
                 continue;
             }
 
@@ -127,21 +126,47 @@ impl StateGraph {
             }
             let current_node = self.graph.add_node(StateNode::new(current_state.clone()));
             // 并行处理每个变迁，生成新状态，同时保存变迁信息
-            let new_states: Vec<_> = enabled_transitions
-                .into_par_iter()
-                .map(|transition| {
-                    // 为每个线程创建独立的网络副本
-                    let mut net_clone = current_net.clone();
-                    let (new_net, new_mark) =
-                        self.fire_transition(&mut net_clone, &current_mark, transition);
-                    (transition, new_net, new_mark)
-                })
-                .collect();
+            // let new_states: Vec<_> = enabled_transitions
+            //     .into_par_iter()
+            //     .map(|transition| {
+            //         // 为每个线程创建独立的网络副本
+            //         let mut net_clone = current_net.clone();
+            //         let (new_net, new_mark) =
+            //             self.fire_transition(&mut net_clone, &current_mark, transition);
+            //         (transition, new_net, new_mark)
+            //     })
+            //     .collect();
+
+            // 在 generate_states 方法中替换 rayon 并行处理部分
+            let new_states: Vec<_> = {
+                let mut handles = vec![];
+
+                for transition in enabled_transitions {
+                    let current_net = current_net.clone();
+                    let current_mark = current_mark.clone();
+                    let self_clone = self.clone();
+
+                    let handle = std::thread::spawn(move || {
+                        let mut net_clone = current_net.clone();
+                        let (new_net, new_mark) =
+                            self_clone.fire_transition(&mut net_clone, &current_mark, transition);
+                        (transition, new_net, new_mark)
+                    });
+
+                    handles.push(handle);
+                }
+
+                // 收集所有线程的结果
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .collect()
+            };
 
             // 处理每个新生成的状态
             for (transition, new_net, new_mark) in new_states {
                 let new_state = normalize_state(&new_mark);
-
+                // std::thread::sleep(std::time::Duration::from_millis(500));
                 // 检查新状态是否唯一，如果是则添加到状态图中
                 let mut all_states_guard = all_states.lock().unwrap();
                 if insert_with_comparison(&mut all_states_guard, &new_state) {
@@ -179,7 +204,18 @@ impl StateGraph {
         // 直接根据 mark 中的 NodeIndex 设置对应的 token
         for (node_index, token_count) in mark {
             if let Some(PetriNetNode::P(place)) = net.node_weight(*node_index) {
-                *place.tokens.write().unwrap() = *token_count;
+                // let tokens = *place.tokens.write().unwrap();
+                {
+                    *place.tokens.write().unwrap() = *token_count;
+                }
+                assert!(
+                    *place.tokens.read().unwrap() <= place.capacity,
+                    "Token count ({}) exceeds capacity ({}) at node index {}, and token_count is {} ",
+                    *place.tokens.read().unwrap(),
+                    place.capacity,
+                    node_index.index(),
+                    token_count
+                );
             }
         }
     }
@@ -277,10 +313,9 @@ impl StateGraph {
                 PetriNetNode::P(place) => {
                     let mut tokens = place.tokens.write().unwrap();
                     *tokens -= edge.weight().label;
-                    assert!(*tokens >= 0);
                 }
                 PetriNetNode::T(_) => {
-                    println!("{}", "this error!");
+                    log::error!("{}", "this error!");
                 }
             }
         }
@@ -296,9 +331,10 @@ impl StateGraph {
                     if *tokens > place.capacity {
                         *tokens = place.capacity;
                     }
+                    assert!(place.capacity > 0);
                 }
                 PetriNetNode::T(_) => {
-                    println!("{}", "this error!");
+                    log::error!("{}", "this error!");
                 }
             }
         }
@@ -327,41 +363,36 @@ impl StateGraph {
         // Remove the terminal mark
         self.deadlock_marks.retain(|v| {
             v.iter().all(|m| match &self.initial_net[node_index(m.0)] {
-                PetriNetNode::P(p) => {
-                    // p.name.contains("mainpanic") ||
-                    if p.name.contains("mainend") {
-                        false
-                    } else {
-                        true
-                    }
-                }
+                PetriNetNode::P(p) => !p.name.contains("mainend"),
                 _ => false,
             })
         });
-        let mut result = String::new();
+
         if self.deadlock_marks.is_empty() {
-            return "no detect deadlock!\n".to_string();
-        } else {
-            for mark in &self.deadlock_marks {
-                let joined = mark
-                    .clone()
-                    .iter()
-                    .map(|x| match &self.initial_net[node_index(x.0)] {
-                        PetriNetNode::P(p) => {
-                            p.name.clone()
-                                + ":"
-                                + (x.1).to_string().as_str()
-                                + "span: "
-                                + &p.span.clone()
-                        }
-                        PetriNetNode::T(t) => t.name.clone(),
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                result = result + joined.clone().as_str() + "\n";
-            }
-            return result;
+            return "No deadlock detected.\n".to_string();
         }
+
+        let mut result = String::from("Detected deadlock states:\n");
+        for (i, mark) in self.deadlock_marks.iter().enumerate() {
+            result.push_str(&format!("\nDeadlock State #{}\n", i + 1));
+            result.push_str("Active Places:\n");
+
+            let places: Vec<String> = mark
+                .iter()
+                .filter_map(|x| match &self.initial_net[node_index(x.0)] {
+                    PetriNetNode::P(p) => Some(format!(
+                        "  - {} (tokens: {}, location: {})",
+                        p.name, x.1, p.span
+                    )),
+                    _ => None,
+                })
+                .collect();
+
+            result.push_str(&places.join("\n"));
+            result.push('\n');
+        }
+
+        result
     }
 
     /// 将状态图以 DOT 格式输出

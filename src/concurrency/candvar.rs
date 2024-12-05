@@ -13,7 +13,7 @@ use smallvec::SmallVec;
 
 use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
 use rustc_middle::mir::{Body, Local, Location};
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TypingEnv};
+use rustc_middle::ty::{self, Instance, TyCtxt, TypingEnv};
 use rustc_span::Span;
 
 use crate::graph::callgraph::InstanceId;
@@ -139,7 +139,7 @@ pub enum CondVarTy {
 
 impl CondVarTy {
     pub fn from_local_ty(local_ty: ty::Ty, tcx: TyCtxt) -> Option<Self> {
-        if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() {
+        if let ty::TyKind::Adt(adt_def, _) = local_ty.kind() {
             let path = tcx.def_path_str(adt_def.did());
             // quick fail
             if path.contains("Condvar") {

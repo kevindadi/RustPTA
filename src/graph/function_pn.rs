@@ -1,12 +1,11 @@
 use super::{
-    callgraph::InstanceId,
+    callgraph::{CallGraph, InstanceId},
     petri_net::{PetriNetEdge, PetriNetNode, Place},
 };
 use crate::{
-    analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
+    analysis::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
     concurrency::{
         candvar::CondVarId,
-        handler::JoinHanderId,
         locks::{LockGuardId, LockGuardMap, LockGuardTy},
     },
     graph::petri_net::Transition,
@@ -16,44 +15,36 @@ use crate::{
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{visit::Visitor, BasicBlock, TerminatorKind};
 use rustc_middle::{
     mir::Body,
-    ty::{Instance, TyCtxt},
+    ty::{Instance, ParamEnv, TyCtxt, TypingEnv},
+};
+use rustc_middle::{
+    mir::{visit::Visitor, BasicBlock, Operand, TerminatorKind},
+    ty,
 };
 use std::{cell::RefCell, collections::HashMap};
 
-pub fn find_key_by_id(
-    map: &HashMap<usize, Vec<JoinHanderId>>,
-    target_id: JoinHanderId,
-) -> Option<usize> {
-    for (key, id_vec) in map.iter() {
-        if id_vec.iter().any(|&id| id == target_id) {
-            return Some(*key);
-        }
-    }
-    None
-}
-
-// Constructing Subsequent Graph based on function's CFG
+/// 基于函数的控制流图(CFG)构建Petri网
+/// 该结构体负责将Rust MIR中的基本块(Basic Block)转换为Petri网表示
+/// 主要用于并发分析，处理锁、条件变量等同步原语
 pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    instance_id: InstanceId,
-    instance: &'translate Instance<'tcx>,
-    body: &'translate Body<'tcx>,
-    tcx: TyCtxt<'tcx>,
-    options: &'translate Options,
-    // param_env: ParamEnv<'tcx>,
-    pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
-    //callgraph: &'analysis CallGraph<'tcx>,
-    alias: &'translate RefCell<AliasAnalysis<'analysis, 'tcx>>,
-    pub lockguards: LockGuardMap<'tcx>,
-    function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
-    locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
-    bb_node_start_end: HashMap<BasicBlock, NodeIndex>,
-    bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,
-    thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>,
-    handler_id: &'translate mut HashMap<JoinHanderId, DefId>,
-    condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
+    instance_id: InstanceId,              // 函数实例ID
+    instance: &'translate Instance<'tcx>, // 函数实例
+    body: &'translate Body<'tcx>,         // 函数体MIR
+    tcx: TyCtxt<'tcx>,                    // 类型上下文
+    options: &'translate Options,         // 配置选项
+    callgraph: &'translate CallGraph<'tcx>,
+    pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>, // Petri网图结构
+    alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>, // 别名分析
+    pub lockguards: LockGuardMap<'tcx>,                         // 锁守卫映射
+    function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>, // 函数节点映射
+    locks_counter: &'translate HashMap<LockGuardId, NodeIndex>, // 锁ID映射
+    bb_node_start_end: HashMap<BasicBlock, NodeIndex>,          // 基本块起始节点映射
+    bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,           // 基本块节点列表
+    // thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>, // 线程ID处理器映射
+    // handler_id: &'translate mut HashMap<JoinHanderId, DefId>,   // 处理器ID映射
+    condvar_id: &'translate HashMap<CondVarId, NodeIndex>, // 条件变量ID映射
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -64,14 +55,15 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         tcx: TyCtxt<'tcx>,
         options: &'translate Options,
         // param_env: ParamEnv<'tcx>,
+        callgraph: &'translate CallGraph<'tcx>,
         net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
         // callgraph: &'analysis CallGraph<'tcx>,
-        alias: &'translate RefCell<AliasAnalysis<'analysis, 'tcx>>,
+        alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>,
         lockguards: LockGuardMap<'tcx>,
         function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
         locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
-        thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>,
-        handler_id: &'translate mut HashMap<JoinHanderId, DefId>,
+        // thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>,
+        // handler_id: &'translate mut HashMap<JoinHanderId, DefId>,
         condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
     ) -> Self {
         Self {
@@ -80,6 +72,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             body,
             tcx,
             options,
+            callgraph,
             net,
             alias,
             lockguards,
@@ -87,23 +80,25 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             locks_counter,
             bb_node_start_end: HashMap::default(),
             bb_node_vec: HashMap::new(),
-            thread_id_handler,
-            handler_id,
+            // thread_id_handler,
+            // handler_id,
             condvar_id,
         }
     }
 
     pub fn translate(&mut self) {
-        // TODO: 如果函数中不包含同步原图, Skip
+        // TODO: 如果函数中不包含同步原语, Skip
         self.visit_body(self.body);
     }
+
+    fn deal_thread_join(&mut self, bb_idx: BasicBlock, bb_end: NodeIndex) {}
 }
 
 impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
-        let func_id = self.instance.def_id();
+        let def_id = self.instance.def_id();
 
-        let fn_name = self.tcx.def_path_str(func_id);
+        let fn_name = self.tcx.def_path_str(def_id);
 
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
             if bb.is_cleanup {
@@ -135,7 +130,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                 let bb_start = self.net.add_node(PetriNetNode::T(bb_start_transition));
 
                 self.net.add_edge(
-                    self.function_counter.get(&func_id).unwrap().0,
+                    self.function_counter.get(&def_id).unwrap().0,
                     bb_start,
                     PetriNetEdge { label: 1usize },
                 );
@@ -196,7 +191,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             bb_end,
                             PetriNetEdge { label: 1usize },
                         );
-                        let return_node = self.function_counter.get(&func_id).unwrap().1;
+                        let return_node = self.function_counter.get(&def_id).unwrap().1;
                         self.net
                             .add_edge(bb_end, return_node, PetriNetEdge { label: 1usize });
                     }
@@ -211,7 +206,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             PetriNetEdge { label: 1usize },
                         );
 
-                        let return_node = self.function_counter.get(&func_id).unwrap().1;
+                        let return_node = self.function_counter.get(&def_id).unwrap().1;
                         self.net
                             .add_edge(bb_end, return_node, PetriNetEdge { label: 1usize });
                     }
@@ -252,7 +247,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                         }
 
                         let lockguard_id = LockGuardId::new(self.instance_id, destination.local);
-                        let handle_id = JoinHanderId::new(self.instance_id, destination.local);
+                        // let handle_id = JoinHanderId::new(self.instance_id, destination.local);
 
                         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "call");
                         let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
@@ -264,6 +259,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             PetriNetEdge { label: 1usize },
                         );
 
+                        // 如果当前调用返回的是一个Guard, 则将Guard的节点连接到当前BB的结束节点
                         if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
                             let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
                             match &self.lockguards[&lockguard_id].lockguard_ty {
@@ -298,7 +294,6 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 _ => {}
                             }
                         } else {
-                            // link current bb_idx to callee's start place and return, unwind
                             let callee_ty = func.ty(self.body, self.tcx);
 
                             let callee_id = match callee_ty.kind() {
@@ -315,22 +310,132 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 }
                             };
 
+                            // 如果当前调用返回的不是Guard, 则将当前BB的结束节点连接到被调用函数的开始节点
+                            // 如果当前调用的参数是一个JoinHandle, 则在本函数中查找spawn的返回节点，
+                            // 进行匹配，以找到joinhandler对应的def_id
+                            // 将当前BB的结束节点连接到被调用函数的开始节点
                             // 判断Caller是nofity或者wait
-                            let caller_func_name = format_name(callee_id);
+                            let callee_func_name = format_name(callee_id);
 
-                            if !caller_func_name.contains(&self.options.crate_name) {
-                                match (target, unwind) {
-                                    (Some(return_block), _) => {
-                                        self.net.add_edge(
-                                            bb_end,
-                                            *self.bb_node_start_end.get(return_block).unwrap(),
-                                            PetriNetEdge { label: 1usize },
-                                        );
+                            if callee_func_name.contains("::spawn") {
+                                if let Some(closure_arg) = args.first() {
+                                    if let Operand::Move(place) | Operand::Copy(place) =
+                                        closure_arg.node
+                                    {
+                                        let place_ty = place.ty(self.body, self.tcx).ty;
+                                        if let ty::Closure(closure_def_id, _) = place_ty.kind() {
+                                            self.net.add_edge(
+                                                bb_end,
+                                                self.function_counter
+                                                    .get(&closure_def_id)
+                                                    .unwrap()
+                                                    .0,
+                                                PetriNetEdge { label: 1usize },
+                                            );
+                                        }
+                                        match target {
+                                            Some(t) => {
+                                                self.net.add_edge(
+                                                    bb_end,
+                                                    *self.bb_node_start_end.get(t).unwrap(),
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+                                            }
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
-                                    _ => {}
                                 }
-                                log::debug!("ignore function not include in main crate!");
-                            } else if caller_func_name.contains("Condvar::notify_one") {
+                            }
+                            // 链接JoinHandler
+                            else if callee_func_name.contains("::join") {
+                                // JoinId是caller中传递给Join方法的参数
+                                let join_id = AliasId::new(
+                                    self.instance_id,
+                                    args.get(0).unwrap().node.place().unwrap().local,
+                                );
+                                match self.callgraph.get_spawn_calls(def_id) {
+                                    Some(spawn_call_ids) => {
+                                        let mut spawn_def_id = Option::<DefId>::None;
+                                        for spawn_call_id in spawn_call_ids.iter() {
+                                            // SpawnId是callee中返回的JoinHandler的id
+                                            let spawn_local_id =
+                                                AliasId::new(self.instance_id, spawn_call_id.1);
+                                            spawn_def_id = match self
+                                                .alias
+                                                .borrow_mut()
+                                                .alias(join_id.into(), spawn_local_id.into())
+                                            {
+                                                ApproximateAliasKind::Probably
+                                                | ApproximateAliasKind::Possibly => {
+                                                    // log::info!(
+                                                    //     "alias between join and spawn: {:?} and {:?}",
+                                                    //     join_id,
+                                                    //     spawn_local_id
+                                                    // );
+                                                    Some(spawn_call_id.0)
+                                                }
+                                                _ => {
+                                                    log::info!("no alias between join and spawn");
+                                                    continue;
+                                                }
+                                            };
+                                        }
+                                        match spawn_def_id {
+                                            Some(s_def_id) => {
+                                                self.net.add_edge(
+                                                    self.function_counter.get(&s_def_id).unwrap().1,
+                                                    bb_end,
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+                                                match target {
+                                                    Some(t) => {
+                                                        self.net.add_edge(
+                                                            bb_end,
+                                                            *self.bb_node_start_end.get(t).unwrap(),
+                                                            PetriNetEdge { label: 1usize },
+                                                        );
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                            _ => {
+                                                log::error!(
+                                                    "no spawn call in function {:?}",
+                                                    def_id
+                                                );
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        panic!("no spawn call in function {:?}", def_id);
+                                    }
+                                }
+                                continue;
+                            }
+
+                            // 如果被调用的函数不属于当前crate,则忽略,直接链接到下一个Block
+                            match callee_func_name.starts_with(&self.options.crate_name) {
+                                true => {}
+                                false => {
+                                    match (target, unwind) {
+                                        (Some(return_block), _) => {
+                                            self.net.add_edge(
+                                                bb_end,
+                                                *self.bb_node_start_end.get(return_block).unwrap(),
+                                                PetriNetEdge { label: 1usize },
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                    log::debug!("ignore function not include in main crate!");
+                                    continue;
+                                }
+                            }
+
+                            // 如果当前调用的是Condvar::notify, 则将当前BB的结束节点连接到Condvar的节点
+                            if callee_func_name.contains("Condvar::notify") {
                                 let condvar_local =
                                     args.get(0).unwrap().node.place().unwrap().local;
                                 let condvar_id = CondVarId::new(self.instance_id, condvar_local);
@@ -367,7 +472,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                         _ => continue,
                                     }
                                 }
-                            } else if caller_func_name.contains("Condvar::wait") {
+                            } else if callee_func_name.contains("Condvar::wait") {
                                 let bb_wait_name =
                                     format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
 
@@ -450,66 +555,6 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                     .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1usize });
                                 self.net
                                     .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
-
-                                if args.len() > 0 {
-                                    let args_ty = args.get(0).unwrap().node.ty(self.body, self.tcx);
-                                    let _: Option<DefId> = match args_ty.kind() {
-                                        rustc_middle::ty::TyKind::Closure(def_id, _) => {
-                                            if let Some((callee_start, _)) =
-                                                self.function_counter.get(&def_id)
-                                            {
-                                                self.net.add_edge(
-                                                    bb_end,
-                                                    *callee_start,
-                                                    PetriNetEdge { label: 1usize },
-                                                );
-                                            }
-                                            if let Some(spawn_thread_id) =
-                                                find_key_by_id(&self.thread_id_handler, handle_id)
-                                            {
-                                                if let Some((_, id_vec)) = self
-                                                    .thread_id_handler
-                                                    .get_key_value(&spawn_thread_id)
-                                                {
-                                                    for id in id_vec.iter() {
-                                                        self.handler_id
-                                                            .insert(id.clone(), def_id.clone());
-                                                    }
-                                                }
-                                            };
-                                            Some(*def_id)
-                                        }
-                                        rustc_middle::ty::TyKind::Adt(adt_def, _) => {
-                                            let path = self.tcx.def_path_str(adt_def.did());
-                                            if path.contains("JoinHandle") {
-                                                let move_handle_id = JoinHanderId::new(
-                                                    self.instance_id,
-                                                    args.get(0)
-                                                        .unwrap()
-                                                        .node
-                                                        .place()
-                                                        .unwrap()
-                                                        .local,
-                                                );
-                                                if let Some(join_id) =
-                                                    self.handler_id.get(&move_handle_id)
-                                                {
-                                                    if let Some((_, callee_end)) =
-                                                        self.function_counter.get(join_id)
-                                                    {
-                                                        self.net.add_edge(
-                                                            *callee_end,
-                                                            bb_ret,
-                                                            PetriNetEdge { label: 1usize },
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                            None
-                                        }
-                                        _ => None,
-                                    };
-                                }
 
                                 if let Some((
                                     callee_start,

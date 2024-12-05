@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use rustc_hash::FxHashMap;
 use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
 use rustc_middle::mir::{Body, Local, Location, TerminatorKind};
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt};
+use rustc_middle::ty::{self, Instance, TyCtxt};
 use rustc_span::Span;
 
 use crate::graph::callgraph::InstanceId;
@@ -220,7 +220,6 @@ pub struct LockGuardCollector<'a, 'b, 'tcx> {
     instance: &'a Instance<'tcx>,
     body: &'b Body<'tcx>,
     tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
     pub lockguards: LockGuardMap<'tcx>,
 }
 
@@ -230,14 +229,12 @@ impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
         instance: &'a Instance<'tcx>,
         body: &'b Body<'tcx>,
         tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
     ) -> Self {
         Self {
             instance_id,
             instance,
             body,
             tcx,
-            param_env,
             lockguards: Default::default(),
         }
     }

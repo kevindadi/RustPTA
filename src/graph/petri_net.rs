@@ -1,11 +1,7 @@
-use crate::graph::state_graph::normalize_state;
-use crate::graph::state_graph::StateEdge;
-use crate::graph::state_graph::StateNode;
 use crate::utils::format_name;
 use crate::Options;
 use log::debug;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
 use petgraph::Graph;
@@ -23,13 +19,9 @@ use std::sync::{Arc, RwLock};
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::function_pn::BodyToPetriNet;
-use super::state_graph::StateGraph;
 use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::candvar::CondVarInfo;
-use crate::concurrency::handler::JoinHanderId;
-use crate::concurrency::handler::JoinHandlerCollector;
-use crate::concurrency::handler::JoinHandlerMap;
 use crate::{
     analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
     concurrency::locks::{
@@ -136,16 +128,6 @@ impl std::fmt::Display for PetriNetEdge {
     }
 }
 
-fn insert_with_comparison<T: Eq + Hash>(set: &mut HashSet<T>, value: T) -> bool {
-    for existing_value in set.iter() {
-        if existing_value == &value {
-            return false;
-        }
-    }
-    set.insert(value);
-    return true;
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Marking {
     marks: HashMap<NodeIndex, usize>, // NodeIndex represents the place, usize represents token count
@@ -163,7 +145,6 @@ impl Hash for Marking {
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'pn CallGraph<'tcx>,
     alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
@@ -171,9 +152,6 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
-    // thread id and handler
-    thread_id_handler: HashMap<usize, Vec<JoinHanderId>>,
-    handler_id: HashMap<JoinHanderId, DefId>,
     // all condvars
     condvars: HashMap<CondVarId, NodeIndex>,
     pub entry_node: NodeIndex,
@@ -183,14 +161,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn new(
         options: &'compilation Options,
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
         callgraph: &'pn CallGraph<'tcx>,
     ) -> Self {
         let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
         Self {
             options,
             tcx,
-            param_env,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
             callgraph,
             alias,
@@ -198,18 +174,22 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             function_vec: HashMap::<DefId, Vec<NodeIndex>>::new(),
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
-            thread_id_handler: HashMap::<usize, Vec<JoinHanderId>>::new(),
-            handler_id: HashMap::<JoinHanderId, DefId>::new(),
             condvars: HashMap::<CondVarId, NodeIndex>::new(),
             entry_node: NodeIndex::new(0),
         }
     }
 
     pub fn construct(&mut self /*alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>*/) {
+        log::info!("construct petri net");
         self.construct_func();
+        log::info!("construct function");
         self.construct_lock_with_dfs();
-        self.collect_handle();
+        log::info!("construct lock");
         self.collect_condvar();
+        log::info!("collect condvar");
+        log::info!("visitor function body");
+        // 设置一个id,记录已经转换的函数
+        let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
                 && format_name(caller.instance().def_id()).starts_with(&self.options.crate_name)
@@ -218,10 +198,16 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     "visitor function body: {:?}",
                     format_name(caller.instance().def_id())
                 );
+                if visited_func_id.contains(&caller.instance().def_id()) {
+                    continue;
+                }
                 self.visitor_function_body(node, caller);
+                visited_func_id.insert(caller.instance().def_id());
             }
         }
+
         self.reduce_state();
+        log::info!("reduce state");
         //self.reduce_state_from(self.entry_node);
     }
 
@@ -246,13 +232,14 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             self.tcx,
             &self.options,
             // self.param_env,
+            &self.callgraph,
             &mut self.net,
-            &self.alias,
+            &mut self.alias,
             lock_infos,
             &self.function_counter,
             &self.locks_counter,
-            &mut self.thread_id_handler,
-            &mut self.handler_id,
+            // &mut self.thread_id_handler,
+            // &mut self.handler_id,
             &self.condvars,
         );
         func_body.translate();
@@ -262,34 +249,36 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn construct_func(&mut self) {
         if let Some((main_func, _)) = self.tcx.entry_fn(()) {
             for node_idx in self.callgraph.graph.node_indices() {
-                // println!("{:?}", self.callgraph.graph.node_weight(node_idx).unwrap());
                 let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
                 let func_id = func_instance.instance().def_id();
                 let func_name = format_name(func_id);
-                if !func_name.contains(&self.options.crate_name) {
+                if !func_name.starts_with(&self.options.crate_name) {
                     continue;
                 }
-                if func_id == main_func {
+
+                // 检查是否已经存在
+                if self.function_counter.contains_key(&func_id) {
+                    continue;
+                }
+
+                let (func_start_node_id, func_end_node_id) = if func_id == main_func {
                     let func_start = Place::new(format!("{}_start", func_name), 1);
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
                     let func_end = Place::new_with_no_token(format!("{}_end", func_name));
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-
-                    self.function_counter
-                        .insert(func_id, (func_start_node_id, func_end_node_id));
-                    // self.function_vec.push(func_start_node_id);
-                    self.function_vec.insert(func_id, vec![func_start_node_id]);
                     self.entry_node = func_start_node_id;
+                    (func_start_node_id, func_end_node_id)
                 } else {
                     let func_start = Place::new_with_no_token(format!("{}_start", func_name));
                     let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
                     let func_end = Place::new_with_no_token(format!("{}_end", func_name));
                     let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                    // println!("function id: {:?}", func_id);
-                    self.function_counter
-                        .insert(func_id, (func_start_node_id, func_end_node_id));
-                    self.function_vec.insert(func_id, vec![func_start_node_id]);
-                }
+                    (func_start_node_id, func_end_node_id)
+                };
+
+                self.function_counter
+                    .insert(func_id, (func_start_node_id, func_end_node_id));
+                self.function_vec.insert(func_id, vec![func_start_node_id]);
             }
         } else {
             log::debug!("cargo pta need a entry point!");
@@ -517,7 +506,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
             }
 
-            let chain_len = chain.len();
             // 调整链，确保起始和结束都是Place
             if !chain.is_empty() {
                 if let PetriNetNode::T(_) = &self.net[chain[0]] {
@@ -527,7 +515,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             if !chain.is_empty() {
                 if let PetriNetNode::T(_) = &self.net[chain[chain.len() - 1]] {
                     chain.pop();
-                    assert_eq!(chain.len(), chain_len - 1);
+                    // assert_eq!(chain.len(), chain_len - 1);
                 }
             }
             // 检查调整后的链长度是否满足简化条件
@@ -721,7 +709,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
             let body = self.tcx.instance_mir(instance.def);
             let mut lockguard_collector =
-                LockGuardCollector::new(instance_id, instance, body, self.tcx, self.param_env);
+                LockGuardCollector::new(instance_id, instance, body, self.tcx);
             lockguard_collector.analyze();
             if !lockguard_collector.lockguards.is_empty() {
                 lockguards.insert(instance_id, lockguard_collector.lockguards);
@@ -730,84 +718,85 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         lockguards
     }
 
-    fn collect_handle(
-        &mut self,
-        //alias_analysis: &RefCell<AliasAnalysis>,
-    ) -> HashMap<InstanceId, JoinHandlerMap<'tcx>> {
-        let mut handlers = HashMap::default();
-        for (instance_id, node) in self.callgraph.graph.node_references() {
-            let instance = match node {
-                CallGraphNode::WithBody(instance) => instance,
-                _ => continue,
-            };
+    /// JoinHandle 一般在Body内部调用,在CallGraph中保留
+    // fn collect_handle(
+    //     &mut self,
+    //     //alias_analysis: &RefCell<AliasAnalysis>,
+    // ) -> HashMap<InstanceId, JoinHandlerMap<'tcx>> {
+    //     let mut handlers = HashMap::default();
+    //     for (instance_id, node) in self.callgraph.graph.node_references() {
+    //         let instance = match node {
+    //             CallGraphNode::WithBody(instance) => instance,
+    //             _ => continue,
+    //         };
 
-            if !instance.def_id().is_local() {
-                continue;
-            }
+    //         if !instance.def_id().is_local() {
+    //             continue;
+    //         }
 
-            let body = self.tcx.instance_mir(instance.def);
-            let mut handle_collector =
-                JoinHandlerCollector::new(instance_id, instance, body, self.tcx, self.param_env);
-            handle_collector.analyze();
-            if !handle_collector.handlers.is_empty() {
-                handlers.insert(instance_id, handle_collector.handlers);
-            }
-        }
-        let mut info = FxHashMap::default();
+    //         let body = self.tcx.instance_mir(instance.def);
+    //         let mut handle_collector =
+    //             JoinHandlerCollector::new(instance_id, instance, body, self.tcx);
+    //         handle_collector.analyze();
+    //         if !handle_collector.handlers.is_empty() {
+    //             handlers.insert(instance_id, handle_collector.handlers);
+    //         }
+    //     }
+    //     let mut info = FxHashMap::default();
 
-        for (_, map) in handlers.clone().into_iter() {
-            info.extend(map.clone().into_iter());
-        }
+    //     for (_, map) in handlers.clone().into_iter() {
+    //         info.extend(map.clone().into_iter());
+    //     }
 
-        let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
-        let lockid_vec: Vec<JoinHanderId> = info.clone().into_keys().collect::<Vec<JoinHanderId>>();
-        debug!("{:?}", lockid_vec);
-        for i in 0..lockid_vec.len() {
-            for j in i + 1..lockid_vec.len() {
-                match self
-                    .alias
-                    .borrow_mut()
-                    .alias_handle(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
-                {
-                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                        adj_list.entry(i).or_insert_with(Vec::new).push(j);
-                        adj_list.entry(j).or_insert_with(Vec::new).push(i);
-                    }
-                    ApproximateAliasKind::Unlikely => todo!(),
-                    ApproximateAliasKind::Unknown => todo!(),
-                }
-            }
-        }
-        debug!("{:?}", adj_list);
-        let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
-        let mut group_id = 0;
-        // let mut groups: HashMap<usize, Vec<JoinHanderId>> = HashMap::new();
+    //     let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
+    //     let lockid_vec: Vec<JoinHanderId> = info.clone().into_keys().collect::<Vec<JoinHanderId>>();
+    //     debug!("{:?}", lockid_vec);
+    //     for i in 0..lockid_vec.len() {
+    //         for j in i + 1..lockid_vec.len() {
+    //             match self
+    //                 .alias
+    //                 .borrow_mut()
+    //                 .alias_handle(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
+    //             {
+    //                 ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+    //                     adj_list.entry(i).or_insert_with(Vec::new).push(j);
+    //                     adj_list.entry(j).or_insert_with(Vec::new).push(i);
+    //                 }
+    //                 ApproximateAliasKind::Unlikely => {}
+    //                 ApproximateAliasKind::Unknown => {}
+    //             }
+    //         }
+    //     }
+    //     debug!("{:?}", adj_list);
+    //     let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
+    //     let mut group_id = 0;
+    //     // let mut groups: HashMap<usize, Vec<JoinHanderId>> = HashMap::new();
 
-        for i in 0..lockid_vec.len() {
-            if !visited[i] {
-                let mut stack: VecDeque<usize> = VecDeque::new();
-                stack.push_back(i);
-                visited[i] = true;
-                while let Some(node) = stack.pop_front() {
-                    self.thread_id_handler
-                        .entry(group_id)
-                        .or_insert_with(Vec::new)
-                        .push(lockid_vec[node].clone());
-                    if let Some(neighbors) = adj_list.get(&node) {
-                        for &neighbor in neighbors {
-                            if !visited[neighbor] {
-                                stack.push_back(neighbor);
-                                visited[neighbor] = true;
-                            }
-                        }
-                    }
-                }
-                group_id += 1;
-            }
-        }
+    //     for i in 0..lockid_vec.len() {
+    //         if !visited[i] {
+    //             let mut stack: VecDeque<usize> = VecDeque::new();
+    //             stack.push_back(i);
+    //             visited[i] = true;
+    //             while let Some(node) = stack.pop_front() {
+    //                 self.thread_id_handler
+    //                     .entry(group_id)
+    //                     .or_insert_with(Vec::new)
+    //                     .push(lockid_vec[node].clone());
+    //                 if let Some(neighbors) = adj_list.get(&node) {
+    //                     for &neighbor in neighbors {
+    //                         if !visited[neighbor] {
+    //                             stack.push_back(neighbor);
+    //                             visited[neighbor] = true;
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //             group_id += 1;
+    //         }
+    //     }
 
-        handlers
-    }
+    //     handlers
+    // }
 
     fn collect_condvar(&mut self) {
         let mut condvars: FxHashMap<NodeIndex, HashMap<CondVarId, CondVarInfo>> =
@@ -926,7 +915,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &|_, nr| {
                 let label = match &nr.1 {
                     PetriNetNode::P(place) => {
-                        format!("label = \"{}\", shape = circle", place.name)
+                        let tokens = *place.tokens.read().unwrap();
+                        format!(
+                            "label = \"{}\\n(tokens: {})\", shape = circle",
+                            place.name, tokens
+                        )
                     }
                     PetriNetNode::T(transition) => {
                         format!("label = \"{}\", shape = box", transition.name)
