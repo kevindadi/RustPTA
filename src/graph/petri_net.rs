@@ -7,7 +7,6 @@ use petgraph::Direction;
 use petgraph::Graph;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::ParamEnv;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;

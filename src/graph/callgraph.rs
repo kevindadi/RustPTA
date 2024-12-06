@@ -22,7 +22,7 @@ use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
     Body, Local, LocalDecl, LocalKind, Location, Operand, Terminator, TerminatorKind,
 };
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind, TypingEnv};
+use rustc_middle::ty::{self, Instance, TyCtxt, TyKind, TypingEnv};
 
 /// The NodeIndex in CallGraph, denoting a unique instance in CallGraph.
 pub type InstanceId = NodeIndex;
@@ -182,12 +182,7 @@ impl<'tcx> CallGraph<'tcx> {
 
     /// Perform callgraph analysis on the given instances.
     /// The instances should be **all** the instances with MIR available in the current crate.
-    pub fn analyze(
-        &mut self,
-        instances: Vec<Instance<'tcx>>,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-    ) {
+    pub fn analyze(&mut self, instances: Vec<Instance<'tcx>>, tcx: TyCtxt<'tcx>) {
         let idx_insts = instances
             .into_iter()
             .map(|inst| {
@@ -201,7 +196,7 @@ impl<'tcx> CallGraph<'tcx> {
             if body.source.promoted.is_some() {
                 continue;
             }
-            let mut collector = CallSiteCollector::new(caller, body, tcx, param_env);
+            let mut collector = CallSiteCollector::new(caller, body, tcx);
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
                 let callee_idx = if let Some(callee_idx) = self.instance_to_index(&callee) {
@@ -263,22 +258,15 @@ struct CallSiteCollector<'a, 'tcx> {
     caller: Instance<'tcx>,
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
     callsites: Vec<(Instance<'tcx>, CallSiteLocation)>,
 }
 
 impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
-    fn new(
-        caller: Instance<'tcx>,
-        body: &'a Body<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-    ) -> Self {
+    fn new(caller: Instance<'tcx>, body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self {
             caller,
             body,
             tcx,
-            param_env,
             callsites: Vec::new(),
         }
     }

@@ -17,12 +17,13 @@ use petgraph::Graph;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::Body,
-    ty::{Instance, ParamEnv, TyCtxt, TypingEnv},
+    ty::{Instance, TyCtxt},
 };
 use rustc_middle::{
     mir::{visit::Visitor, BasicBlock, Operand, TerminatorKind},
     ty,
 };
+use rustc_span::source_map::Spanned;
 use std::{cell::RefCell, collections::HashMap};
 
 /// 基于函数的控制流图(CFG)构建Petri网
@@ -91,7 +92,36 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         self.visit_body(self.body);
     }
 
-    fn deal_thread_join(&mut self, bb_idx: BasicBlock, bb_end: NodeIndex) {}
+    // 处理调用thread::spawn的函数
+    fn deal_thread_join(
+        &mut self,
+        args: &Box<[Spanned<Operand<'tcx>>]>,
+        target: Option<BasicBlock>,
+        bb_end: NodeIndex,
+    ) {
+        if let Some(closure_arg) = args.first() {
+            if let Operand::Move(place) | Operand::Copy(place) = closure_arg.node {
+                let place_ty = place.ty(self.body, self.tcx).ty;
+                if let ty::Closure(closure_def_id, _) = place_ty.kind() {
+                    self.net.add_edge(
+                        bb_end,
+                        self.function_counter.get(&closure_def_id).unwrap().0,
+                        PetriNetEdge { label: 1usize },
+                    );
+                }
+                match target {
+                    Some(t) => {
+                        self.net.add_edge(
+                            bb_end,
+                            *self.bb_node_start_end.get(&t).unwrap(),
+                            PetriNetEdge { label: 1usize },
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -104,7 +134,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
             if bb.is_cleanup {
                 continue;
             }
-            let mut bb_span = String::new();
+            let mut bb_span = String::default();
             if let Some(ref term) = bb.terminator {
                 bb_span = format!("{:?}", term.source_info.span);
             } else {
@@ -415,31 +445,12 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                 continue;
                             }
 
-                            // 如果被调用的函数不属于当前crate,则忽略,直接链接到下一个Block
-                            match callee_func_name.starts_with(&self.options.crate_name) {
-                                true => {}
-                                false => {
-                                    match (target, unwind) {
-                                        (Some(return_block), _) => {
-                                            self.net.add_edge(
-                                                bb_end,
-                                                *self.bb_node_start_end.get(return_block).unwrap(),
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                        }
-                                        _ => {}
-                                    }
-                                    log::debug!("ignore function not include in main crate!");
-                                    continue;
-                                }
-                            }
-
                             // 如果当前调用的是Condvar::notify, 则将当前BB的结束节点连接到Condvar的节点
                             if callee_func_name.contains("Condvar::notify") {
                                 let condvar_local =
                                     args.get(0).unwrap().node.place().unwrap().local;
                                 let condvar_id = CondVarId::new(self.instance_id, condvar_local);
-                                println!("condvar nofity: {:?}", condvar_id);
+                                log::info!("condvar nofity: {:?}", condvar_id);
                                 for condvar_e in self.condvar_id.into_iter() {
                                     match self
                                         .alias
@@ -472,6 +483,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                         _ => continue,
                                     }
                                 }
+                                continue;
                             } else if callee_func_name.contains("Condvar::wait") {
                                 let bb_wait_name =
                                     format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
@@ -540,60 +552,79 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                     }
                                     _ => {}
                                 }
+                                continue;
+                            }
+
+                            // 如果被调用的函数不属于当前crate,则忽略,直接链接到下一个Block
+                            match callee_func_name.starts_with(&self.options.crate_name) {
+                                true => {}
+                                false => {
+                                    match (target, unwind) {
+                                        (Some(return_block), _) => {
+                                            self.net.add_edge(
+                                                bb_end,
+                                                *self.bb_node_start_end.get(return_block).unwrap(),
+                                                PetriNetEdge { label: 1usize },
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                    log::debug!("ignore function not include in main crate!");
+                                    continue;
+                                }
+                            }
+
+                            let bb_wait_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
+                            let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
+                            let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
+
+                            let bb_ret_name =
+                                format!("{}_{}_{}", fn_name, bb_idx.index(), "return");
+                            let bb_ret_transition = Transition::new(bb_ret_name, (0, 0), 1);
+                            let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
+
+                            self.net
+                                .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1usize });
+                            self.net
+                                .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
+
+                            if let Some((
+                                callee_start,
+                                callee_end,
+                                // callee_panic,
+                                // callee_unwind,
+                            )) = self.function_counter.get(&callee_id)
+                            {
+                                self.net.add_edge(
+                                    bb_end,
+                                    *callee_start,
+                                    PetriNetEdge { label: 1usize },
+                                );
+                                match (target, unwind) {
+                                    (Some(return_block), _) => {
+                                        self.net.add_edge(
+                                            *callee_end,
+                                            bb_ret,
+                                            PetriNetEdge { label: 1usize },
+                                        );
+                                        self.net.add_edge(
+                                            bb_ret,
+                                            *self.bb_node_start_end.get(return_block).unwrap(),
+                                            PetriNetEdge { label: 1usize },
+                                        );
+                                    }
+                                    _ => {}
+                                }
                             } else {
-                                let bb_wait_name =
-                                    format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
-                                let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
-                                let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
-
-                                let bb_ret_name =
-                                    format!("{}_{}_{}", fn_name, bb_idx.index(), "return");
-                                let bb_ret_transition = Transition::new(bb_ret_name, (0, 0), 1);
-                                let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
-
-                                self.net
-                                    .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1usize });
-                                self.net
-                                    .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
-
-                                if let Some((
-                                    callee_start,
-                                    callee_end,
-                                    // callee_panic,
-                                    // callee_unwind,
-                                )) = self.function_counter.get(&callee_id)
-                                {
-                                    self.net.add_edge(
-                                        bb_end,
-                                        *callee_start,
-                                        PetriNetEdge { label: 1usize },
-                                    );
-                                    match (target, unwind) {
-                                        (Some(return_block), _) => {
-                                            self.net.add_edge(
-                                                *callee_end,
-                                                bb_ret,
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                            self.net.add_edge(
-                                                bb_ret,
-                                                *self.bb_node_start_end.get(return_block).unwrap(),
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                        }
-                                        _ => {}
+                                match (target, unwind) {
+                                    (Some(return_block), _) => {
+                                        self.net.add_edge(
+                                            bb_ret,
+                                            *self.bb_node_start_end.get(return_block).unwrap(),
+                                            PetriNetEdge { label: 1usize },
+                                        );
                                     }
-                                } else {
-                                    match (target, unwind) {
-                                        (Some(return_block), _) => {
-                                            self.net.add_edge(
-                                                bb_ret,
-                                                *self.bb_node_start_end.get(return_block).unwrap(),
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                        }
-                                        _ => {}
-                                    }
+                                    _ => {}
                                 }
                             }
                         }

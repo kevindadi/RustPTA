@@ -13,7 +13,7 @@ use log::debug;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
-use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
+use rustc_middle::ty::{Instance, TyCtxt};
 use std::fmt::{Debug, Formatter, Result};
 
 pub struct PTACallbacks {
@@ -121,8 +121,8 @@ impl PTACallbacks {
             })
             .collect();
         let mut callgraph = CallGraph::new();
-        let param_env = ParamEnv::empty();
-        callgraph.analyze(instances.clone(), tcx, param_env);
+        // let param_env = ParamEnv::empty();
+        callgraph.analyze(instances.clone(), tcx);
         log::info!("callgraph:\n{}", callgraph.format_spawn_calls());
 
         let mut pn = PetriNet::new(&self.options, tcx, &callgraph);

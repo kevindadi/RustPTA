@@ -129,7 +129,6 @@ impl StateGraph {
             // let new_states: Vec<_> = enabled_transitions
             //     .into_par_iter()
             //     .map(|transition| {
-            //         // 为每个线程创建独立的网络副本
             //         let mut net_clone = current_net.clone();
             //         let (new_net, new_mark) =
             //             self.fire_transition(&mut net_clone, &current_mark, transition);
@@ -137,7 +136,7 @@ impl StateGraph {
             //     })
             //     .collect();
 
-            // 在 generate_states 方法中替换 rayon 并行处理部分
+            // 使用 std::thread 替换 rayon
             let new_states: Vec<_> = {
                 let mut handles = vec![];
 
@@ -156,7 +155,6 @@ impl StateGraph {
                     handles.push(handle);
                 }
 
-                // 收集所有线程的结果
                 handles
                     .into_iter()
                     .map(|handle| handle.join().unwrap())
