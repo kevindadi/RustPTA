@@ -156,25 +156,25 @@ impl Foo {
     }
 }
 
-fn main() {
+pub fn main() {
     let foo1 = Foo::new();
     // // deadlock 1
     foo1.sync_mutex_1();
     foo1.sync_mutex_2();
     foo1.sync_rwlock_read_1();
     foo1.sync_rwlock_write_1();
-    // foo1.parking_lot_mutex_1();
-    // foo1.parking_lot_mutex_2();
+    foo1.parking_lot_mutex_1();
+    foo1.parking_lot_mutex_2();
 
-    // foo1.parking_lot_rwlock_read_1();
-    // foo1.parking_lot_rwlock_read_2();
-    // foo1.parking_lot_rwlock_write_1();
-    // foo1.parking_lot_rwlock_write_2();
-    // foo1.spin_mutex_1();
-    // foo1.spin_mutex_2();
-    // foo1.recur();
-    // foo1.spin_rwlock_read_1();
-    // foo1.spin_rwlock_read_2();
-    // foo1.spin_rwlock_write_1();
-    // foo1.spin_rwlock_write_2();
+    foo1.parking_lot_rwlock_read_1();
+    foo1.parking_lot_rwlock_read_2();
+    foo1.parking_lot_rwlock_write_1();
+    foo1.parking_lot_rwlock_write_2();
+    foo1.spin_mutex_1();
+    foo1.spin_mutex_2();
+    foo1.recur();
+    foo1.spin_rwlock_read_1();
+    foo1.spin_rwlock_read_2();
+    foo1.spin_rwlock_write_1();
+    foo1.spin_rwlock_write_2();
 }

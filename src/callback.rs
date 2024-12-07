@@ -3,18 +3,17 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use crate::graph::callgraph::CallGraph;
 use crate::graph::petri_net::PetriNet;
+use crate::graph::state_graph::StateGraph;
 use crate::options::Options;
 use log::debug;
 use rustc_driver::Compilation;
-use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
-use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
+use rustc_middle::ty::{Instance, TyCtxt};
 use std::fmt::{Debug, Formatter, Result};
 
 pub struct PTACallbacks {
@@ -52,8 +51,8 @@ impl rustc_driver::Callbacks for PTACallbacks {
         self.file_name = config
             .input
             .source_name()
-            .prefer_remapped() // nightly-2023-09-13
-            //.prefer_remapped_unconditionaly()
+            //.prefer_remapped() // nightly-2023-09-13
+            .prefer_remapped_unconditionaly()
             .to_string();
 
         debug!("Processing input file: {}", self.file_name);
@@ -61,7 +60,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
             debug!("in test only mode");
             // self.options.test_only = true;
         }
-        config.crate_cfg.insert(("pta".to_string(), None));
+        //config.crate_cfg.insert("pta".to_string(), None);
         match &config.output_dir {
             None => {
                 self.output_directory = std::env::temp_dir();
@@ -70,12 +69,13 @@ impl rustc_driver::Callbacks for PTACallbacks {
             Some(path_buf) => self.output_directory.push(path_buf.as_path()),
         }
     }
+
     fn after_analysis<'tcx>(
         &mut self,
         compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
-        compiler.session().abort_if_errors();
+        compiler.sess.dcx().abort_if_errors();
         if self
             .output_directory
             .to_str()
@@ -85,9 +85,12 @@ impl rustc_driver::Callbacks for PTACallbacks {
             // No need to analyze a build script, but do generate code.
             return Compilation::Continue;
         }
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            self.analyze_with_pta(compiler, tcx);
-        });
+        // queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
+        //     self.analyze_with_lockbud(compiler, tcx);
+        // });
+
+        self.analyze_with_pta(compiler, tcx);
+
         if self.test_run {
             // We avoid code gen for test cases because LLVM is not used in a thread safe manner.
             Compilation::Stop
@@ -100,10 +103,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
 
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
-        // Skip crates by names (white or black list).
-        // let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-        let crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
-
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
@@ -122,43 +121,17 @@ impl PTACallbacks {
             })
             .collect();
         let mut callgraph = CallGraph::new();
-        let param_env = ParamEnv::reveal_all();
-        callgraph.analyze(instances.clone(), tcx, param_env);
+        // let param_env = ParamEnv::empty();
+        callgraph.analyze(instances.clone(), tcx);
+        log::info!("callgraph:\n{}", callgraph.format_spawn_calls());
 
-        let callgraph_output = callgraph.dot();
-        let callgraph_path = "callgraph.dot";
-        let mut callgraph_file = std::fs::File::create(callgraph_path).unwrap();
-        callgraph_file
-            .write_all(callgraph_output.as_bytes())
-            .expect("Unable to write callgraph!");
-
-        log::debug!("analysi crate is {:?}", self.options.crate_name);
-        if !crate_name.eq(&self.options.crate_name) {
-            log::debug!("No conversion is required for this crate {:?}!", crate_name);
-            return;
-        }
-
-        // 输出锁的指向关系
-        match self.options.lock_pts {
-            Some(_) => {
-                use crate::analysis::pointsto::AliasAnalysis;
-                use crate::graph::pts_graph::PtsGraph;
-                log::info!("generate lockguard points map!");
-                let mut alias = AliasAnalysis::new(tcx, &callgraph);
-                let mut lock_pts_graph = PtsGraph::new(tcx, param_env);
-                lock_pts_graph.output_pts(&callgraph, &mut alias, param_env);
-                return;
-            }
-            None => {}
-        }
-
-        log::debug!("convert {} to Petri Net!", crate_name);
-        let mut pn = PetriNet::new(&self.options, tcx, param_env, &callgraph);
+        let mut pn = PetriNet::new(&self.options, tcx, &callgraph);
         pn.construct();
-
         pn.save_petri_net_to_file();
-        let _ = pn.generate_state_graph();
-        let result = pn.check_deadlock();
-        println!("deadlock state: {}", result);
+
+        let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+        state_graph.generate_states();
+        let result = state_graph.check_deadlock();
+        log::info!("deadlock state: {}", result);
     }
 }

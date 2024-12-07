@@ -5,7 +5,7 @@ use clap::error::ErrorKind;
 
 use clap::{Arg, Command};
 use itertools::Itertools;
-use rustc_session::EarlyErrorHandler;
+use rustc_session::EarlyDiagCtxt;
 
 #[derive(Debug)]
 pub enum CrateNameList {
@@ -54,9 +54,6 @@ fn make_options_parser() -> clap::Command {
         )
         .arg(
             Arg::new("main_crate").short('c').long("main_crate"), // 默认要建模的crate
-        )
-        .arg(
-            Arg::new("lock_pts").short('p').long("lock_pts"), // test lock points map
         );
     parser
 }
@@ -66,7 +63,6 @@ pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: Option<String>,
     pub crate_name: String,
-    pub lock_pts: Option<String>,
 }
 
 impl Default for Options {
@@ -75,15 +71,14 @@ impl Default for Options {
             detector_kind: DetectorKind::Deadlock,
             output: Option::default(),
             crate_name: String::new(),
-            lock_pts: Option::default(),
         }
     }
 }
 
 impl Options {
-    pub fn parse_from_str(&mut self, s: &str, handler: &EarlyErrorHandler) -> Vec<String> {
+    pub fn parse_from_str(&mut self, s: &str, handler: &EarlyDiagCtxt) -> Vec<String> {
         let args = shellwords::split(s).unwrap_or_else(|e| {
-            handler.early_error(format!("Cannot parse argument string: {e:?}"))
+            handler.early_fatal(format!("Cannot parse argument string: {e:?}"))
         });
         self.parse_from_args(&args)
     }
@@ -136,9 +131,6 @@ impl Options {
 
         if matches.contains_id("main_crate") {
             self.crate_name = matches.get_one::<String>("main_crate").unwrap().clone();
-        }
-        if matches.contains_id("lock_pts") {
-            self.lock_pts = matches.get_one::<String>("lock_pts").cloned();
         }
         args[rustc_args_start..].to_vec()
     }

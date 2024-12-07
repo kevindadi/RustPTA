@@ -1,7 +1,7 @@
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
-use crate::graph::petri_net::{PetriNet, PetriNetNode};
+use super::petri_net::{PetriNet, PetriNetNode};
 
 pub trait OutputType {
     fn lola(&self) -> String;
@@ -19,12 +19,9 @@ impl<'compilation, 'tcx, 'a> OutputType for PetriNet<'compilation, 'tcx, 'a> {
             match &self.net[index] {
                 PetriNetNode::P(place) => {
                     places.push(place.name.clone());
-                    if *place.tokens.borrow() > 0 {
-                        markings.push(format!(
-                            "{}: {}",
-                            place.name,
-                            place.tokens.borrow().to_owned()
-                        ));
+                    let tokens = place.tokens.read().unwrap();
+                    if *tokens > 0 {
+                        markings.push(format!("{}: {}", place.name, *tokens));
                     }
                 }
                 PetriNetNode::T(transition) => {

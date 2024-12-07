@@ -29,6 +29,7 @@ use petgraph::{Directed, Direction, Graph};
 
 use crate::concurrency::atomic::is_atomic_ptr_store;
 use crate::concurrency::candvar::CondVarId;
+use crate::concurrency::handler::JoinHanderId;
 use crate::concurrency::locks::LockGuardId;
 use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::memory::ownership;
@@ -49,7 +50,6 @@ pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     pts: PointsToMap<'tcx>,
-    // pub callgraph: CallGraph<'tcx>,
 }
 
 pub type PointsToMap<'tcx> = FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>>;
@@ -610,14 +610,6 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             ..
         } = &terminator.kind
         {
-            // 检查是否是 spawn 调用
-            let func_ty = func.ty(self.body, self.tcx);
-            if let TyKind::FnDef(def_id, _) = func_ty.kind() {
-                // 如果是spawn不执行assign
-                if self.tcx.def_path_str(def_id).contains("::spawn") {
-                    return;
-                }
-            }
             match (
                 args.iter()
                     .map(|x| x.node.clone())
@@ -699,18 +691,21 @@ pub struct AliasId {
     pub local: Local,
 }
 
-impl AliasId {
-    pub fn new(instance_id: InstanceId, local: Local) -> Self {
-        Self { instance_id, local }
-    }
-}
-
 /// Basically, `AliasId` and `LockGuardId` share the same info.
 impl std::convert::From<LockGuardId> for AliasId {
     fn from(lockguard_id: LockGuardId) -> Self {
         Self {
             instance_id: lockguard_id.instance_id,
             local: lockguard_id.local,
+        }
+    }
+}
+
+impl std::convert::From<JoinHanderId> for AliasId {
+    fn from(handler_id: JoinHanderId) -> Self {
+        Self {
+            instance_id: handler_id.instance_id,
+            local: handler_id.local,
         }
     }
 }
@@ -810,26 +805,8 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                     if local1 == local2 {
                         return ApproximateAliasKind::Probably;
                     }
-                    let body = self.tcx.instance_mir(instance1.def);
-                    let mut pointer_analysis = Andersen::new(body, self.tcx);
-                    pointer_analysis.analyze();
-                    let points_to_map = pointer_analysis.finish();
-                    if points_to_map
-                        .get(&node1)
-                        .unwrap()
-                        .intersection(points_to_map.get(&node2).unwrap())
-                        .next()
-                        .is_some()
-                    {
-                        log::info!(
-                            "node1 points map {:?} and node2 points map {:?}",
-                            points_to_map.get(&node1).unwrap(),
-                            points_to_map.get(&node2).unwrap()
-                        );
-                        return ApproximateAliasKind::Probably;
-                    } else {
-                        return ApproximateAliasKind::Unlikely;
-                    }
+                    self.intraproc_alias(instance1, &node1, &node2)
+                        .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
                     ApproximateAliasKind::Unlikely
                 }
@@ -984,12 +961,9 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     /// If not exists, then perform points-to analysis
     /// and add the obtained points-to info to cache.
     pub fn get_or_insert_pts(&mut self, def_id: DefId, body: &Body<'tcx>) -> &PointsToMap<'tcx> {
-        // 1. 首先检查缓存中是否已经有这个函数的 points-to 分析结果
         if self.pts.contains_key(&def_id) {
-            // 如果有，直接返回缓存的结果
             self.pts.get(&def_id).unwrap()
         } else {
-            // 2. 如果没有，执行新的 points-to 分析
             let mut pointer_analysis = Andersen::new(body, self.tcx);
             pointer_analysis.analyze();
             let pts = pointer_analysis.finish();

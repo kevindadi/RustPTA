@@ -7,23 +7,22 @@
 //! We also track where a closure is defined rather than called
 //! to record the defined function and the parameter of the closure,
 //! which is pointed to by upvars.
-use std::collections::HashSet;
 use std::fmt::Debug;
 
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
-use petgraph::visit::{Dfs, Walker};
 use petgraph::Direction::Incoming;
 use petgraph::{Directed, Graph};
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{Body, Local, LocalDecl, LocalKind, Location, Terminator, TerminatorKind};
-use rustc_middle::ty::{self, Instance, ParamEnv, TyCtxt, TyKind};
-
-use crate::concurrency::locks::LockGuardId;
+use rustc_middle::mir::{
+    Body, Local, LocalDecl, LocalKind, Location, Operand, Terminator, TerminatorKind,
+};
+use rustc_middle::ty::{self, Instance, TyCtxt, TyKind, TypingEnv};
 
 /// The NodeIndex in CallGraph, denoting a unique instance in CallGraph.
 pub type InstanceId = NodeIndex;
@@ -37,12 +36,24 @@ pub enum CallSiteLocation {
     Direct(Location),
     ClosureDef(Local),
     // Indirect(Location),
+    Spawn {
+        location: Location,
+        destination: Local, // spawn 返回的 JoinHandle 存储位置
+    },
 }
 
 impl CallSiteLocation {
     pub fn location(&self) -> Option<Location> {
         match self {
             Self::Direct(loc) => Some(*loc),
+            Self::Spawn { location, .. } => Some(*location),
+            _ => None,
+        }
+    }
+
+    pub fn spawn_destination(&self) -> Option<Local> {
+        match self {
+            Self::Spawn { destination, .. } => Some(*destination),
             _ => None,
         }
     }
@@ -56,7 +67,7 @@ pub struct FunctionNode<'tcx> {
 }
 
 impl<'tcx> FunctionNode<'tcx> {
-    pub fn new_node(instance: Instance<'tcx>, def_id: DefId) -> FunctionNode {
+    pub fn new_node(instance: Instance<'tcx>, def_id: DefId) -> FunctionNode<'tcx> {
         FunctionNode {
             instance,
             def_id,
@@ -107,6 +118,9 @@ impl<'tcx> CallGraphNode<'tcx> {
 /// denotes `Instance1` calls `Instance2` at locations `Callsite1` and `CallSite2`.
 pub struct CallGraph<'tcx> {
     pub graph: Graph<CallGraphNode<'tcx>, Vec<CallSiteLocation>, Directed>,
+    // key: 调用spawn的函数的DefId
+    // value: (spawn创建的闭包的InstanceId, spawn返回的JoinHandle存储位置)的集合
+    pub spawn_calls: FxHashMap<DefId, FxHashSet<(DefId, Local)>>,
 }
 
 impl<'tcx> CallGraph<'tcx> {
@@ -114,7 +128,30 @@ impl<'tcx> CallGraph<'tcx> {
     pub fn new() -> Self {
         Self {
             graph: Graph::new(),
+            spawn_calls: FxHashMap::default(),
         }
+    }
+
+    /// 格式化输出 spawn_calls
+    pub fn format_spawn_calls(&self) -> String {
+        let mut output = String::from("Spawn calls in functions:\n");
+
+        for (caller_id, spawn_set) in &self.spawn_calls {
+            // 获取调用者函数的可读名称
+            let caller_name = FunctionNode::format_name(*caller_id);
+            output.push_str(&format!("\nIn function {}:\n", caller_name));
+
+            for (closure_id, destination) in spawn_set {
+                // 获取被spawn的闭包的可读名称
+                let closure_name = FunctionNode::format_name(*closure_id);
+                output.push_str(&format!(
+                    "  - Spawned closure {} (stored in _{})\n",
+                    closure_name,
+                    destination.index()
+                ));
+            }
+        }
+        output
     }
 
     /// Search for the InstanceId of a given instance in CallGraph.
@@ -130,14 +167,22 @@ impl<'tcx> CallGraph<'tcx> {
         self.graph.node_weight(idx)
     }
 
+    /// 记录spawn调用
+    fn record_spawn_call(&mut self, caller: DefId, closure_idx: DefId, destination: Local) {
+        self.spawn_calls
+            .entry(caller)
+            .or_default()
+            .insert((closure_idx, destination));
+    }
+
+    /// 获取指定函数的所有spawn调用
+    pub fn get_spawn_calls(&self, def_id: DefId) -> Option<&FxHashSet<(DefId, Local)>> {
+        self.spawn_calls.get(&def_id)
+    }
+
     /// Perform callgraph analysis on the given instances.
     /// The instances should be **all** the instances with MIR available in the current crate.
-    pub fn analyze(
-        &mut self,
-        instances: Vec<Instance<'tcx>>,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-    ) {
+    pub fn analyze(&mut self, instances: Vec<Instance<'tcx>>, tcx: TyCtxt<'tcx>) {
         let idx_insts = instances
             .into_iter()
             .map(|inst| {
@@ -151,7 +196,7 @@ impl<'tcx> CallGraph<'tcx> {
             if body.source.promoted.is_some() {
                 continue;
             }
-            let mut collector = CallSiteCollector::new(caller, body, tcx, param_env);
+            let mut collector = CallSiteCollector::new(caller, body, tcx);
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
                 let callee_idx = if let Some(callee_idx) = self.instance_to_index(&callee) {
@@ -159,6 +204,11 @@ impl<'tcx> CallGraph<'tcx> {
                 } else {
                     self.graph.add_node(CallGraphNode::WithoutBody(callee))
                 };
+
+                // 记录spawn调用
+                if let CallSiteLocation::Spawn { destination, .. } = location {
+                    self.record_spawn_call(caller.def_id(), callee.def_id(), destination);
+                }
                 if let Some(edge_idx) = self.graph.find_edge(caller_idx, callee_idx) {
                     // Update edge weight.
                     self.graph.edge_weight_mut(edge_idx).unwrap().push(location);
@@ -193,50 +243,6 @@ impl<'tcx> CallGraph<'tcx> {
             .collect::<Vec<_>>()
     }
 
-    /// 根据调用序列删减无关调用
-    /// 如果从 main 出发的某条执行路径上不包含 LockGuardId 中的函数 Id
-    /// 那么此条路径上的函数不需要转换为网
-    /// 找到所有从 start 节点到 target_nodes 集合中任何一个节点的路径
-    /// 并删除不在这些路径上的节点和边
-    pub fn filter_paths(&mut self, start: NodeIndex, target_nodes: Vec<NodeIndex>) {
-        let mut reachable_nodes = HashSet::new();
-        let mut reachable_edges = HashSet::new();
-
-        for &target in &target_nodes {
-            for path in algo::all_simple_paths::<Vec<_>, _>(&self.graph, start, target, 0, None) {
-                reachable_nodes.extend(path.iter().cloned());
-                for edge in path.windows(2) {
-                    if let Some(e) = self.graph.find_edge(edge[0], edge[1]) {
-                        reachable_edges.insert(e);
-                    }
-                }
-            }
-        }
-
-        // 删除不在路径上的节点和边
-        let mut to_remove_nodes = vec![];
-        for node in self.graph.node_indices() {
-            if !reachable_nodes.contains(&node) && node != start {
-                to_remove_nodes.push(node);
-            }
-        }
-
-        for node in to_remove_nodes {
-            self.graph.remove_node(node);
-        }
-
-        let mut to_remove_edges = vec![];
-        for edge in self.graph.edge_indices() {
-            if !reachable_edges.contains(&edge) {
-                to_remove_edges.push(edge);
-            }
-        }
-
-        for edge in to_remove_edges {
-            self.graph.remove_edge(edge);
-        }
-    }
-
     /// Print the callgraph in dot format.
     #[allow(dead_code)]
     pub fn dot(&self) -> String {
@@ -252,22 +258,15 @@ struct CallSiteCollector<'a, 'tcx> {
     caller: Instance<'tcx>,
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
     callsites: Vec<(Instance<'tcx>, CallSiteLocation)>,
 }
 
 impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
-    fn new(
-        caller: Instance<'tcx>,
-        body: &'a Body<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-    ) -> Self {
+    fn new(caller: Instance<'tcx>, body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self {
             caller,
             body,
             tcx,
-            param_env,
             callsites: Vec::new(),
         }
     }
@@ -283,30 +282,59 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
     /// Inspired by rustc_mir/src/transform/inline.rs#get_valid_function_call.
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         if let TerminatorKind::Call {
-            ref func, ref args, ..
+            ref func,
+            ref args,
+            destination,
+            ..
         } = terminator.kind
         {
-            // Only after monomorphizing can Instance::resolve work
-            // let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
-            //     self.tcx,
-            //     self.param_env,
-            //     ty::EarlyBinder::bind(func.ty(&self.body.local_decls, self.tcx)),
-            // );
-            let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
+            let typing_env = TypingEnv::post_analysis(self.tcx, self.caller.def_id());
+            let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
-                self.param_env,
+                typing_env,
                 ty::EarlyBinder::bind(func.ty(self.body, self.tcx)),
             );
+
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
-                // println!("func kind error");
-                if let Some(callee) = Instance::resolve(self.tcx, self.param_env, def_id, substs)
+                let fn_path = self.tcx.def_path_str(def_id);
+                if fn_path.starts_with("std::thread::spawn") {
+                    // 获取第一个参数（闭包）
+                    if let Some(closure_arg) = args.first() {
+                        if let Operand::Move(place) | Operand::Copy(place) = closure_arg.node {
+                            let place_ty = place.ty(self.body, self.tcx).ty;
+                            if let ty::Closure(closure_def_id, _) = place_ty.kind() {
+                                // 使用 Instance::resolve 而不是 mono
+                                if let Some(callee) = Instance::try_resolve(
+                                    self.tcx,
+                                    typing_env,
+                                    *closure_def_id,
+                                    substs,
+                                )
+                                .ok()
+                                .flatten()
+                                {
+                                    self.callsites.push((
+                                        callee,
+                                        CallSiteLocation::Spawn {
+                                            location,
+                                            destination: destination.local,
+                                        },
+                                    ));
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 处理普通函数调用
+                if let Some(callee) = Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                     .ok()
                     .flatten()
                 {
                     self.callsites
                         .push((callee, CallSiteLocation::Direct(location)));
                 }
-                // println!("resolve instance error");
             }
         }
         self.super_terminator(terminator, location);
@@ -325,9 +353,10 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
         //     self.param_env,
         //     ty::EarlyBinder::bind(local_decl.ty),
         // );
-        let func_ty = self.caller.subst_mir_and_normalize_erasing_regions(
+        let typing_env = TypingEnv::post_analysis(self.tcx, self.caller.def_id());
+        let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,
-            self.param_env,
+            typing_env,
             ty::EarlyBinder::bind(local_decl.ty),
         );
         if let TyKind::Closure(def_id, substs) = *func_ty.kind() {
@@ -335,7 +364,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                 LocalKind::Arg | LocalKind::ReturnPointer => {}
                 _ => {
                     if let Some(callee_instance) =
-                        Instance::resolve(self.tcx, self.param_env, def_id, substs)
+                        Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                             .ok()
                             .flatten()
                     {
