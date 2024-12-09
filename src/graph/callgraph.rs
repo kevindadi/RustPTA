@@ -297,31 +297,30 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
 
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
                 let fn_path = self.tcx.def_path_str(def_id);
-                if fn_path.starts_with("std::thread::spawn") {
+                if fn_path.contains("::spawn") {
                     // 获取第一个参数（闭包）
                     if let Some(closure_arg) = args.first() {
-                        if let Operand::Move(place) | Operand::Copy(place) = closure_arg.node {
-                            let place_ty = place.ty(self.body, self.tcx).ty;
-                            if let ty::Closure(closure_def_id, _) = place_ty.kind() {
-                                // 使用 Instance::resolve 而不是 mono
-                                if let Some(callee) = Instance::try_resolve(
-                                    self.tcx,
-                                    typing_env,
-                                    *closure_def_id,
-                                    substs,
-                                )
-                                .ok()
-                                .flatten()
-                                {
-                                    self.callsites.push((
-                                        callee,
-                                        CallSiteLocation::Spawn {
-                                            location,
-                                            destination: destination.local,
-                                        },
-                                    ));
-                                    return;
-                                }
+                        let closure_ty = match closure_arg.node {
+                            Operand::Move(place) | Operand::Copy(place) => {
+                                place.ty(self.body, self.tcx).ty
+                            }
+                            Operand::Constant(ref const_op) => const_op.ty(),
+                        };
+
+                        if let ty::Closure(closure_def_id, _) = closure_ty.kind() {
+                            if let Some(callee) =
+                                Instance::try_resolve(self.tcx, typing_env, *closure_def_id, substs)
+                                    .ok()
+                                    .flatten()
+                            {
+                                self.callsites.push((
+                                    callee,
+                                    CallSiteLocation::Spawn {
+                                        location,
+                                        destination: destination.local,
+                                    },
+                                ));
+                                return;
                             }
                         }
                     }

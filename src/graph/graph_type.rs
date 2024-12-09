@@ -1,7 +1,7 @@
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
-use super::petri_net::{PetriNet, PetriNetNode};
+use super::pn::{PetriNet, PetriNetNode};
 
 pub trait OutputType {
     fn lola(&self) -> String;
@@ -72,3 +72,5 @@ impl<'compilation, 'tcx, 'a> OutputType for PetriNet<'compilation, 'tcx, 'a> {
 
     fn pnml(&self) {}
 }
+
+pub trait StateGraphType {}

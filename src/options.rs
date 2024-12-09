@@ -19,7 +19,7 @@ impl Default for CrateNameList {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum DetectorKind {
     All,
@@ -58,7 +58,7 @@ fn make_options_parser() -> clap::Command {
     parser
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: Option<String>,
