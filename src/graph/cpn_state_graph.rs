@@ -10,110 +10,81 @@ use std::hash::Hasher;
 
 use crate::analysis::pointsto::AliasId;
 
-use super::cpn::{ColorPetriEdge, ColorPetriNode, DataOp, DataOpType};
+use super::cpn::{ColorPetriEdge, ColorPetriNode, DataOpType};
 use super::state_graph::{insert_with_comparison, normalize_state, StateEdge, StateNode};
 
 use std::sync::{Arc, Mutex};
 
 /// 数据竞争信息
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Eq, Serialize)]
 pub struct RaceInfo {
-    pub transitions: Vec<usize>,
-    pub data_ops: RaceDataInfo, // 改回单个数据
-    pub span: Vec<String>,      // 单个数据的span信息
-    pub rw_types: Vec<DataOpType>,
-    pub basic_blocks: HashSet<usize>,
-    pub span_str: Vec<String>,
+    pub transitions: Vec<usize>,   // 关联的Unsafe变迁
+    pub unsafe_data: RaceDataInfo, // 改回单个数据
+    pub span: HashSet<String>,     // 用于匹配的span
+    pub span_str: Vec<String>,     // 输出字符串
 }
 
-impl Eq for RaceInfo {}
 impl RaceInfo {
-    // 辅助函数：从完整的 span 字符串中提取文件和行号
-    fn extract_span_location(span: &str) -> Option<String> {
-        // 匹配形如 "src/main.rs:19:17" 的模式
+    // 辅助函数：提取 span 的关键部分（文件:行:列）
+    fn extract_span_key(span: &str) -> String {
+        // 匹配形如 "src/main.rs:19:17" 的部分
         if let Some(idx) = span.find(": ") {
             let location = &span[..idx];
-            // 只保留到分钟级别的位置信息
-            if let Some(colon_idx) = location.rfind(':') {
-                if let Some(prev_colon_idx) = location[..colon_idx].rfind(':') {
-                    return Some(location[..prev_colon_idx].to_string());
+            if let Some(last_colon) = location.rfind(':') {
+                if let Some(prev_colon) = location[..last_colon].rfind(':') {
+                    return location[..prev_colon].to_string();
                 }
             }
         }
-        None
-    }
-
-    // 获取规范化后的 span 位置集合
-    fn get_span_locations(&self) -> HashSet<String> {
-        let mut locations = HashSet::new();
-        for span in &self.span {
-            if let Some(location) = Self::extract_span_location(span) {
-                locations.insert(location);
-            }
-        }
-        locations
+        span.to_string()
     }
 }
 
 impl PartialEq for RaceInfo {
     fn eq(&self, other: &Self) -> bool {
-        // 比较数据操作和基本块集合
-        if self.data_ops != other.data_ops || self.basic_blocks != other.basic_blocks {
-            return false;
-        }
+        // 提取并比较关键部分
+        let self_spans: HashSet<_> = self
+            .span
+            .iter()
+            .map(|s| RaceInfo::extract_span_key(s))
+            .collect();
+        let other_spans: HashSet<_> = other
+            .span
+            .iter()
+            .map(|s| RaceInfo::extract_span_key(s))
+            .collect();
 
-        // 比较规范化后的 span 位置
-        let self_locations = self.get_span_locations();
-        let other_locations = other.get_span_locations();
-
-        self_locations == other_locations
+        self_spans == other_spans
     }
 }
 
 impl Hash for RaceInfo {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // 只哈希数据操作和基本块集合
-        self.data_ops.hash(state);
-
-        // 哈希基本块集合（需要排序以保证一致性）
-        let mut blocks: Vec<_> = self.basic_blocks.iter().collect();
-        blocks.sort();
-        blocks.hash(state);
-
-        // 哈希规范化后的 span 位置
-        let mut locations: Vec<_> = self.get_span_locations().into_iter().collect();
-        locations.sort();
-        locations.hash(state);
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct RaceDataInfo {
-    pub data_func: String,
-    pub data_local: usize,
-}
-
-impl RaceDataInfo {
-    pub fn new(data_func: String, data_local: usize) -> Self {
-        Self {
-            data_func,
-            data_local,
+        // 只哈希关键部分
+        let mut spans: Vec<_> = self
+            .span
+            .iter()
+            .map(|s| RaceInfo::extract_span_key(s))
+            .collect();
+        spans.sort();
+        for span in spans {
+            span.hash(state);
         }
     }
 }
 
-impl PartialEq for RaceDataInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.data_func == other.data_func && self.data_local == other.data_local
-    }
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct RaceDataInfo {
+    pub data_func: usize,
+    pub data_local: usize,
 }
 
-impl Eq for RaceDataInfo {}
-
-impl Hash for RaceDataInfo {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.data_func.hash(state);
-        self.data_local.hash(state);
+impl RaceDataInfo {
+    pub fn new(data_func: usize, data_local: usize) -> Self {
+        Self {
+            data_func,
+            data_local,
+        }
     }
 }
 
@@ -122,7 +93,7 @@ pub struct CpnStateGraph {
     pub graph: Graph<StateNode, StateEdge>,
     initial_net: Box<Graph<ColorPetriNode, ColorPetriEdge>>,
     initial_mark: HashSet<(NodeIndex, usize)>,
-    pub(crate) race_info: HashSet<RaceInfo>,
+    pub(crate) race_info: Arc<Mutex<HashSet<RaceInfo>>>,
 }
 
 impl CpnStateGraph {
@@ -134,8 +105,12 @@ impl CpnStateGraph {
             graph: Graph::<StateNode, StateEdge>::new(),
             initial_net: Box::new(initial_net),
             initial_mark,
-            race_info: HashSet::new(),
+            race_info: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    pub fn insert_race_info(&mut self, race_info: RaceInfo) {
+        self.race_info.lock().unwrap().insert(race_info);
     }
 
     pub fn generate_states(&mut self) {
@@ -150,12 +125,25 @@ impl CpnStateGraph {
                 .unwrap()
                 .insert(normalize_state(&self.initial_mark));
         }
+        let mut race_handles = vec![];
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
             // 获取当前状态下所有使能的变迁
 
             let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
             let race_infos = self.check_race_condition(&enabled_transitions);
-            self.race_info.extend(race_infos);
+
+            for race_info in race_infos {
+                let race_info_clone = race_info.clone();
+                let race_info_arc = Arc::clone(&self.race_info);
+
+                let handle = std::thread::spawn(move || {
+                    let mut guard = race_info_arc.lock().unwrap();
+                    guard.insert(race_info_clone.clone());
+                });
+
+                race_handles.push(handle);
+            }
+
             // 如果没有使能的变迁，将当前状态添加到死锁标识集合中
             if enabled_transitions.is_empty() {
                 continue;
@@ -213,6 +201,9 @@ impl CpnStateGraph {
                 }
             }
         }
+        for handle in race_handles {
+            handle.join().unwrap();
+        }
     }
 
     #[inline]
@@ -233,7 +224,7 @@ impl CpnStateGraph {
         }
 
         // 直接根据 mark 中的 NodeIndex 设置对应的 token
-        for (node_index, token_count) in mark {
+        for (node_index, _) in mark {
             if let Some(ColorPetriNode::ControlPlace { token_num, .. })
             | Some(ColorPetriNode::TempDataPlace { token_num, .. }) =
                 net.node_weight(*node_index)
@@ -301,8 +292,6 @@ impl CpnStateGraph {
         let mut new_state = HashSet::<(NodeIndex, usize)>::new();
         log::debug!("The transition to fire is: {}", transition.index());
 
-        // 从输入库所中减去token
-        log::debug!("sub token to source node!");
         for edge in new_net.edges_directed(transition, Direction::Incoming) {
             match new_net.node_weight(edge.source()).unwrap() {
                 ColorPetriNode::ControlPlace { token_num, .. }
@@ -315,8 +304,6 @@ impl CpnStateGraph {
             }
         }
 
-        // 将token添加到输出库所中
-        log::debug!("add token to target node!");
         for edge in new_net.edges_directed(transition, Direction::Outgoing) {
             let place_node = new_net.node_weight(edge.target()).unwrap();
             match place_node {
@@ -330,7 +317,6 @@ impl CpnStateGraph {
             }
         }
 
-        log::debug!("generate new state!");
         for node in new_net.node_indices() {
             match &new_net[node] {
                 ColorPetriNode::ControlPlace { token_num, .. }
@@ -342,7 +328,7 @@ impl CpnStateGraph {
                 _ => {}
             }
         }
-
+        log::debug!("Generate new state: {:?}", new_state);
         (Box::new(new_net), new_state) // 返回新图和新状态
     }
 
@@ -350,7 +336,7 @@ impl CpnStateGraph {
     pub fn dot(&self, path: Option<&str>) -> std::io::Result<()> {
         let dot_string = format!(
             "digraph {{\n{:?}\n}}",
-            Dot::with_config(&self.graph, &[Config::GraphContentOnly])
+            Dot::with_config(&self.graph, &[Config::NodeNoLabel])
         );
 
         match path {
@@ -368,14 +354,40 @@ impl CpnStateGraph {
         }
     }
 
+    /// 检查并收集所有可能的数据竞争情况
+    ///
+    /// # Input
+    /// * `enabled_transitions` - 当前状态下所有使能的变迁节点索引
+    ///
+    /// # Output
+    /// 返回一个 HashSet<RaceInfo>，包含所有检测到的不重复的数据竞争信息
+    ///
+    /// # Algorithm
+    /// 1. 首先按照数据操作(AliasId)对所有不安全变迁进行分组
+    /// 2. 对每组数据访问进行分析：
+    ///    - 检查是否存在至少两个操作
+    ///    - 检查是否存在写操作
+    /// 3. 对于满足条件的数据访问，收集相关信息：
+    ///    - 变迁序列
+    ///    - 数据操作信息
+    ///    - 源代码位置(span)
+    ///    - 读写类型
+    ///    - 基本块信息
+    ///
+    /// # 去重策略
+    /// 通过 RaceInfo 的 PartialEq 和 Hash 实现，基于以下条件去重：
+    /// - 相同的数据操作(RaceDataInfo)
+    /// - 相同的基本块集合
+    /// - 相同的源代码位置集合（忽略具体的列号）
     pub fn check_race_condition(&self, enabled_transitions: &[NodeIndex]) -> HashSet<RaceInfo> {
         // 1. 收集所有UnsafeDataTransition，同时保存操作类型和span信息
-        let mut data_groups: HashMap<AliasId, Vec<(NodeIndex, DataOpType, String, usize)>> =
+        let mut data_groups: HashMap<AliasId, Vec<(NodeIndex, DataOpType, String, String, usize)>> =
             HashMap::new();
         for &trans_idx in enabled_transitions {
             if let ColorPetriNode::UnsafeTransition {
                 ref data_ops,
                 ref rw_type,
+                ref info,
                 ref span,
                 basic_block,
             } = self.initial_net[trans_idx]
@@ -383,6 +395,7 @@ impl CpnStateGraph {
                 data_groups.entry(data_ops.clone()).or_default().push((
                     trans_idx,
                     rw_type.clone(),
+                    info.clone(),
                     span.clone(),
                     basic_block,
                 ));
@@ -399,7 +412,7 @@ impl CpnStateGraph {
             // 检查是否存在写操作
             let has_write = operations
                 .iter()
-                .any(|(_, op_type, _, _)| *op_type == DataOpType::Write);
+                .any(|(_, op_type, _, _, _)| *op_type == DataOpType::Write);
 
             if !has_write {
                 continue;
@@ -407,22 +420,23 @@ impl CpnStateGraph {
 
             // // 收集所有相关的spans
             let mut span_str = Vec::new();
-            for (_, op_type, span, _) in &operations {
-                span_str.push(format!("({:?})-->{}", op_type, span));
+            for (_, op_type, info, _, _) in &operations {
+                span_str.push(format!("({:?})-->{}", op_type, info));
             }
 
             let race_info = RaceInfo {
-                transitions: operations.iter().map(|(t, _, _, _)| t.index()).collect(),
-                data_ops: RaceDataInfo {
-                    data_func: String::from("unsafe_transition"),
+                transitions: operations.iter().map(|(t, _, _, _, _)| t.index()).collect(),
+                unsafe_data: RaceDataInfo {
+                    // TODO: 需要获取函数名
+                    data_func: data_ops.instance_id.index(),
                     data_local: data_ops.local.index(),
                 },
                 span: operations
                     .iter()
-                    .map(|(_, _, span, _)| span.clone())
+                    .map(|(_, _, _, span, _)| span.clone())
                     .collect(),
-                rw_types: operations.iter().map(|(_, op, _, _)| op.clone()).collect(),
-                basic_blocks: operations.iter().map(|(_, _, _, bb)| bb.clone()).collect(),
+                // rw_types: operations.iter().map(|(_, op, _, _)| op.clone()).collect(),
+                // basic_blocks: operations.iter().map(|(_, _, _, bb)| bb.clone()).collect(),
                 span_str: span_str,
             };
 

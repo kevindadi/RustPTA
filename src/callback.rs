@@ -129,7 +129,7 @@ impl PTACallbacks {
             .collect();
         let mut callgraph = CallGraph::new();
         callgraph.analyze(instances.clone(), tcx);
-        log::info!("callgraph:\n{}", callgraph.format_spawn_calls());
+        // log::info!("callgraph:\n{}", callgraph.format_spawn_calls());
         // 分析unsafe使用
         let unsafe_analyzer = UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
         let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
@@ -152,15 +152,22 @@ impl PTACallbacks {
 
         let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
         state_graph.generate_states();
-        state_graph.race_info.iter().for_each(|race_info| {
-            log::info!(
-                "Race {}:\n{}",
-                race_info.data_ops.data_func,
-                serde_json::to_string_pretty(&json!({
-                    "operations": race_info.span_str,
-                }))
-                .unwrap()
-            )
-        });
+        state_graph
+            .race_info
+            .lock()
+            .unwrap()
+            .iter()
+            .for_each(|race_info| {
+                log::info!(
+                    "Race {:?}:\n{}",
+                    serde_json::to_string(&json!({
+                        "unsafe_transitions": race_info.transitions,
+                    })),
+                    serde_json::to_string_pretty(&json!({
+                        "operations": race_info.span_str,
+                    }))
+                    .unwrap()
+                )
+            });
     }
 }

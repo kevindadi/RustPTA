@@ -120,12 +120,14 @@ impl<'cpn, 'translate, 'tcx> BodyToColorPetriNet<'cpn, 'translate, 'tcx> {
     fn add_unsafe_transition(
         &mut self,
         data_ops: AliasId,
+        info: String,
         span: String,
         rw_type: DataOpType,
         basic_block: usize,
     ) -> NodeIndex {
         self.net.add_node(ColorPetriNode::UnsafeTransition {
             data_ops,
+            info,
             span,
             rw_type,
             basic_block,
@@ -231,6 +233,7 @@ impl<'cpn, 'translate, 'tcx> BodyToColorPetriNet<'cpn, 'translate, 'tcx> {
                 let transition = self.add_unsafe_transition(
                     alias_result.2.unwrap(),
                     transition_name.clone(),
+                    span_str.to_string(),
                     DataOpType::Read,
                     bb_idx.index(),
                 );
@@ -282,6 +285,7 @@ impl<'cpn, 'translate, 'tcx> BodyToColorPetriNet<'cpn, 'translate, 'tcx> {
             let transition = self.add_unsafe_transition(
                 alias_result.2.unwrap(),
                 transition_name.clone(),
+                span_str.to_string(),
                 DataOpType::Write,
                 bb_idx.index(),
             );

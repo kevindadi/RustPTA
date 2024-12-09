@@ -64,6 +64,7 @@ pub enum ColorPetriNode {
         // TODO:变迁中包含的所有数据操作
         // data_ops: Vec<DataOp>,
         data_ops: AliasId,
+        info: String,
         // 变迁所在的基本块
         span: String,
         rw_type: DataOpType,
@@ -227,7 +228,7 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                 self.unsafe_places.insert(local, node);
             }
         }
-        log::info!("unsafe_places: {:?}", self.unsafe_places);
+        // log::info!("unsafe_places: {:?}", self.unsafe_places);
     }
 
     // 设置标识
@@ -320,6 +321,7 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                 }
                 ColorPetriNode::UnsafeTransition {
                     data_ops,
+                    info,
                     span,
                     rw_type,
                     basic_block,
@@ -338,7 +340,10 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                     )
                 }
                 ColorPetriNode::Cfg { name } => {
-                    format!("label = \"CFG\\n{}\", shape = box", name)
+                    format!(
+                        "label = \"CFG\\n{}\", shape = box, style = filled, fillcolor = lightgreen",
+                        name
+                    )
                 }
             },
         );
