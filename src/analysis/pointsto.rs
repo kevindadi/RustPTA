@@ -507,24 +507,38 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
 
     fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Vec<Option<AccessPattern<'tcx>>> {
         match rvalue {
-            Rvalue::Use(operand) | Rvalue::Repeat(operand, _) | Rvalue::Cast(_, operand, _) => {
+            Rvalue::Use(operand)
+            | Rvalue::Repeat(operand, _)
+            | Rvalue::Cast(_, operand, _)
+            | Rvalue::UnaryOp(_, operand)
+            | Rvalue::ShallowInitBox(operand, _) => {
                 vec![Self::process_operand(operand)]
             }
-            // Regard `p = &*q` as `p = q`
-            Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) => match place.as_ref() {
-                PlaceRef {
-                    local: l,
-                    projection: [ProjectionElem::Deref, ref remain @ ..],
-                } => vec![Some(AccessPattern::Direct(PlaceRef {
-                    local: l,
-                    projection: remain,
-                }))],
-                _ => vec![Some(AccessPattern::Ref(place.as_ref()))],
-            },
-            Rvalue::Aggregate(_, fields) => {
-                let fields = fields.iter().map(Self::process_operand).collect::<Vec<_>>();
-                fields
+
+            Rvalue::Ref(_, _, place)
+            | Rvalue::RawPtr(_, place)
+            | Rvalue::Len(place)
+            | Rvalue::Discriminant(place)
+            | Rvalue::CopyForDeref(place) => {
+                vec![Some(AccessPattern::Direct(place.as_ref()))]
             }
+
+            Rvalue::BinaryOp(_, box (left, right)) => {
+                vec![Self::process_operand(left), Self::process_operand(right)]
+            }
+            Rvalue::Aggregate(box kind, fields) => match kind {
+                AggregateKind::RawPtr(_, _) => {
+                    vec![Self::process_operand(
+                        &fields.iter_enumerated().next().unwrap().1,
+                    )]
+                }
+                _ => fields.iter().map(Self::process_operand).collect(),
+            },
+            Rvalue::ThreadLocalRef(def_id) => vec![],
+
+            Rvalue::NullaryOp(_, _) => vec![],
+
+            // 其他未处理的情况
             _ => vec![],
         }
     }

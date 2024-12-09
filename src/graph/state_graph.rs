@@ -7,7 +7,7 @@ use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use super::petri_net::{PetriNetEdge, PetriNetNode};
+use super::pn::{PetriNetEdge, PetriNetNode};
 
 use std::sync::{Arc, Mutex};
 
@@ -51,7 +51,7 @@ pub fn normalize_state(mark: &HashSet<(NodeIndex, usize)>) -> Vec<(usize, usize)
     state
 }
 
-fn insert_with_comparison(
+pub fn insert_with_comparison(
     set: &mut HashSet<Vec<(usize, usize)>>,
     value: &Vec<(usize, usize)>,
 ) -> bool {

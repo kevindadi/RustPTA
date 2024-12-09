@@ -17,7 +17,7 @@ use std::io::Write;
 use std::sync::{Arc, RwLock};
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use super::function_pn::BodyToPetriNet;
+use super::mir_pn::BodyToPetriNet;
 use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::candvar::CondVarInfo;

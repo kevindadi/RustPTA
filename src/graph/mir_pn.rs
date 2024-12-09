@@ -1,6 +1,6 @@
 use super::{
     callgraph::{CallGraph, InstanceId},
-    petri_net::{PetriNetEdge, PetriNetNode, Place},
+    pn::{PetriNetEdge, PetriNetNode, Place},
 };
 use crate::{
     analysis::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
@@ -8,7 +8,7 @@ use crate::{
         candvar::CondVarId,
         locks::{LockGuardId, LockGuardMap, LockGuardTy},
     },
-    graph::petri_net::Transition,
+    graph::pn::Transition,
     options::Options,
     utils::format_name,
 };
