@@ -479,6 +479,17 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
 
+    /// 处理 MIR 中的内存位置（Place），确定其访问模式
+    ///
+    /// 该函数分析 Place 的投影元素，判断是直接访问还是间接访问：
+    /// - 如果第一个投影元素是解引用（Deref），则为间接访问
+    /// - 其他情况均视为直接访问
+    ///
+    /// 例如：
+    /// - `x` -> 直接访问
+    /// - `*x` -> 间接访问（去掉 Deref 后的剩余部分）
+    /// - `x.field` -> 直接访问
+    /// - `(*x).field` -> 间接访问
     fn process_place(place_ref: PlaceRef<'tcx>) -> AccessPattern<'tcx> {
         match place_ref {
             PlaceRef {
@@ -505,8 +516,21 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
 
+    /// 处理 MIR 中的右值表达式，提取内存访问模式
+    ///
+    /// 该函数分析不同类型的右值表达式，并返回相应的访问模式：
+    /// - 对于简单操作（Use/Cast等），处理单个操作数
+    /// - 对于引用操作（Ref/RawPtr等），返回直接访问模式
+    /// - 对于二元操作，处理两个操作数
+    /// - 对于聚合类型，特殊处理原始指针和其他字段
     fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Vec<Option<AccessPattern<'tcx>>> {
         match rvalue {
+            // 1. 处理简单的单操作数表达式
+            // 如：y = x (Use)
+            //    y = [x; 5] (Repeat)
+            //    y = x as i32 (Cast)
+            //    y = -x (UnaryOp)
+            //    y = Box::new(x) (ShallowInitBox)
             Rvalue::Use(operand)
             | Rvalue::Repeat(operand, _)
             | Rvalue::Cast(_, operand, _)
@@ -515,6 +539,12 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 vec![Self::process_operand(operand)]
             }
 
+            // 2. 处理引用和指针相关操作
+            // 如：y = &x (Ref)
+            //    y = ptr::addr_of!(x) (RawPtr)
+            //    y = len(x) (Len)
+            //    y = discriminant(x) (Discriminant)
+            //    y = copy_for_deref(x) (CopyForDeref)
             Rvalue::Ref(_, _, place)
             | Rvalue::RawPtr(_, place)
             | Rvalue::Len(place)
@@ -523,9 +553,12 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 vec![Some(AccessPattern::Direct(place.as_ref()))]
             }
 
+            // 3. 处理二元操作，需要分析两个操作数
+            // 如：y = a + b
             Rvalue::BinaryOp(_, box (left, right)) => {
                 vec![Self::process_operand(left), Self::process_operand(right)]
             }
+            // 4. 处理聚合类型（结构体、元组等）
             Rvalue::Aggregate(box kind, fields) => match kind {
                 AggregateKind::RawPtr(_, _) => {
                     vec![Self::process_operand(
@@ -534,11 +567,12 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 }
                 _ => fields.iter().map(Self::process_operand).collect(),
             },
+            // 5. 处理线程本地引用，目前不需要分析
             Rvalue::ThreadLocalRef(def_id) => vec![],
-
+            // 6. 处理无操作数的操作（如常量）
             Rvalue::NullaryOp(_, _) => vec![],
 
-            // 其他未处理的情况
+            // 7. 其他未处理的情况返回空向量
             _ => vec![],
         }
     }
