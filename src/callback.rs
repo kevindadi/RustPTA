@@ -3,9 +3,6 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use std::path::PathBuf;
-
-use crate::analysis::pointsto::AliasAnalysis;
 use crate::graph::callgraph::CallGraph;
 use crate::graph::cpn::ColorPetriNet;
 use crate::graph::cpn_state_graph::CpnStateGraph;
@@ -14,6 +11,7 @@ use crate::graph::state_graph::StateGraph;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::Options;
 use crate::utils::format_name;
+use crate::DetectorKind;
 use log::debug;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
@@ -21,6 +19,7 @@ use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
 use serde_json::{self, json};
 use std::fmt::{Debug, Formatter, Result};
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct PTACallbacks {
@@ -129,45 +128,60 @@ impl PTACallbacks {
             .collect();
         let mut callgraph = CallGraph::new();
         callgraph.analyze(instances.clone(), tcx);
-        // log::info!("callgraph:\n{}", callgraph.format_spawn_calls());
-        // 分析unsafe使用
-        let unsafe_analyzer = UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
-        let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
-        unsafe_info.iter().for_each(|(def_id, info)| {
-            log::info!(
-                "{}:\n{}",
-                format_name(*def_id),
-                serde_json::to_string_pretty(&json!({
-                    "unsafe_fn": info.is_unsafe_fn,
-                    "unsafe_blocks": info.unsafe_blocks,
-                    "unsafe_places": info.unsafe_places
-                }))
-                .unwrap()
-            )
-        });
 
-        let mut cpn = ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data);
-        cpn.construct();
-        cpn.cpn_to_dot("cpn.dot").unwrap();
+        match &self.options.detector_kind {
+            DetectorKind::DataRace => {
+                let unsafe_analyzer =
+                    UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
+                let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
+                unsafe_info.iter().for_each(|(def_id, info)| {
+                    log::info!(
+                        "{}:\n{}",
+                        format_name(*def_id),
+                        serde_json::to_string_pretty(&json!({
+                            "unsafe_fn": info.is_unsafe_fn,
+                            "unsafe_blocks": info.unsafe_blocks,
+                            "unsafe_places": info.unsafe_places
+                        }))
+                        .unwrap()
+                    )
+                });
 
-        let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
-        state_graph.generate_states();
-        state_graph
-            .race_info
-            .lock()
-            .unwrap()
-            .iter()
-            .for_each(|race_info| {
-                log::info!(
-                    "Race {:?}:\n{}",
-                    serde_json::to_string(&json!({
-                        "unsafe_transitions": race_info.transitions,
-                    })),
-                    serde_json::to_string_pretty(&json!({
-                        "operations": race_info.span_str,
-                    }))
+                let mut cpn =
+                    ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data);
+                cpn.construct();
+                cpn.cpn_to_dot("cpn.dot").unwrap();
+
+                let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
+                state_graph.generate_states();
+                state_graph
+                    .race_info
+                    .lock()
                     .unwrap()
-                )
-            });
+                    .iter()
+                    .for_each(|race_info| {
+                        log::info!(
+                            "Race {:?}:\n{}",
+                            serde_json::to_string(&json!({
+                                "unsafe_transitions": race_info.transitions,
+                            })),
+                            serde_json::to_string_pretty(&json!({
+                                "operations": race_info.span_str,
+                            }))
+                            .unwrap()
+                        )
+                    });
+            }
+            _ => {
+                let mut pn = PetriNet::new(&self.options, tcx, &callgraph);
+                pn.construct();
+                pn.save_petri_net_to_file();
+
+                let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+                state_graph.generate_states();
+                let result = state_graph.check_deadlock();
+                log::info!("deadlock state: {}", result);
+            }
+        }
     }
 }

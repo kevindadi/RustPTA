@@ -25,7 +25,6 @@ pub enum DetectorKind {
     All,
     Deadlock,
     AtomicityViolation,
-    SafeDrop,
     DataRace,
     // More to be supported.
 }
@@ -120,7 +119,6 @@ impl Options {
         self.detector_kind = match matches.get_one::<String>("detector_kind").unwrap().as_str() {
             "deadlock" => DetectorKind::Deadlock,
             "atomicity_violation" => DetectorKind::AtomicityViolation,
-            "safedrop" => DetectorKind::SafeDrop,
             "all" => DetectorKind::All,
             "datarace" => DetectorKind::DataRace,
             _ => DetectorKind::Deadlock,
