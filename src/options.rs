@@ -30,7 +30,7 @@ pub enum DetectorKind {
 }
 
 fn make_options_parser() -> clap::Command {
-    let parser = Command::new("PTA")
+    let parser = Command::new("PN")
         .no_binary_name(true)
         .author("https://flml.tongji.edu.cn/")
         .version("v0.1.0")
@@ -40,7 +40,7 @@ fn make_options_parser() -> clap::Command {
                 .long("detector_kind")
                 .help("The detector kind")
                 .default_values(&["deadlock"])
-                .value_parser(["deadlock", "race", "memory", "all"]),
+                .value_parser(["deadlock", "datarace", "memory", "all"]),
             //.possible_values(),
         )
         .arg(
