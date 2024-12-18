@@ -1,3 +1,6 @@
+use crate::concurrency::atomic::AtomicOrdering;
+use crate::concurrency::atomic::AtomicVarMap;
+use crate::memory::pointsto::AliasId;
 use crate::options::OwnCrateType;
 use crate::utils::format_name;
 use crate::utils::ApiEntry;
@@ -159,6 +162,8 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub entry_node: NodeIndex,
     pub api_spec: ApiSpec,
     pub api_marks: HashMap<String, HashSet<(NodeIndex, usize)>>,
+    atomic_places: HashMap<AliasId, NodeIndex>,
+    atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
@@ -183,6 +188,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             entry_node: NodeIndex::new(0),
             api_spec,
             api_marks: HashMap::<String, HashSet<(NodeIndex, usize)>>::new(),
+            atomic_places: HashMap::<AliasId, NodeIndex>::new(),
+            atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
         }
     }
 
@@ -221,6 +228,31 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         log::debug!("Added mark for API group: [{}]", apis.join(", "));
                     }
                 }
+            }
+        }
+    }
+
+    pub fn add_atomic_places(&mut self, atomic_var: &AtomicVarMap) {
+        log::info!("add atomic places");
+        for (_, atomic_info) in atomic_var {
+            let atomic_type = atomic_info.var_type.clone();
+            let alias_id = atomic_info.get_alias_id();
+            log::debug!("id: {:?}", alias_id);
+            if !atomic_type.starts_with("&") {
+                log::debug!("add atomic: {:?}", atomic_type);
+                let atomic_name = atomic_type.clone();
+                let atomic_place = Place::new_with_span(atomic_name, 1, atomic_info.span.clone());
+                let atomic_node = self.net.add_node(PetriNetNode::P(atomic_place));
+
+                self.atomic_places.insert(alias_id, atomic_node);
+            } else {
+                log::info!(
+                    "Adding atomic ordering: {:?} -> {:?}",
+                    alias_id,
+                    atomic_info.operations[0].ordering
+                );
+                self.atomic_order_maps
+                    .insert(alias_id, atomic_info.operations[0].ordering);
             }
         }
     }
@@ -296,6 +328,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             // &mut self.thread_id_handler,
             // &mut self.handler_id,
             &self.condvars,
+            &self.atomic_places,
+            &self.atomic_order_maps,
         );
         func_body.translate();
     }

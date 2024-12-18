@@ -142,6 +142,20 @@ impl PTACallbacks {
         let atomic_vars = atomic_collector.analyze();
 
         // 输出收集到的atomic信息
+        atomic_collector.to_json_pretty().unwrap();
+        let mut pn = PetriNet::new(&self.options, tcx, &callgraph, ApiSpec::default());
+
+        if !atomic_vars.is_empty() {
+            pn.add_atomic_places(&atomic_vars);
+        }
+
+        pn.construct();
+        pn.save_petri_net_to_file();
+
+        // let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+        // state_graph.generate_states();
+        // let result = state_graph.check_deadlock();
+        // log::info!("deadlock state: {}", result);
 
         // if self.options.crate_type == OwnCrateType::Lib {
         //     let api_spec = parse_api_spec(self.options.lib_apis_path.as_ref().unwrap())

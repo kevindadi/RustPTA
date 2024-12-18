@@ -12,10 +12,12 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
     visit::Visitor, Body, Local, Location, Operand, Place, Terminator, TerminatorKind,
 };
+use rustc_middle::mir::{AggregateKind, ConstValue, Rvalue, StatementKind};
 use rustc_middle::ty::{self, GenericArg, Instance, List, Ty, TyCtxt, TyKind, TypingEnv};
 use serde_json::json;
 
-use crate::graph::callgraph::{CallGraph, CallGraphNode};
+use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use crate::memory::pointsto::AliasId;
 use crate::utils::format_name;
 
 static ATOMIC_PTR_STORE: Lazy<Regex> =
@@ -67,7 +69,7 @@ pub enum AtomicApi {
     ReadWrite,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum AtomicOrdering {
     Relaxed,
     Release,
@@ -109,8 +111,16 @@ pub struct AtomicOperation {
 #[derive(Debug, Clone)]
 pub struct AtomicVarInfo {
     pub var_type: String,
+    pub instance_id: InstanceId,
+    pub local_id: Local,
     pub span: String,
     pub operations: Vec<AtomicOperation>,
+}
+
+impl AtomicVarInfo {
+    pub fn get_alias_id(&self) -> AliasId {
+        AliasId::new(self.instance_id, self.local_id)
+    }
 }
 
 pub type AtomicVarMap = FxHashMap<String, AtomicVarInfo>;
@@ -161,6 +171,8 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
                 );
                 let info = AtomicVarInfo {
                     var_type: ty.to_string(),
+                    instance_id: self.callgraph.instance_to_index(instance).unwrap(),
+                    local_id: local,
                     span: format!("{:?}", local_decl.source_info.span),
                     operations: Vec::new(),
                 };
@@ -171,6 +183,7 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
         // 遍历MIR收集操作
         let mut visitor = AtomicVisitor {
             instance: *instance,
+            instance_id: self.callgraph.instance_to_index(instance).unwrap(),
             body,
             tcx: self.tcx,
             atomic_vars: &mut self.atomic_vars,
@@ -188,7 +201,7 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
     }
 
     #[allow(dead_code)]
-    fn to_json_pretty(&self) -> Result<(), serde_json::Error> {
+    pub fn to_json_pretty(&self) -> Result<(), serde_json::Error> {
         if self.atomic_vars.is_empty() {
             log::debug!("No atomic variables found");
         } else {
@@ -218,6 +231,7 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
 
 struct AtomicVisitor<'a, 'tcx> {
     instance: Instance<'tcx>,
+    instance_id: InstanceId,
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     pub atomic_vars: &'a mut AtomicVarMap,
@@ -260,7 +274,7 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
                             );
                             let first_place_ty = &self.body.local_decls[first_place.local].ty;
 
-                            log::debug!("Processing atomic variable: {}", var_name);
+                            log::debug!("Processing atomic variable: {}", var_name.clone());
 
                             // 获取ordering参数
                             // 对于load, ordering参数在第二个位置
@@ -307,53 +321,95 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
                                     Operand::Move(ordering_place) => {
                                         log::debug!("Found move operand: {:?}", ordering_place);
                                         let local_decl =
-                                            &self.body.local_decls[ordering_place.local].ty;
-                                        if local_decl.is_enum() {
-                                            log::debug!("Found enum type: {:?}", local_decl);
-                                            // 假设枚举值的顺序与 AtomicOrdering 匹配
-                                            let ordering = match local_decl
-                                                .discriminant_for_variant(
-                                                    self.tcx,
-                                                    VariantIdx::from_u32(0),
-                                                ) {
-                                                Some(discr) => AtomicOrdering::from_u128(discr.val),
-                                                None => AtomicOrdering::SeqCst, // 默认值
-                                            };
-                                            log::debug!("Found ordering: {:?}", ordering);
-                                            if let Some(info) = self.atomic_vars.get_mut(&var_name)
-                                            {
-                                                let op = AtomicOperation {
-                                                    api,
-                                                    ordering,
-                                                    location: format!(
-                                                        "{:?}",
-                                                        self.body.source_info(location).span
-                                                    ),
-                                                };
-                                                info.operations.push(op);
-                                            } else {
-                                                let op = AtomicOperation {
-                                                    api,
-                                                    ordering,
-                                                    location: format!(
-                                                        "{:?}",
-                                                        self.body.source_info(location).span
-                                                    ),
-                                                };
-                                                self.atomic_vars.insert(
-                                                    var_name,
-                                                    AtomicVarInfo {
-                                                        var_type: first_place_ty.to_string(),
-                                                        span: format!(
+                                            &self.body.local_decls[ordering_place.local];
+
+                                        // 获取枚举变体的判别值
+                                        let mut ordering = AtomicOrdering::SeqCst;
+                                        if let ty::TyKind::Adt(adt_def, _) = local_decl.ty.kind() {
+                                            if adt_def.is_enum() {
+                                                for (_, data) in
+                                                    self.body.basic_blocks.iter_enumerated()
+                                                {
+                                                    for (_, statement) in
+                                                        data.statements.iter().enumerate()
+                                                    {
+                                                        if let StatementKind::Assign(box (
+                                                            lhs,
+                                                            rhs,
+                                                        )) = &statement.kind
+                                                        {
+                                                            if lhs.local.index()
+                                                                == ordering_place.local.index()
+                                                            {
+                                                                let rvalue_str =
+                                                                    format!("{:?}", rhs);
+                                                                ordering = match rvalue_str
+                                                                    .split("::")
+                                                                    .last()
+                                                                {
+                                                                    Some("Relaxed") => {
+                                                                        AtomicOrdering::Relaxed
+                                                                    }
+                                                                    Some("Release") => {
+                                                                        AtomicOrdering::Release
+                                                                    }
+                                                                    Some("Acquire") => {
+                                                                        AtomicOrdering::Acquire
+                                                                    }
+                                                                    Some("AcqRel") => {
+                                                                        AtomicOrdering::AcqRel
+                                                                    }
+                                                                    Some("SeqCst") => {
+                                                                        AtomicOrdering::SeqCst
+                                                                    }
+                                                                    _ => AtomicOrdering::SeqCst,
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                if let Some(info) =
+                                                    self.atomic_vars.get_mut(&var_name)
+                                                {
+                                                    let op = AtomicOperation {
+                                                        api,
+                                                        ordering,
+                                                        location: format!(
                                                             "{:?}",
                                                             self.body.source_info(location).span
                                                         ),
-                                                        operations: vec![op],
-                                                    },
-                                                );
+                                                    };
+                                                    info.operations.push(op);
+                                                } else {
+                                                    let op = AtomicOperation {
+                                                        api,
+                                                        ordering,
+                                                        location: format!(
+                                                            "{:?}",
+                                                            self.body.source_info(location).span
+                                                        ),
+                                                    };
+                                                    self.atomic_vars.insert(
+                                                        var_name,
+                                                        AtomicVarInfo {
+                                                            var_type: first_place_ty.to_string(),
+                                                            instance_id: self.instance_id,
+                                                            local_id: first_place.local,
+                                                            span: format!(
+                                                                "{:?}",
+                                                                self.body
+                                                                    .source_info(location)
+                                                                    .span
+                                                            ),
+                                                            operations: vec![op],
+                                                        },
+                                                    );
+                                                }
                                             }
                                         }
                                     }
+
                                     _ => {
                                         log::error!("Unknown operand: {:?}", arg);
                                     }

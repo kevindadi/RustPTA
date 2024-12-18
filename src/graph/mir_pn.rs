@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     concurrency::{
+        atomic::AtomicOrdering,
         candvar::CondVarId,
         locks::{LockGuardId, LockGuardMap, LockGuardTy},
     },
@@ -14,6 +15,7 @@ use crate::{
 };
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
+use regex::Regex;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::Body,
@@ -44,6 +46,10 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     bb_node_start_end: HashMap<BasicBlock, NodeIndex>,          // 基本块起始节点映射
     bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,           // 基本块节点列表
     condvar_id: &'translate HashMap<CondVarId, NodeIndex>,      // 条件变量ID映射
+    atomic_load_re: Regex,
+    atomic_store_re: Regex,
+    atomic_places: &'translate HashMap<AliasId, NodeIndex>,
+    atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -64,6 +70,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         // thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>,
         // handler_id: &'translate mut HashMap<JoinHanderId, DefId>,
         condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
+        atomic_places: &'translate HashMap<AliasId, NodeIndex>,
+        atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
     ) -> Self {
         Self {
             instance_id,
@@ -82,12 +90,110 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             // thread_id_handler,
             // handler_id,
             condvar_id,
+            atomic_load_re: Regex::new(r"atomic[:a-zA-Z0-9]*::load").unwrap(),
+            atomic_store_re: Regex::new(r"atomic[:a-zA-Z0-9]*::store").unwrap(),
+            atomic_places,
+            atomic_order_maps,
         }
     }
 
     pub fn translate(&mut self) {
         // TODO: 如果函数中不包含同步原语, Skip
         self.visit_body(self.body);
+    }
+
+    fn handle_call(
+        &mut self,
+        bb_idx: BasicBlock,
+        fn_name: &str,
+        bb_span: &str,
+        func: &Operand<'tcx>,
+        args: &[Spanned<Operand<'tcx>>],
+        destination: &rustc_middle::mir::Place<'tcx>,
+        target: &Option<BasicBlock>,
+        unwind: &Option<BasicBlock>,
+    ) {
+        let bb_end = self.create_call_transition(bb_idx, fn_name);
+
+        // 处理锁相关调用
+        if self.handle_lock_call(bb_idx, bb_end, destination, target) {
+            return;
+        }
+
+        // let callee_id = self.get_callee_id(func)?;
+        // let callee_name = format_name(callee_id);
+
+        // // 处理线程相关调用
+        // if self.handle_thread_call(bb_end, callee_name, args, target) {
+        //     return;
+        // }
+
+        // // 处理条件变量相关调用
+        // if self.handle_condvar_call(bb_end, callee_name, args, target, bb_span) {
+        //     return;
+        // }
+
+        // // 处理普通函数调用
+        // self.handle_normal_call(bb_end, callee_id, target, bb_span);
+    }
+
+    fn create_call_transition(&mut self, bb_idx: BasicBlock, fn_name: &str) -> NodeIndex {
+        let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "call");
+        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+        let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
+
+        self.net.add_edge(
+            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            bb_end,
+            PetriNetEdge { label: 1usize },
+        );
+
+        bb_end
+    }
+
+    fn handle_lock_call(
+        &mut self,
+        bb_idx: BasicBlock,
+        bb_end: NodeIndex,
+        destination: &rustc_middle::mir::Place<'tcx>,
+        target: &Option<BasicBlock>,
+    ) -> bool {
+        // 处理锁相关的逻辑...
+
+        true
+    }
+
+    fn handle_thread_call(
+        &mut self,
+        bb_end: NodeIndex,
+        callee_name: String,
+        args: &[Spanned<Operand<'tcx>>],
+        target: &Option<BasicBlock>,
+    ) -> bool {
+        // 处理线程相关的逻辑...
+        true
+    }
+
+    fn handle_condvar_call(
+        &mut self,
+        bb_end: NodeIndex,
+        callee_name: String,
+        args: &[Spanned<Operand<'tcx>>],
+        target: &Option<BasicBlock>,
+        bb_span: &str,
+    ) -> bool {
+        // 处理条件变量相关的逻辑...
+        true
+    }
+
+    fn handle_normal_call(
+        &mut self,
+        bb_end: NodeIndex,
+        callee_id: DefId,
+        target: &Option<BasicBlock>,
+        bb_span: &str,
+    ) {
+        // 处理普通函数调用的逻辑...
     }
 }
 
@@ -407,6 +513,88 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                     }
                                     _ => {
                                         panic!("no spawn call in function {:?}", def_id);
+                                    }
+                                }
+                                continue;
+                            }
+
+                            if callee_func_name.contains("::load") {
+                                // 处理 atomic load
+                                let current_id = AliasId::new(
+                                    self.instance_id,
+                                    args.get(0).unwrap().node.place().unwrap().local,
+                                );
+                                for atomic_e in self.atomic_places.iter() {
+                                    match self
+                                        .alias
+                                        .borrow_mut()
+                                        .alias(current_id.into(), atomic_e.0.clone().into())
+                                    {
+                                        ApproximateAliasKind::Possibly
+                                        | ApproximateAliasKind::Probably => {
+                                            self.net.add_edge(
+                                                bb_end,
+                                                *atomic_e.1,
+                                                PetriNetEdge { label: 1usize },
+                                            );
+
+                                            if let Some(order) =
+                                                self.atomic_order_maps.get(&current_id)
+                                            {
+                                                log::info!(
+                                                    "atomic load: {:?} -> {:?} with order {:?}",
+                                                    current_id,
+                                                    atomic_e.0,
+                                                    order
+                                                );
+                                            } else {
+                                                log::info!(
+                                                    "No ordering found for {:?}",
+                                                    atomic_e.0
+                                                );
+                                            }
+                                        }
+
+                                        _ => continue,
+                                    }
+                                }
+                                continue;
+                            } else if callee_func_name.contains("::store") {
+                                // 处理 atomic store
+                                let current_id = AliasId::new(
+                                    self.instance_id,
+                                    args.get(0).unwrap().node.place().unwrap().local,
+                                );
+                                for atomic_e in self.atomic_places.iter() {
+                                    match self
+                                        .alias
+                                        .borrow_mut()
+                                        .alias(current_id.into(), atomic_e.0.clone().into())
+                                    {
+                                        ApproximateAliasKind::Possibly
+                                        | ApproximateAliasKind::Probably => {
+                                            self.net.add_edge(
+                                                bb_end,
+                                                *atomic_e.1,
+                                                PetriNetEdge { label: 1usize },
+                                            );
+                                            if let Some(order) =
+                                                self.atomic_order_maps.get(&current_id)
+                                            {
+                                                log::info!(
+                                                    "atomic load: {:?} -> {:?} with order {:?}",
+                                                    current_id,
+                                                    atomic_e.0,
+                                                    order
+                                                );
+                                            } else {
+                                                log::info!(
+                                                    "No ordering found for {:?}",
+                                                    atomic_e.0
+                                                );
+                                            }
+                                        }
+                                        _ => continue,
                                     }
                                 }
                                 continue;
