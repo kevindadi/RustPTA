@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    analysis::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
+    memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
     options::Options,
     utils::format_name,
 };
@@ -13,9 +13,7 @@ use petgraph::{graph::NodeIndex, Graph};
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{
-        visit::Visitor, BasicBlock, Location, Operand, Place, Rvalue, StatementKind, TerminatorKind,
-    },
+    mir::{visit::Visitor, BasicBlock, Operand, Place, Rvalue, StatementKind, TerminatorKind},
     ty,
 };
 use rustc_middle::{

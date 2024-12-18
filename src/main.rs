@@ -2,7 +2,6 @@
 #![feature(box_patterns)]
 #![warn(non_snake_case)]
 
-pub mod analysis;
 pub mod callback;
 pub mod concurrency;
 pub mod graph;
@@ -11,6 +10,7 @@ pub mod options;
 pub mod report;
 pub mod utils;
 
+extern crate rustc_abi;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hash;
@@ -96,13 +96,6 @@ fn main() {
                 rustc_command_line_arguments.push("-Z".into());
                 rustc_command_line_arguments.push(always_encode_mir);
             }
-
-            // match options.detector_kind {
-            //     DetectorKind::DataRace => {
-            //         rustc_command_line_arguments.push("-Zsanitizer=thread".into())
-            //     }
-            //     _ => {}
-            // }
         }
 
         let mut callbacks = callback::PTACallbacks::new(options);

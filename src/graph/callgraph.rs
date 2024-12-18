@@ -1,14 +1,3 @@
-//! Generate a CallGraph for instances in each crate.
-//! You can roughly think of instances as a monomorphic function.
-//! If an instance calls another instance, then we have an edge
-//! from caller to callee with callsite locations as edge weight.
-//! This is a fundamental analysis for other analysis,
-//! e.g., points-to analysis, lockguard collector, etc.
-//! We also track where a closure is defined rather than called
-//! to record the defined function and the parameter of the closure,
-//! which is pointed to by upvars.
-use std::fmt::Debug;
-
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;

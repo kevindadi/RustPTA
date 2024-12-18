@@ -1,10 +1,5 @@
-//! Points-to 分析
-//! 用于检查两个指针是否可能指向同一个内存单元
-//! 该分析依赖于`CallGraph`(调用图)并为检测器提供支持
-//! 目前实现了一个 Andersen 风格的指针分析
-//! 这基本上是一个字段敏感的过程内指针分析
-//! 并对方法和闭包提供有限的过程间分析支持
-//! 详见`Andersen`结构体的具体实现
+/// Copied from lockbud (https://github.com/BurtonQin/lockbud/)
+/// Copyright (c) 2022, Boqin Qin(秦 伯钦)
 extern crate rustc_hir;
 extern crate rustc_index;
 
@@ -33,18 +28,6 @@ use crate::concurrency::locks::LockGuardId;
 use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::memory::ownership;
 
-/// 字段敏感的过程内Andersen指针分析
-/// 参考文档：https://helloworld.pub/program-analysis-andersen-pointer-analysis-algorithm-based-on-svf.html
-/// 1. 从MIR收集约束来构建`约束图(ConstraintGraph)`
-/// 2. 采用固定点算法来更新`约束图`和指向信息
-///
-/// 相比原始Andersen算法,这里做了几处改进：
-/// 1. 使用place来表示内存单元
-/// 2. 为每个place创建一个Alloc节点,并让place指向它
-/// 3. 区分局部place和全局place(表示为Constant)
-/// 4. 通过名称或签名特殊处理某些函数(例如Arc::clone)
-/// 5. 过程间方法分析：启发式地使用参数类型信息来指导分析(简单但有效)
-/// 6. 过程间闭包分析：在定义闭包的函数中追踪闭包的upvars(受限的)
 pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -568,7 +551,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 _ => fields.iter().map(Self::process_operand).collect(),
             },
             // 5. 处理线程本地引用，目前不需要分析
-            Rvalue::ThreadLocalRef(def_id) => vec![],
+            Rvalue::ThreadLocalRef(_) => vec![],
             // 6. 处理无操作数的操作（如常量）
             Rvalue::NullaryOp(_, _) => vec![],
 
@@ -962,19 +945,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     }
 
     /// 检查同一函数内`pointer`是否指向`pointee`
-    ///
-    /// # 参数
-    /// * `instance` - 函数实例
-    /// * `pointer` - 指针节点
-    /// * `pointee` - 可能被指向的目标节点
-    ///
-    /// # 返回值
-    /// 返回一个`ApproximateAliasKind`表示指向关系的可能性：
-    /// - 如果pointer的points-to集合中任何一个节点与pointee存在别名关系，返回最高的别名可能性
-    /// - 如果pointer没有points-to信息，返回Unlikely
-    /// - 如果没有找到任何别名关系，返回Unknown
-    ///
-    /// # 实现细节
     /// 1. 获取函数体的MIR和points-to映射
     /// 2. 获取pointer的points-to集合
     /// 3. 遍历集合中的每个节点，检查与pointee的别名关系

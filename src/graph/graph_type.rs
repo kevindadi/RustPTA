@@ -72,5 +72,3 @@ impl<'compilation, 'tcx, 'a> OutputType for PetriNet<'compilation, 'tcx, 'a> {
 
     fn pnml(&self) {}
 }
-
-pub trait StateGraphType {}

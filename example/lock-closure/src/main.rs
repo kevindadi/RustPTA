@@ -35,6 +35,6 @@ fn two_closures() {
 }
 
 fn main() {
-    // one_closure_one_caller();
+    one_closure_one_caller();
     two_closures();
 }

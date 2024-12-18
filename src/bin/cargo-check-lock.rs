@@ -5,10 +5,38 @@ use std::process::{Command, Stdio};
 
 use RustPTA::parse_thread_sanitizer_report;
 
-const CARGO_PTA_HELP: &str = r#"PetriNet for checking deadlock and data race"#;
+const CARGO_PN_HELP: &str = r#"Petri Net-based Analysis Tool for Rust Programs
+
+USAGE:
+    cargo pn [OPTIONS] [-- <rustc-args>...]
+
+OPTIONS:
+    -h, --help                      Print help information
+    -V, --version                   Print version information
+    -m, --mode <TYPE>              Analysis mode:
+                                   - deadlock: Deadlock detection
+                                   - datarace: Data race detection
+                                   - memory: Memory safety analysis
+                                   - all: Run all analyses [default: deadlock]
+    -t, --target <NAME>            Target crate for analysis
+    -o, --output <PATH>            Output path for analysis results [default: diagnostics.json]
+        --type <TYPE>              Target crate type (binary/library) [default: binary]
+        --api-spec <PATH>          Path to library API specification file
+
+VISUALIZATION OPTIONS:
+        --viz-callgraph            Generate call graph visualization
+        --viz-petrinet            Generate Petri net visualization
+        --viz-stategraph          Generate state graph visualization
+        --viz-unsafe              Generate unsafe operations report
+
+EXAMPLES:
+    cargo pn -m datarace -t my_crate
+    cargo pn -m all -o results.json --viz-petrinet
+    cargo pn -t my_lib --type library --api-spec apis.json
+"#;
 
 fn show_help() {
-    println!("{}", CARGO_PTA_HELP);
+    println!("{}", CARGO_PN_HELP);
 }
 
 fn show_version() {

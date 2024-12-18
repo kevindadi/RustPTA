@@ -8,7 +8,7 @@ use std::hash::Hash;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hasher;
 
-use crate::analysis::pointsto::AliasId;
+use crate::memory::pointsto::AliasId;
 
 use super::cpn::{ColorPetriEdge, ColorPetriNode, DataOpType};
 use super::state_graph::{insert_with_comparison, normalize_state, StateEdge, StateNode};
@@ -25,7 +25,6 @@ pub struct RaceInfo {
 }
 
 impl RaceInfo {
-    // 辅助函数：提取 span 的关键部分（文件:行:列）
     fn extract_span_key(span: &str) -> String {
         // 匹配形如 "src/main.rs:19:17" 的部分
         if let Some(idx) = span.find(": ") {
@@ -355,13 +354,6 @@ impl CpnStateGraph {
     }
 
     /// 检查并收集所有可能的数据竞争情况
-    ///
-    /// # Input
-    /// * `enabled_transitions` - 当前状态下所有使能的变迁节点索引
-    ///
-    /// # Output
-    /// 返回一个 HashSet<RaceInfo>，包含所有检测到的不重复的数据竞争信息
-    ///
     /// # Algorithm
     /// 1. 首先按照数据操作(AliasId)对所有不安全变迁进行分组
     /// 2. 对每组数据访问进行分析：

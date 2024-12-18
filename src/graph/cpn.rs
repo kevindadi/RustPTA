@@ -2,25 +2,24 @@ use petgraph::{
     graph::{DiGraph, NodeIndex},
     visit::IntoNodeReferences,
 };
-use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local};
 use serde::Serialize;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use crate::{
-    analysis::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
-    memory::unsafe_memory::{UnsafeData, UnsafeDataInfo, UnsafeInfo},
+    memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
+    memory::unsafe_memory::UnsafeData,
     options::Options,
     utils::format_name,
 };
 
 use super::{
-    callgraph::{CallGraph, CallGraphNode, InstanceId},
+    callgraph::{CallGraph, CallGraphNode},
     mir_cpn::BodyToColorPetriNet,
 };
 

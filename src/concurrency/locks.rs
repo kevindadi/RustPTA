@@ -1,4 +1,6 @@
-//! Collect LockGuard info.
+/// Copied from lockbud (https://github.com/BurtonQin/lockbud/)
+/// Copyright (c) 2022, Boqin Qin(秦 伯钦)
+/// Collect LockGuard info.
 extern crate rustc_hash;
 extern crate rustc_span;
 

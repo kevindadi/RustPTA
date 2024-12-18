@@ -3,12 +3,12 @@ use super::{
     pn::{PetriNetEdge, PetriNetNode, Place},
 };
 use crate::{
-    analysis::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
     concurrency::{
         candvar::CondVarId,
         locks::{LockGuardId, LockGuardMap, LockGuardTy},
     },
     graph::pn::Transition,
+    memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
     options::Options,
     utils::format_name,
 };
@@ -38,14 +38,12 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     callgraph: &'translate CallGraph<'tcx>,
     pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>, // Petri网图结构
     alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>, // 别名分析
-    pub lockguards: LockGuardMap<'tcx>,                         // 锁守卫映射
+    pub lockguards: LockGuardMap<'tcx>,                         // 锁Guard映射
     function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>, // 函数节点映射
     locks_counter: &'translate HashMap<LockGuardId, NodeIndex>, // 锁ID映射
     bb_node_start_end: HashMap<BasicBlock, NodeIndex>,          // 基本块起始节点映射
     bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,           // 基本块节点列表
-    // thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>, // 线程ID处理器映射
-    // handler_id: &'translate mut HashMap<JoinHanderId, DefId>,   // 处理器ID映射
-    condvar_id: &'translate HashMap<CondVarId, NodeIndex>, // 条件变量ID映射
+    condvar_id: &'translate HashMap<CondVarId, NodeIndex>,      // 条件变量ID映射
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -90,37 +88,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     pub fn translate(&mut self) {
         // TODO: 如果函数中不包含同步原语, Skip
         self.visit_body(self.body);
-    }
-
-    // 处理调用thread::spawn的函数
-    fn deal_thread_join(
-        &mut self,
-        args: &Box<[Spanned<Operand<'tcx>>]>,
-        target: Option<BasicBlock>,
-        bb_end: NodeIndex,
-    ) {
-        if let Some(closure_arg) = args.first() {
-            if let Operand::Move(place) | Operand::Copy(place) = closure_arg.node {
-                let place_ty = place.ty(self.body, self.tcx).ty;
-                if let ty::Closure(closure_def_id, _) = place_ty.kind() {
-                    self.net.add_edge(
-                        bb_end,
-                        self.function_counter.get(&closure_def_id).unwrap().0,
-                        PetriNetEdge { label: 1usize },
-                    );
-                }
-                match target {
-                    Some(t) => {
-                        self.net.add_edge(
-                            bb_end,
-                            *self.bb_node_start_end.get(&t).unwrap(),
-                            PetriNetEdge { label: 1usize },
-                        );
-                    }
-                    _ => {}
-                }
-            }
-        }
     }
 }
 
