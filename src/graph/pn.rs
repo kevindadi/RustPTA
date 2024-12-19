@@ -46,37 +46,47 @@ pub struct Place {
     pub tokens: Arc<RwLock<usize>>,
     pub capacity: usize,
     pub span: String,
-    pub details: String,
+    pub place_type: PlaceType,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
+pub enum PlaceType {
+    Atomic,
+    Lock,
+    CondVar,
+    FunctionStart,
+    FunctionEnd,
+    BasicBlock,
 }
 
 impl Place {
-    pub fn new(name: String, token: usize) -> Self {
+    pub fn new(name: String, token: usize, place_type: PlaceType) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(token)),
             capacity: token,
             span: String::new(),
-            details: String::new(),
+            place_type,
         }
     }
 
-    pub fn new_with_span(name: String, token: usize, span: String) -> Self {
+    pub fn new_with_span(name: String, token: usize, place_type: PlaceType, span: String) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(token)),
             capacity: 1usize,
             span,
-            details: String::new(),
+            place_type,
         }
     }
 
-    pub fn new_with_no_token(name: String) -> Self {
+    pub fn new_with_no_token(name: String, place_type: PlaceType) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(0)),
             capacity: 1usize,
             span: String::new(),
-            details: String::new(),
+            place_type,
         }
     }
 }
@@ -91,17 +101,53 @@ impl std::fmt::Display for Place {
 #[derive(Debug, Clone)]
 pub struct Transition {
     pub name: String,
-    time: (u32, u32),
     pub weight: u32,
     shape: Shape,
+    pub transition_type: TransitionType,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransitionType {
+    // 锁相关
+    Lock,
+    Unlock,
+    RwLockRead,
+    RwLockWrite,
+
+    // 条件变量相关
+    Notify,
+    Wait,
+
+    // 内存访问相关
+    UnsafeRead,
+    UnsafeWrite,
+
+    // 原子操作相关
+    AtomicLoad(AliasId, AtomicOrdering, String),
+    AtomicStore(AliasId, AtomicOrdering, String),
+
+    // 控制流相关
+    Control(ControlType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlType {
+    Start(InstanceId),
+    Return(InstanceId),
+    Call,   // 函数调用
+    Branch, // 分支
+    Drop,   // 丢弃
+    Join,   // 线程join
+    Spawn,  // 线程创建
+    Basic,  // 基本控制流
 }
 
 impl Transition {
-    pub fn new(name: String, time: (u32, u32), weight: u32) -> Self {
+    pub fn new(name: String, transition_type: TransitionType) -> Self {
         Self {
             name,
-            time,
-            weight,
+            transition_type,
+            weight: 1,
             shape: Shape::Box,
         }
     }
@@ -241,12 +287,17 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             if !atomic_type.starts_with("&") {
                 log::debug!("add atomic: {:?}", atomic_type);
                 let atomic_name = atomic_type.clone();
-                let atomic_place = Place::new_with_span(atomic_name, 1, atomic_info.span.clone());
+                let atomic_place = Place::new_with_span(
+                    atomic_name,
+                    1,
+                    PlaceType::Atomic,
+                    atomic_info.span.clone(),
+                );
                 let atomic_node = self.net.add_node(PetriNetNode::P(atomic_place));
 
                 self.atomic_places.insert(alias_id, atomic_node);
             } else {
-                log::info!(
+                log::debug!(
                     "Adding atomic ordering: {:?} -> {:?}",
                     alias_id,
                     atomic_info.operations[0].ordering
@@ -396,11 +447,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         with_token: bool,
     ) -> (NodeIndex, NodeIndex) {
         let start = if with_token {
-            Place::new(format!("{}_start", func_name), 1)
+            Place::new(format!("{}_start", func_name), 1, PlaceType::FunctionStart)
         } else {
-            Place::new_with_no_token(format!("{}_start", func_name))
+            Place::new_with_no_token(format!("{}_start", func_name), PlaceType::FunctionStart)
         };
-        let end = Place::new_with_no_token(format!("{}_end", func_name));
+        let end = Place::new_with_no_token(format!("{}_end", func_name), PlaceType::FunctionEnd);
 
         let start_id = self.net.add_node(PetriNetNode::P(start));
         let end_id = self.net.add_node(PetriNetNode::P(end));
@@ -469,14 +520,14 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_p = Place::new(format!("Mutex_{}", id), 1);
+                    let lock_p = Place::new(format!("Mutex_{}", id), 1, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
                 }
                 _ => {
-                    let lock_p = Place::new(format!("RwLock_{}", id), 10);
+                    let lock_p = Place::new(format!("RwLock_{}", id), 10, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -545,7 +596,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 | LockGuardTy::SpinMutex(_) => {
                     let lock_name = format!("Mutex_{}", id);
 
-                    let lock_p = Place::new(lock_name, 1);
+                    let lock_p = Place::new(lock_name, 1, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -553,7 +604,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
                 _ => {
                     let lock_name = format!("RwLock_{}", id);
-                    let lock_p = Place::new(lock_name, 10);
+                    let lock_p = Place::new(lock_name, 10, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -655,8 +706,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     // 创建新的Transition
                     let new_trans = Transition::new(
                         format!("merged_trans_{}_{}", p1.index(), p2.index()),
-                        (0, 0),
-                        1,
+                        TransitionType::Control(ControlType::Basic),
                     );
                     let new_trans_idx = self.net.add_node(PetriNetNode::T(new_trans));
 
@@ -851,7 +901,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             for condvar_map in condvars.into_values() {
                 for condvar in condvar_map.into_iter() {
                     let condvar_name = format!("condvar:{:?}", condvar.1.span);
-                    let condvar_p = Place::new(condvar_name, 1);
+                    let condvar_p = Place::new(condvar_name, 1, PlaceType::CondVar);
                     let condvar_node = self.net.add_node(PetriNetNode::P(condvar_p));
                     self.condvars.insert(condvar.0.clone(), condvar_node);
                 }
@@ -921,9 +971,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             Entry::Occupied(node) => node.get().to_owned(),
             Entry::Vacant(v) => {
                 let func_name = self.tcx.def_path_str(def_id);
-                let func_start = Place::new(format!("{}_start", func_name), 0);
+                let func_start =
+                    Place::new(format!("{}_start", func_name), 0, PlaceType::FunctionStart);
                 let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                let func_end = Place::new(format!("{}_end", func_name), 0);
+                let func_end = Place::new(format!("{}_end", func_name), 0, PlaceType::FunctionEnd);
                 let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
                 *v.insert((func_start_node_id, func_end_node_id))
             }

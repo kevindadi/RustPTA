@@ -152,10 +152,9 @@ impl PTACallbacks {
         pn.construct();
         pn.save_petri_net_to_file();
 
-        // let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
-        // state_graph.generate_states();
-        // let result = state_graph.check_deadlock();
-        // log::info!("deadlock state: {}", result);
+        let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+        state_graph.generate_states();
+        state_graph.check_atomic_violation();
 
         // if self.options.crate_type == OwnCrateType::Lib {
         //     let api_spec = parse_api_spec(self.options.lib_apis_path.as_ref().unwrap())

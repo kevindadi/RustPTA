@@ -1,6 +1,6 @@
 use super::{
     callgraph::{CallGraph, InstanceId},
-    pn::{PetriNetEdge, PetriNetNode, Place},
+    pn::{ControlType, PetriNetEdge, PetriNetNode, Place, PlaceType, TransitionType},
 };
 use crate::{
     concurrency::{
@@ -139,7 +139,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn create_call_transition(&mut self, bb_idx: BasicBlock, fn_name: &str) -> NodeIndex {
         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "call");
-        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+        let bb_term_transition =
+            Transition::new(bb_term_name, TransitionType::Control(ControlType::Call));
         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
         self.net.add_edge(
@@ -215,7 +216,8 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                 bb_span = "".to_string();
             };
             let bb_name = fn_name.clone() + &format!("{:?}", bb_idx);
-            let bb_start_place = Place::new_with_span(bb_name, 0usize, bb_span);
+            let bb_start_place =
+                Place::new_with_span(bb_name, 0usize, PlaceType::BasicBlock, bb_span);
             let bb_start = self.net.add_node(PetriNetNode::P(bb_start_place));
             self.bb_node_start_end
                 .insert(bb_idx.clone(), bb_start.clone());
@@ -229,7 +231,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
 
             if bb_idx.index() == 0 {
                 let bb_start_name = format!("{}_{}_start", fn_name, bb_idx.index());
-                let bb_start_transition = Transition::new(bb_start_name, (0, 0), 1);
+                let bb_start_transition = Transition::new(
+                    bb_start_name,
+                    TransitionType::Control(ControlType::Start(self.instance_id)),
+                );
                 let bb_start = self.net.add_node(PetriNetNode::T(bb_start_transition));
 
                 self.net.add_edge(
@@ -248,7 +253,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                 match &term.kind {
                     TerminatorKind::Goto { target } => {
                         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "goto");
-                        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+                        let bb_term_transition = Transition::new(
+                            bb_term_name,
+                            TransitionType::Control(ControlType::Basic),
+                        );
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
                         self.net.add_edge(
@@ -269,7 +277,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                     + "switch"
                                     + t_num.to_string().as_str();
                             t_num += 1;
-                            let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+                            let bb_term_transition = Transition::new(
+                                bb_term_name,
+                                TransitionType::Control(ControlType::Branch),
+                            );
                             let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
                             self.net.add_edge(
@@ -287,7 +298,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                     }
                     TerminatorKind::UnwindResume => {
                         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "resume");
-                        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+                        let bb_term_transition = Transition::new(
+                            bb_term_name,
+                            TransitionType::Control(ControlType::Basic),
+                        );
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
                         self.net.add_edge(
                             *self.bb_node_start_end.get(&bb_idx).unwrap(),
@@ -300,8 +314,12 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                     }
                     TerminatorKind::UnwindTerminate(_) => {}
                     TerminatorKind::Return => {
+                        let return_node = self.function_counter.get(&def_id).unwrap().1;
                         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "return");
-                        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+                        let bb_term_transition = Transition::new(
+                            bb_term_name,
+                            TransitionType::Control(ControlType::Return(self.instance_id)),
+                        );
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
                         self.net.add_edge(
                             *self.bb_node_start_end.get(&bb_idx).unwrap(),
@@ -309,14 +327,16 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             PetriNetEdge { label: 1usize },
                         );
 
-                        let return_node = self.function_counter.get(&def_id).unwrap().1;
                         self.net
                             .add_edge(bb_end, return_node, PetriNetEdge { label: 1usize });
                     }
                     TerminatorKind::Unreachable => {}
                     TerminatorKind::Assert { target, .. } => {
                         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "assert");
-                        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+                        let bb_term_transition = Transition::new(
+                            bb_term_name,
+                            TransitionType::Control(ControlType::Basic),
+                        );
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
                         self.net.add_edge(
@@ -353,7 +373,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                         // let handle_id = JoinHanderId::new(self.instance_id, destination.local);
 
                         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "call");
-                        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+                        let bb_term_transition = Transition::new(
+                            bb_term_name,
+                            TransitionType::Control(ControlType::Call),
+                        );
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
                         self.net.add_edge(
@@ -368,8 +391,22 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             match &self.lockguards[&lockguard_id].lockguard_ty {
                                 LockGuardTy::StdMutex(_)
                                 | LockGuardTy::ParkingLotMutex(_)
-                                | LockGuardTy::SpinMutex(_)
-                                | LockGuardTy::StdRwLockRead(_)
+                                | LockGuardTy::SpinMutex(_) => {
+                                    self.net.add_edge(
+                                        *lock_node,
+                                        bb_end,
+                                        PetriNetEdge { label: 1usize },
+                                    );
+
+                                    match self.net.node_weight_mut(bb_end) {
+                                        Some(PetriNetNode::T(t)) => {
+                                            t.transition_type = TransitionType::Lock;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
+                                LockGuardTy::StdRwLockRead(_)
                                 | LockGuardTy::ParkingLotRead(_)
                                 | LockGuardTy::SpinRead(_) => {
                                     self.net.add_edge(
@@ -377,6 +414,13 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                         bb_end,
                                         PetriNetEdge { label: 1usize },
                                     );
+
+                                    match self.net.node_weight_mut(bb_end) {
+                                        Some(PetriNetNode::T(t)) => {
+                                            t.transition_type = TransitionType::RwLockRead;
+                                        }
+                                        _ => {}
+                                    }
                                 }
                                 _ => {
                                     self.net.add_edge(
@@ -384,6 +428,12 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                         bb_end,
                                         PetriNetEdge { label: 10usize },
                                     );
+                                    match self.net.node_weight_mut(bb_end) {
+                                        Some(PetriNetNode::T(t)) => {
+                                            t.transition_type = TransitionType::RwLockWrite;
+                                        }
+                                        _ => {}
+                                    }
                                 }
                             }
                             match (target, unwind) {
@@ -436,6 +486,13 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                                 PetriNetEdge { label: 1usize },
                                             );
                                         }
+                                        match self.net.node_weight_mut(bb_end) {
+                                            Some(PetriNetNode::T(t)) => {
+                                                t.transition_type =
+                                                    TransitionType::Control(ControlType::Spawn);
+                                            }
+                                            _ => {}
+                                        }
                                         match target {
                                             Some(t) => {
                                                 self.net.add_edge(
@@ -483,6 +540,13 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                                     continue;
                                                 }
                                             };
+                                        }
+                                        match self.net.node_weight_mut(bb_end) {
+                                            Some(PetriNetNode::T(t)) => {
+                                                t.transition_type =
+                                                    TransitionType::Control(ControlType::Join);
+                                            }
+                                            _ => {}
                                         }
                                         match spawn_def_id {
                                             Some(s_def_id) => {
@@ -532,26 +596,73 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                     {
                                         ApproximateAliasKind::Possibly
                                         | ApproximateAliasKind::Probably => {
-                                            self.net.add_edge(
+                                            // 创建新的库所和变迁对表示atomic load
+                                            let atomic_load_place = Place::new_with_span(
+                                                format!(
+                                                    "atomic_load_in_{:?}_{:?}",
+                                                    current_id.instance_id.index(),
+                                                    bb_idx.index()
+                                                ),
+                                                0,
+                                                PlaceType::BasicBlock,
+                                                bb_span.clone(),
+                                            );
+                                            let atomic_load_place_node = self
+                                                .net
+                                                .add_node(PetriNetNode::P(atomic_load_place));
+
+                                            let _ = self.net.add_edge(
                                                 bb_end,
-                                                *atomic_e.1,
+                                                atomic_load_place_node,
                                                 PetriNetEdge { label: 1usize },
                                             );
 
                                             if let Some(order) =
                                                 self.atomic_order_maps.get(&current_id)
                                             {
-                                                log::info!(
-                                                    "atomic load: {:?} -> {:?} with order {:?}",
-                                                    current_id,
-                                                    atomic_e.0,
-                                                    order
+                                                let atomic_load_transition = Transition::new(
+                                                    format!(
+                                                        "atomic_{:?}_load_{:?}_{:?}",
+                                                        self.instance_id.index(),
+                                                        order,
+                                                        bb_idx.index()
+                                                    ),
+                                                    TransitionType::AtomicLoad(
+                                                        atomic_e.0.clone().into(),
+                                                        order.clone(),
+                                                        bb_span.clone(),
+                                                    ),
                                                 );
-                                            } else {
-                                                log::info!(
-                                                    "No ordering found for {:?}",
-                                                    atomic_e.0
+                                                let atomic_load_transition_node =
+                                                    self.net.add_node(PetriNetNode::T(
+                                                        atomic_load_transition,
+                                                    ));
+                                                self.net.add_edge(
+                                                    atomic_load_place_node,
+                                                    atomic_load_transition_node,
+                                                    PetriNetEdge { label: 1usize },
                                                 );
+                                                self.net.add_edge(
+                                                    atomic_load_transition_node,
+                                                    *atomic_e.1,
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+                                                self.net.add_edge(
+                                                    *atomic_e.1,
+                                                    atomic_load_transition_node,
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+
+                                                match target {
+                                                    Some(t) => {
+                                                        self.net.add_edge(
+                                                            atomic_load_transition_node,
+                                                            *self.bb_node_start_end.get(t).unwrap(),
+                                                            PetriNetEdge { label: 1usize },
+                                                        );
+                                                    }
+                                                    _ => {}
+                                                }
                                             }
                                         }
 
@@ -573,20 +684,71 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                     {
                                         ApproximateAliasKind::Possibly
                                         | ApproximateAliasKind::Probably => {
+                                            let atomic_store_place = Place::new_with_span(
+                                                format!(
+                                                    "atomic_store_in_{:?}_{:?}",
+                                                    current_id.instance_id.index(),
+                                                    bb_idx.index()
+                                                ),
+                                                0,
+                                                PlaceType::BasicBlock,
+                                                bb_span.clone(),
+                                            );
+                                            let atomic_store_place_node = self
+                                                .net
+                                                .add_node(PetriNetNode::P(atomic_store_place));
+
                                             self.net.add_edge(
                                                 bb_end,
-                                                *atomic_e.1,
+                                                atomic_store_place_node,
                                                 PetriNetEdge { label: 1usize },
                                             );
+
                                             if let Some(order) =
                                                 self.atomic_order_maps.get(&current_id)
                                             {
-                                                log::info!(
-                                                    "atomic load: {:?} -> {:?} with order {:?}",
-                                                    current_id,
-                                                    atomic_e.0,
-                                                    order
+                                                let atomic_store_transition = Transition::new(
+                                                    format!(
+                                                        "atomic_{:?}_store_{:?}_{:?}",
+                                                        self.instance_id.index(),
+                                                        order,
+                                                        bb_idx.index()
+                                                    ),
+                                                    TransitionType::AtomicStore(
+                                                        atomic_e.0.clone().into(),
+                                                        order.clone(),
+                                                        bb_span.clone(),
+                                                    ),
                                                 );
+                                                let atomic_store_transition_node =
+                                                    self.net.add_node(PetriNetNode::T(
+                                                        atomic_store_transition,
+                                                    ));
+                                                self.net.add_edge(
+                                                    atomic_store_place_node,
+                                                    atomic_store_transition_node,
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+                                                self.net.add_edge(
+                                                    atomic_store_transition_node,
+                                                    *atomic_e.1,
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+                                                self.net.add_edge(
+                                                    *atomic_e.1,
+                                                    atomic_store_transition_node,
+                                                    PetriNetEdge { label: 1usize },
+                                                );
+                                                match target {
+                                                    Some(t) => {
+                                                        self.net.add_edge(
+                                                            atomic_store_transition_node,
+                                                            *self.bb_node_start_end.get(t).unwrap(),
+                                                            PetriNetEdge { label: 1usize },
+                                                        );
+                                                    }
+                                                    _ => {}
+                                                }
                                             } else {
                                                 log::info!(
                                                     "No ordering found for {:?}",
@@ -638,17 +800,29 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                                         _ => continue,
                                     }
                                 }
+                                match self.net.node_weight_mut(bb_end) {
+                                    Some(PetriNetNode::T(t)) => {
+                                        t.transition_type = TransitionType::Notify;
+                                    }
+                                    _ => {}
+                                }
                                 continue;
                             } else if callee_func_name.contains("Condvar::wait") {
                                 let bb_wait_name =
                                     format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
 
-                                let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
+                                let bb_wait_place = Place::new_with_span(
+                                    bb_wait_name,
+                                    0,
+                                    PlaceType::BasicBlock,
+                                    bb_span,
+                                );
                                 let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
 
                                 let bb_ret_name =
                                     format!("{}_{}_{}", fn_name, bb_idx.index(), "ret");
-                                let bb_ret_transition = Transition::new(bb_ret_name, (0, 0), 1);
+                                let bb_ret_transition =
+                                    Transition::new(bb_ret_name, TransitionType::Wait);
                                 let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
 
                                 self.net
@@ -730,12 +904,20 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                             }
 
                             let bb_wait_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "wait");
-                            let bb_wait_place = Place::new_with_span(bb_wait_name, 0, bb_span);
+                            let bb_wait_place = Place::new_with_span(
+                                bb_wait_name,
+                                0,
+                                PlaceType::BasicBlock,
+                                bb_span,
+                            );
                             let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
 
                             let bb_ret_name =
                                 format!("{}_{}_{}", fn_name, bb_idx.index(), "return");
-                            let bb_ret_transition = Transition::new(bb_ret_name, (0, 0), 1);
+                            let bb_ret_transition = Transition::new(
+                                bb_ret_name,
+                                TransitionType::Control(ControlType::Call),
+                            );
                             let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
 
                             self.net
@@ -791,7 +973,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                         replace: _,
                     } => {
                         let bb_term_name = format!("{}_{}_{}", fn_name, bb_idx.index(), "drop");
-                        let bb_term_transition = Transition::new(bb_term_name, (0, 0), 1);
+                        let bb_term_transition = Transition::new(
+                            bb_term_name,
+                            TransitionType::Control(ControlType::Drop),
+                        );
                         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
                         self.net.add_edge(

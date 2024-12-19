@@ -2,15 +2,34 @@ use petgraph::dot::{Config, Dot};
 use petgraph::graph::{node_index, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::{Direction, Graph};
+use serde_json::json;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use super::pn::{PetriNetEdge, PetriNetNode};
+use crate::concurrency::atomic::AtomicOrdering;
+use crate::memory::pointsto::AliasId;
+
+use super::pn::{ControlType, PetriNetEdge, PetriNetNode, PlaceType, TransitionType};
 
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct AtomicViolation {
+    violation_type: String,
+    variable: String,
+    locations: Vec<Location>,
+    state: Option<Vec<(usize, usize)>>, // 仅用于并发违背
+}
+
+#[derive(Serialize)]
+struct Location {
+    operation: String,
+    span: String,
+}
 #[derive(Debug, Clone)]
 pub struct StateEdge {
     pub label: String,
@@ -98,7 +117,7 @@ impl StateGraph {
         let mut queue = VecDeque::new();
         let all_states = Arc::new(Mutex::new(HashSet::<Vec<(usize, usize)>>::new()));
         let mut visited_states = HashSet::new();
-        // 初始化状态队列，加入初始网和标识
+        // 初始状态队列，加入初始网和标识
         queue.push_back((self.initial_net.clone(), self.initial_mark.clone()));
         {
             all_states
@@ -485,6 +504,248 @@ impl StateGraph {
             }
         }
         result
+    }
+
+    pub fn check_atomic_violation(&mut self) -> String {
+        let mut violations = Vec::new();
+
+        for node_idx in self.graph.node_indices() {
+            if let Some(PetriNetNode::T(transition)) = self.initial_net.node_weight(node_idx) {
+                if let TransitionType::AtomicLoad(var_id, _, load_span) =
+                    &transition.transition_type
+                {
+                    let (forward_violation, forward_stores) =
+                        self.check_path_violation(node_idx, var_id, Direction::Incoming);
+                    let (backward_violation, backward_stores) =
+                        self.check_path_violation(node_idx, var_id, Direction::Outgoing);
+
+                    if forward_violation || backward_violation {
+                        let mut locations = vec![Location {
+                            operation: "load".to_string(),
+                            span: load_span.clone(),
+                        }];
+
+                        // 添加前向路径上的 store 操作
+                        for (store_span, direction) in forward_stores {
+                            locations.push(Location {
+                                operation: format!("store_{}", direction),
+                                span: store_span,
+                            });
+                        }
+
+                        // 添加后向路径上的 store 操作
+                        for (store_span, direction) in backward_stores {
+                            locations.push(Location {
+                                operation: format!("store_{}", direction),
+                                span: store_span,
+                            });
+                        }
+
+                        violations.push(AtomicViolation {
+                            violation_type: "unsynchronized_path".to_string(),
+                            variable: format!("{:?}", var_id),
+                            locations,
+                            state: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 2. 检查状态图中的并发 Relaxed 操作
+        for state_node in self.graph.node_indices() {
+            let mut relaxed_ops = HashMap::new();
+
+            // 收集当前状态下所有可能的 Relaxed 操作
+            for edge in self.graph.edges(state_node) {
+                if let Some(PetriNetNode::T(transition)) =
+                    self.initial_net.node_weight(edge.target())
+                {
+                    match &transition.transition_type {
+                        TransitionType::AtomicLoad(var_id, AtomicOrdering::Relaxed, span)
+                        | TransitionType::AtomicStore(var_id, AtomicOrdering::Relaxed, span) => {
+                            relaxed_ops
+                                .entry(var_id.instance_id)
+                                .or_insert(Vec::new())
+                                .push((edge.target(), span.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // 检查每个变量的并发操作
+            for (var_id, ops) in relaxed_ops {
+                if ops.len() >= 2 {
+                    // 检查每对操作是否都缺乏同步机制
+                    for i in 0..ops.len() {
+                        for j in i + 1..ops.len() {
+                            let (node1, span1) = &ops[i];
+                            let (node2, span2) = &ops[j];
+
+                            // 检查这两个操作的路径上是否有同步机制
+                            if !self.has_sync_between_ops(*node1, *node2) {
+                                let mut locations = Vec::new();
+                                locations.push(Location {
+                                    operation: "concurrent_relaxed".to_string(),
+                                    span: span1.clone(),
+                                });
+                                locations.push(Location {
+                                    operation: "concurrent_relaxed".to_string(),
+                                    span: span2.clone(),
+                                });
+
+                                if let Some(state_mark) = self.graph.node_weight(state_node) {
+                                    violations.push(AtomicViolation {
+                                        violation_type: "concurrent_relaxed_operations".to_string(),
+                                        variable: format!("NodeIndex({})", var_id.index()),
+                                        locations,
+                                        state: Some(state_mark.mark.clone()),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if violations.is_empty() {
+            log::info!("No atomicity violations detected.");
+        }
+
+        log::info!(
+            "Atomic violations:\n{}",
+            serde_json::to_string_pretty(&json!({
+                "violations": violations.iter().map(|v| {
+                    json!({
+                        "type": v.violation_type,
+                        "variable": v.variable,
+                        "locations": v.locations.iter().map(|loc| {
+                            json!({
+                                "operation": loc.operation,
+                                "span": loc.span
+                            })
+                        }).collect::<Vec<_>>(),
+                        "state": v.state
+                    })
+                }).collect::<Vec<_>>()
+            }))
+            .unwrap()
+        );
+
+        "".to_string()
+    }
+
+    // 修改返回类型以包含 store 的位置信息
+    fn check_path_violation(
+        &self,
+        start: NodeIndex,
+        var_id: &AliasId,
+        direction: Direction,
+    ) -> (bool, Vec<(String, String)>) {
+        let mut visited = HashSet::new();
+        let mut stack = vec![start];
+        let mut violation_spans = Vec::new();
+        let direction_str = match direction {
+            Direction::Incoming => "before",
+            Direction::Outgoing => "after",
+        };
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+
+            // 打印当前节点的所有邻居
+            log::debug!("Current node: {:?}", current);
+            log::debug!("Neighbors in direction {:?}:", direction_str);
+            for edge in self.initial_net.edges_directed(current, direction) {
+                let neighbor = match direction {
+                    Direction::Incoming => edge.source(),
+                    Direction::Outgoing => edge.target(),
+                };
+                if let Some(node) = self.initial_net.node_weight(neighbor) {
+                    log::debug!("  -> {:?}: {:?}", neighbor, node);
+                }
+            }
+
+            match self.initial_net.node_weight(current) {
+                Some(PetriNetNode::T(transition)) => match &transition.transition_type {
+                    TransitionType::AtomicStore(v_id, AtomicOrdering::Relaxed, span) => {
+                        log::debug!("Comparing var_ids: current={:?}, target={:?}", v_id, var_id);
+                        // 只比较 instance_id，忽略 local 字段
+                        if v_id.instance_id == var_id.instance_id {
+                            log::debug!("Found matching store: {:?} at {:?}", span, current);
+                            violation_spans.push((span.clone(), direction_str.to_string()));
+                        }
+                    }
+                    TransitionType::Lock
+                    | TransitionType::Unlock
+                    | TransitionType::RwLockRead
+                    | TransitionType::RwLockWrite => {
+                        log::debug!("Found sync operation at {:?}, stopping path", current);
+                        return (false, vec![]);
+                    }
+                    _ => {}
+                },
+                Some(PetriNetNode::P(place)) => {
+                    if place.place_type == PlaceType::Atomic {
+                        log::debug!("Skipping atomic place: {:?}", place);
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+
+            for edge in self.initial_net.edges_directed(current, direction) {
+                let next = match direction {
+                    Direction::Incoming => edge.source(),
+                    Direction::Outgoing => edge.target(),
+                };
+                stack.push(next);
+            }
+        }
+
+        log::debug!(
+            "Path check complete. Found violations: {:?}",
+            violation_spans
+        );
+        (!violation_spans.is_empty(), violation_spans)
+    }
+
+    fn has_sync_between_ops(&self, op1: NodeIndex, op2: NodeIndex) -> bool {
+        let mut visited = HashSet::new();
+        let mut stack = vec![op1];
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+
+            if current == op2 {
+                continue;
+            }
+
+            if let Some(PetriNetNode::T(transition)) = self.initial_net.node_weight(current) {
+                match transition.transition_type {
+                    TransitionType::Lock
+                    | TransitionType::Unlock
+                    | TransitionType::RwLockRead
+                    | TransitionType::RwLockWrite => {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+
+            // 继续搜索相邻节点
+            for edge in self.initial_net.edges(current) {
+                stack.push(edge.target());
+            }
+        }
+
+        false
     }
 
     #[allow(dead_code)]
