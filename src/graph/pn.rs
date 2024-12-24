@@ -8,6 +8,7 @@ use crate::utils::ApiSpec;
 use crate::Options;
 use log::debug;
 use petgraph::graph::NodeIndex;
+use petgraph::visit::Control;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
 use petgraph::Graph;
@@ -103,47 +104,57 @@ pub struct Transition {
     pub name: String,
     pub weight: u32,
     shape: Shape,
-    pub transition_type: TransitionType,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TransitionType {
-    // 锁相关
-    Lock,
-    Unlock,
-    RwLockRead,
-    RwLockWrite,
-
-    // 条件变量相关
-    Notify,
-    Wait,
-
-    // 内存访问相关
-    UnsafeRead,
-    UnsafeWrite,
-
-    // 原子操作相关
-    AtomicLoad(AliasId, AtomicOrdering, String),
-    AtomicStore(AliasId, AtomicOrdering, String),
-
-    // 控制流相关
-    Control(ControlType),
+    pub transition_type: ControlType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ControlType {
+    // 基本控制结构
     Start(InstanceId),
-    Return(InstanceId),
-    Call,   // 函数调用
-    Branch, // 分支
-    Drop,   // 丢弃
-    Join,   // 线程join
-    Spawn,  // 线程创建
-    Basic,  // 基本控制流
+    Goto,               // 直接跳转
+    Switch,             // 条件分支
+    Return(InstanceId), // 函数返回
+    Drop(DropType),     // 资源释放
+
+    // 函数调用
+    Call(CallType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallType {
+    // 同步原语调用
+    Lock(NodeIndex),
+    RwLockRead(NodeIndex),
+    RwLockWrite(NodeIndex),
+    Notify(NodeIndex),
+    Wait,
+
+    // 原子操作
+    AtomicLoad(AliasId, AtomicOrdering, String),
+    AtomicStore(AliasId, AtomicOrdering, String),
+    AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String),
+    // 内存访问相关
+    UnsafeRead(NodeIndex),
+    UnsafeWrite(NodeIndex),
+
+    // 线程操作
+    Spawn,
+    Join,
+
+    // 普通函数调用
+    Function,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DropType {
+    Unlock(NodeIndex),
+    DropRead(NodeIndex),
+    DropWrite(NodeIndex),
+    Basic,
 }
 
 impl Transition {
-    pub fn new(name: String, transition_type: TransitionType) -> Self {
+    pub fn new(name: String, transition_type: ControlType) -> Self {
         Self {
             name,
             transition_type,
@@ -198,7 +209,7 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'pn CallGraph<'tcx>,
-    alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
+    pub alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
     function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
@@ -218,8 +229,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         callgraph: &'pn CallGraph<'tcx>,
         api_spec: ApiSpec,
+        av: bool,
     ) -> Self {
-        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
+        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph, av));
         Self {
             options,
             tcx,
@@ -347,6 +359,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::info!("reduce state");
         }
         //self.reduce_state_from(self.entry_node);
+
+        // 验证网络结构
+        if let Err(err) = self.verify_structure() {
+            log::error!("Petri net structure verification failed: {}", err);
+            // 可以选择在这里panic或者进行其他错误处理
+        }
     }
 
     pub fn visitor_function_body(
@@ -460,7 +478,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     // Construct lock for place
-    pub fn construct_lock(&mut self, alias_analysis: &RefCell<AliasAnalysis>) {
+    pub fn construct_lock(&mut self) {
         let lockguards = self.collect_lockguards();
         // classify the lock point to the same memory location
         // let mut lockguard_relations = FxHashSet::<(LockGuardId, LockGuardId)>::default();
@@ -480,9 +498,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 if a == b {
                     continue;
                 }
-                let possibility = self.deadlock_possibility(a, b, &info, alias_analysis);
+                let possibility = self
+                    .alias
+                    .borrow_mut()
+                    .alias(a.clone().into(), b.clone().into());
                 match possibility {
-                    DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                         if !lock_map.contains_key(a) && !lock_map.contains_key(b) {
                             lock_map.insert(*a, counter);
                             lock_map.insert(*b, counter);
@@ -551,9 +572,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         debug!("{:?}", lockid_vec);
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
-                match self.deadlock_possibility(&lockid_vec[i], &lockid_vec[j], &info, &self.alias)
+                match self
+                    .alias
+                    .borrow_mut()
+                    .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
                 {
-                    DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                         adj_list.entry(i).or_insert_with(Vec::new).push(j);
                         adj_list.entry(j).or_insert_with(Vec::new).push(i);
                     }
@@ -706,7 +730,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     // 创建新的Transition
                     let new_trans = Transition::new(
                         format!("merged_trans_{}_{}", p1.index(), p2.index()),
-                        TransitionType::Control(ControlType::Basic),
+                        ControlType::Goto,
                     );
                     let new_trans_idx = self.net.add_node(PetriNetNode::T(new_trans));
 
@@ -926,46 +950,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         current_mark
     }
 
-    fn deadlock_possibility(
-        &self,
-        a: &LockGuardId,
-        b: &LockGuardId,
-        lockguards: &LockGuardMap<'tcx>,
-        alias_analysis: &RefCell<AliasAnalysis>,
-    ) -> DeadlockPossibility {
-        let a_ty = &lockguards[a].lockguard_ty;
-        let b_ty = &lockguards[b].lockguard_ty;
-        if let (LockGuardTy::ParkingLotRead(_), LockGuardTy::ParkingLotRead(_)) = (a_ty, b_ty) {
-            if lockguards[b].is_gen_only_by_recursive() {
-                return DeadlockPossibility::Unlikely;
-            }
-        }
-
-        if lockguards[a].span == lockguards[b].span {
-            return DeadlockPossibility::Unlikely;
-        }
-        let possibility = match a_ty.deadlock_with(b_ty) {
-            DeadlockPossibility::Probably => {
-                match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
-                    ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
-                    ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-                    ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-                    ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-                }
-            }
-            DeadlockPossibility::Possibly => {
-                match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
-                    ApproximateAliasKind::Probably => DeadlockPossibility::Possibly,
-                    ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-                    ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-                    ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-                }
-            }
-            _ => DeadlockPossibility::Unlikely,
-        };
-        possibility
-    }
-
     pub fn get_or_insert_node(&mut self, def_id: DefId) -> (NodeIndex, NodeIndex) {
         match self.function_counter.entry(def_id) {
             Entry::Occupied(node) => node.get().to_owned(),
@@ -1008,5 +992,78 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let mut file = std::fs::File::create("graph.dot").unwrap();
             let _ = file.write_all(format!("{:?}", pn_dot).as_bytes());
         }
+    }
+
+    /// 验证Petri网的结构正确性
+    ///
+    /// 检查以下规则:
+    /// 1. Transition节点的所有前驱和后继必须是Place节点
+    /// 2. Place节点的所有前驱和后继必须是Transition节点
+    /// 3. Place节点可以没有前驱或后继
+    ///
+    /// 返回:
+    /// - Ok(()) 如果网络结构正确
+    /// - Err(String) 包含错误描述的字符串
+    pub fn verify_structure(&self) -> Result<(), String> {
+        for node_idx in self.net.node_indices() {
+            match &self.net[node_idx] {
+                PetriNetNode::T(transition) => {
+                    // 检查Transition的前驱
+                    for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
+                        match &self.net[pred] {
+                            PetriNetNode::T(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Transition '{}' has a Transition predecessor",
+                                    transition.name
+                                ));
+                            }
+                            PetriNetNode::P(_) => {} // 正确的情况
+                        }
+                    }
+
+                    // 检查Transition的后继
+                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
+                        match &self.net[succ] {
+                            PetriNetNode::T(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Transition '{}' has a Transition successor",
+                                    transition.name
+                                ));
+                            }
+                            PetriNetNode::P(_) => {} // 正确的情况
+                        }
+                    }
+                }
+                PetriNetNode::P(place) => {
+                    // 检查Place的前驱（如果有的话）
+                    for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
+                        match &self.net[pred] {
+                            PetriNetNode::P(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Place '{}' has a Place predecessor",
+                                    place.name
+                                ));
+                            }
+                            PetriNetNode::T(_) => {} // 正确的情况
+                        }
+                    }
+
+                    // 检查Place的后继（如果有的话）
+                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
+                        match &self.net[succ] {
+                            PetriNetNode::P(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Place '{}' has a Place successor",
+                                    place.name
+                                ));
+                            }
+                            PetriNetNode::T(_) => {} // 正确的情况
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }

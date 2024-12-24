@@ -15,7 +15,7 @@ use rustc_middle::mir::{
 };
 
 use rustc_middle::mir::Const;
-use rustc_middle::ty::{Instance, TyCtxt, TyKind};
+use rustc_middle::ty::{self, Instance, TyCtxt, TyKind};
 
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
@@ -32,22 +32,24 @@ pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     pts: PointsToMap<'tcx>,
+    pub av: bool,
     // pub callgraph: CallGraph<'tcx>,
 }
 
 pub type PointsToMap<'tcx> = FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>>;
 
 impl<'a, 'tcx> Andersen<'a, 'tcx> {
-    pub fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+    pub fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>, av: bool) -> Self {
         Self {
             body,
             tcx,
             pts: Default::default(),
+            av,
         }
     }
 
     pub fn analyze(&mut self) {
-        let mut collector = ConstraintGraphCollector::new(self.body, self.tcx);
+        let mut collector = ConstraintGraphCollector::new(self.body, self.tcx, self.av);
         collector.visit_body(self.body);
         let mut graph = collector.finish();
         let mut worklist = VecDeque::new();
@@ -108,7 +110,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
         }
     }
 
-    /// pts(target) = pts(target) U pts(source), return true if pts(target) changed
+    /// pts(target) = pts(target) U pts(source)
     fn union_pts(&mut self, target: &ConstraintNode<'tcx>, source: &ConstraintNode<'tcx>) -> bool {
         // skip Alloc target
         if matches!(target, ConstraintNode::Alloc(_)) {
@@ -400,20 +402,22 @@ struct ConstraintGraphCollector<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     graph: ConstraintGraph<'tcx>,
+    av: bool,
 }
 
 impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
-    fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+    fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>, av: bool) -> Self {
         Self {
             body,
             tcx,
             graph: ConstraintGraph::default(),
+            av,
         }
     }
 
     fn process_assignment(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>) {
         let lhs_pattern = Self::process_place(place.as_ref());
-        let rhs_patterns = Self::process_rvalue(rvalue);
+        let rhs_patterns = Self::process_rvalue(rvalue, self.av);
         // TODO(boqin): check if mk_place_field work for all places.
         // original closure impl:
         //   _x = closure => _x[0], _x[1], ... are upvars. Inside the closure, I check if a local var aliases with the upvars.
@@ -431,6 +435,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 }
             }
         }
+
         for rhs_pattern in rhs_patterns.into_iter() {
             match (&lhs_pattern, rhs_pattern) {
                 // a = &b
@@ -506,7 +511,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
     /// - 对于引用操作（Ref/RawPtr等），返回直接访问模式
     /// - 对于二元操作，处理两个操作数
     /// - 对于聚合类型，特殊处理原始指针和其他字段
-    fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Vec<Option<AccessPattern<'tcx>>> {
+    fn process_rvalue(rvalue: &Rvalue<'tcx>, av: bool) -> Vec<Option<AccessPattern<'tcx>>> {
         match rvalue {
             // 1. 处理简单的单操作数表达式
             // 如：y = x (Use)
@@ -528,13 +533,38 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             //    y = len(x) (Len)
             //    y = discriminant(x) (Discriminant)
             //    y = copy_for_deref(x) (CopyForDeref)
-            Rvalue::Ref(_, _, place)
-            | Rvalue::RawPtr(_, place)
+            // For a atomic value
+            // _1 = AtomicBool::new(move _2)  _4 = &_1; _7 = &_1;
+            // _1--|address|-->_4, _1--|address|-->_7
+            Rvalue::RawPtr(_, place)
             | Rvalue::Len(place)
             | Rvalue::Discriminant(place)
-            | Rvalue::CopyForDeref(place) => {
-                vec![Some(AccessPattern::Direct(place.as_ref()))]
+            | Rvalue::CopyForDeref(place) => match place.as_ref() {
+                PlaceRef {
+                    local: l,
+                    projection: [ProjectionElem::Deref, ref remain @ ..],
+                } => vec![Some(AccessPattern::Direct(PlaceRef {
+                    local: l,
+                    projection: remain,
+                }))],
+                _ => vec![Some(AccessPattern::Ref(place.as_ref()))],
+            },
+            Rvalue::Ref(_, _, place) => {
+                // if av {
+                //     vec![Some(AccessPattern::Direct(place.as_ref()))]
+                // } else {
+                //     vec![Some(AccessPattern::Ref(place.as_ref()))]
+                // }
+                vec![Some(AccessPattern::Ref(place.as_ref()))]
             }
+
+            // Rvalue::Ref(_, _, place)
+            // | Rvalue::RawPtr(_, place)
+            // | Rvalue::Len(place)
+            // | Rvalue::Discriminant(place)
+            // | Rvalue::CopyForDeref(place) => {
+            //     vec![Some(AccessPattern::Direct(place.as_ref()))]
+            // }
 
             // 3. 处理二元操作，需要分析两个操作数
             // 如：y = a + b
@@ -548,15 +578,12 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                         &fields.iter_enumerated().next().unwrap().1,
                     )]
                 }
-                _ => fields.iter().map(Self::process_operand).collect(),
+                _ => fields.iter().map(Self::process_operand).collect::<Vec<_>>(),
             },
             // 5. 处理线程本地引用，目前不需要分析
             Rvalue::ThreadLocalRef(_) => vec![],
             // 6. 处理无操作数的操作（如常量）
             Rvalue::NullaryOp(_, _) => vec![],
-
-            // 7. 其他未处理的情况返回空向量
-            _ => vec![],
         }
     }
 
@@ -643,7 +670,7 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
         {
             // 检查是否是 spawn 调用
             let func_ty = func.ty(self.body, self.tcx);
-            if let TyKind::FnDef(def_id, _) = func_ty.kind() {
+            if let TyKind::FnDef(def_id, _) | TyKind::Closure(def_id, _) = func_ty.kind() {
                 // 如果是spawn不执行assign
                 if self.tcx.def_path_str(def_id).contains("::spawn") {
                     return;
@@ -662,6 +689,7 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                         if ownership::is_arc_or_rc_clone(*def_id, substs, self.tcx)
                             || ownership::is_ptr_read(*def_id, self.tcx)
                         {
+                            //log::info!("alias copy {:?} {:?}", arg, dest);
                             return self.process_alias_copy(arg.as_ref(), dest.as_ref());
                         }
                     }
@@ -762,14 +790,150 @@ pub struct AliasAnalysis<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     callgraph: &'a CallGraph<'tcx>,
     pts: FxHashMap<DefId, PointsToMap<'tcx>>,
+    av: bool,
 }
 
 impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, callgraph: &'a CallGraph<'tcx>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, callgraph: &'a CallGraph<'tcx>, av: bool) -> Self {
         Self {
             tcx,
             callgraph,
             pts: Default::default(),
+            av,
+        }
+    }
+
+    /// 打印所有已分析函数的 points-to 关系
+    pub fn print_all_points_to_relations(&self) {
+        println!("\n=== Points-to Relations for All Functions ===");
+
+        // 获取所有函数并排序，保证输出顺序一致
+        let mut all_defs: Vec<_> = self.pts.keys().collect();
+        all_defs.sort_by_key(|def_id| self.tcx.def_path_str(**def_id));
+
+        for def_id in all_defs {
+            self.print_points_to_relations(*def_id);
+        }
+
+        println!("=== End of Points-to Relations ===\n");
+    }
+
+    /// 打印指定函数的 points-to 关系
+    pub fn print_points_to_relations(&self, def_id: DefId) {
+        if let Some(pts_map) = self.pts.get(&def_id) {
+            println!(
+                "\nPoints-to relations for {:?}:",
+                self.tcx.def_path_str(def_id)
+            );
+            println!("----------------------------------------");
+
+            // 修改排序逻辑，确保全序关系
+            let mut entries: Vec<_> = pts_map.iter().collect();
+            entries.sort_by(|(a, _), (b, _)| {
+                match (a, b) {
+                    // 首先按节点类型排序
+                    (ConstraintNode::Place(_), ConstraintNode::Constant(_)) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (ConstraintNode::Constant(_), ConstraintNode::Place(_)) => {
+                        std::cmp::Ordering::Greater
+                    }
+                    (ConstraintNode::Place(_), ConstraintNode::ConstantDeref(_)) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (ConstraintNode::ConstantDeref(_), ConstraintNode::Place(_)) => {
+                        std::cmp::Ordering::Greater
+                    }
+                    (ConstraintNode::Place(_), ConstraintNode::Alloc(_)) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (ConstraintNode::Alloc(_), ConstraintNode::Place(_)) => {
+                        std::cmp::Ordering::Greater
+                    }
+                    (ConstraintNode::Constant(_), ConstraintNode::ConstantDeref(_)) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (ConstraintNode::ConstantDeref(_), ConstraintNode::Constant(_)) => {
+                        std::cmp::Ordering::Greater
+                    }
+                    (ConstraintNode::Constant(_), ConstraintNode::Alloc(_)) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (ConstraintNode::Alloc(_), ConstraintNode::Constant(_)) => {
+                        std::cmp::Ordering::Greater
+                    }
+                    (ConstraintNode::ConstantDeref(_), ConstraintNode::Alloc(_)) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (ConstraintNode::Alloc(_), ConstraintNode::ConstantDeref(_)) => {
+                        std::cmp::Ordering::Greater
+                    }
+
+                    // 同类型节点按具体内容排序
+                    (ConstraintNode::Place(p1), ConstraintNode::Place(p2)) => {
+                        p1.local.cmp(&p2.local).then_with(|| {
+                            format!("{:?}", p1.projection).cmp(&format!("{:?}", p2.projection))
+                        })
+                    }
+                    (ConstraintNode::Constant(c1), ConstraintNode::Constant(c2)) => {
+                        format!("{:?}", c1).cmp(&format!("{:?}", c2))
+                    }
+                    (ConstraintNode::ConstantDeref(c1), ConstraintNode::ConstantDeref(c2)) => {
+                        format!("{:?}", c1).cmp(&format!("{:?}", c2))
+                    }
+                    (ConstraintNode::Alloc(p1), ConstraintNode::Alloc(p2)) => {
+                        p1.local.cmp(&p2.local).then_with(|| {
+                            format!("{:?}", p1.projection).cmp(&format!("{:?}", p2.projection))
+                        })
+                    }
+                }
+            });
+
+            for (node, pointees) in entries {
+                match node {
+                    ConstraintNode::Place(place) => {
+                        print!("_{}", place.local.as_u32());
+                        if !place.projection.is_empty() {
+                            print!("{:?}", place.projection);
+                        }
+                        print!(" → ");
+
+                        // 格式化指向的目标
+                        let targets: Vec<String> = pointees
+                            .iter()
+                            .map(|pointee| match pointee {
+                                ConstraintNode::Alloc(p) => format!("Alloc({:?})", p),
+                                ConstraintNode::Place(p) => {
+                                    if p.projection.is_empty() {
+                                        format!("_{}", p.local.as_u32())
+                                    } else {
+                                        format!("_{}{:?}", p.local.as_u32(), p.projection)
+                                    }
+                                }
+                                ConstraintNode::Constant(c) => format!("Const({:?})", c),
+                                ConstraintNode::ConstantDeref(c) => format!("ConstDeref({:?})", c),
+                            })
+                            .collect();
+
+                        println!("{{{}}}", targets.join(", "));
+                    }
+                    ConstraintNode::Constant(c) => {
+                        println!("Const({:?}) → {:?}", c, pointees);
+                    }
+                    ConstraintNode::ConstantDeref(c) => {
+                        println!("ConstDeref({:?}) → {:?}", c, pointees);
+                    }
+                    ConstraintNode::Alloc(place) => {
+                        println!(
+                            "Alloc(_{}{:?}) → {:?}",
+                            place.local.as_u32(),
+                            place.projection,
+                            pointees
+                        );
+                    }
+                }
+            }
+            println!("----------------------------------------\n");
         }
     }
 
@@ -803,7 +967,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                     if local1 == local2 {
                         return ApproximateAliasKind::Probably;
                     }
-                    self.intraproc_alias(instance1, &node1, &node2)
+                    self.intraproc_points_to(instance1, node1, node2)
                         .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
                     self.interproc_alias(instance1, &node1, instance2, &node2)
@@ -814,7 +978,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
-    pub fn alias_handle(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
+    pub fn alias_join(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
         let AliasId {
             instance_id: id1,
             local: local1,
@@ -841,28 +1005,11 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                     if local1 == local2 {
                         return ApproximateAliasKind::Probably;
                     }
-                    let body = self.tcx.instance_mir(instance1.def);
-                    let mut pointer_analysis = Andersen::new(body, self.tcx);
-                    pointer_analysis.analyze();
-                    let points_to_map = pointer_analysis.finish();
-                    if points_to_map
-                        .get(&node1)
-                        .unwrap()
-                        .intersection(points_to_map.get(&node2).unwrap())
-                        .next()
-                        .is_some()
-                    {
-                        log::info!(
-                            "node1 points map {:?} and node2 points map {:?}",
-                            points_to_map.get(&node1).unwrap(),
-                            points_to_map.get(&node2).unwrap()
-                        );
-                        return ApproximateAliasKind::Probably;
-                    } else {
-                        return ApproximateAliasKind::Unlikely;
-                    }
+                    self.intraproc_alias(instance1, &node1, &node2)
+                        .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
-                    ApproximateAliasKind::Unlikely
+                    self.interproc_alias(instance1, &node1, instance2, &node2)
+                        .unwrap_or(ApproximateAliasKind::Unknown)
                 }
             }
             _ => ApproximateAliasKind::Unknown,
@@ -907,97 +1054,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
-    /// 检查`pointer`是否指向`pointee`。
-    /// 首先获取`pointer`的points-to集合(pts(`pointer`))，
-    /// 然后检查pts(`pointer`)中的每个节点与`pointee`之间的别名关系。
-    /// 选择最高的别名类型。
-    pub fn points_to(&mut self, pointer: AliasId, pointee: AliasId) -> ApproximateAliasKind {
-        let AliasId {
-            instance_id: id1,
-            local: local1,
-        } = pointer;
-        let AliasId {
-            instance_id: id2,
-            local: local2,
-        } = pointee;
-
-        let instance1 = self
-            .callgraph
-            .index_to_instance(id1)
-            .map(CallGraphNode::instance);
-        let instance2 = self
-            .callgraph
-            .index_to_instance(id2)
-            .map(CallGraphNode::instance);
-
-        match (instance1, instance2) {
-            (Some(instance1), Some(instance2)) => {
-                let node1 = ConstraintNode::Place(Place::from(local1).as_ref());
-                let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
-                if instance1.def_id() == instance2.def_id() {
-                    self.intra_points_to(instance1, node1, node2)
-                } else {
-                    self.inter_points_to(instance1, node1, instance2, node2)
-                }
-            }
-            _ => ApproximateAliasKind::Unknown,
-        }
-    }
-
-    /// 检查同一函数内`pointer`是否指向`pointee`
-    /// 1. 获取函数体的MIR和points-to映射
-    /// 2. 获取pointer的points-to集合
-    /// 3. 遍历集合中的每个节点，检查与pointee的别名关系
-    /// 4. 返回发现的最高级别的别名类型
-    pub fn intra_points_to(
-        &mut self,
-        instance: &Instance<'tcx>,
-        pointer: ConstraintNode<'tcx>,
-        pointee: ConstraintNode<'tcx>,
-    ) -> ApproximateAliasKind {
-        let body = self.tcx.instance_mir(instance.def);
-        let points_to_map = self.get_or_insert_pts(instance.def_id(), body).clone();
-        let mut final_alias_kind = ApproximateAliasKind::Unknown;
-        let set = match points_to_map.get(&pointer) {
-            Some(set) => set,
-            None => return ApproximateAliasKind::Unlikely,
-        };
-        for local_pointee in set {
-            let alias_kind = self
-                .intraproc_alias(instance, local_pointee, &pointee)
-                .unwrap_or(ApproximateAliasKind::Unknown);
-            if alias_kind > final_alias_kind {
-                final_alias_kind = alias_kind;
-            }
-        }
-        final_alias_kind
-    }
-
-    pub fn inter_points_to(
-        &mut self,
-        instance1: &Instance<'tcx>,
-        pointer: ConstraintNode<'tcx>,
-        instance2: &Instance<'tcx>,
-        pointee: ConstraintNode<'tcx>,
-    ) -> ApproximateAliasKind {
-        let body1 = self.tcx.instance_mir(instance1.def);
-        let points_to_map = self.get_or_insert_pts(instance1.def_id(), body1).clone();
-        let mut final_alias_kind = ApproximateAliasKind::Unknown;
-        let set = match points_to_map.get(&pointer) {
-            Some(set) => set,
-            None => return ApproximateAliasKind::Unlikely,
-        };
-        for local_pointee in set {
-            let alias_kind = self
-                .interproc_alias(instance1, local_pointee, instance2, &pointee)
-                .unwrap_or(ApproximateAliasKind::Unknown);
-            if alias_kind > final_alias_kind {
-                final_alias_kind = alias_kind;
-            }
-        }
-        final_alias_kind
-    }
-
     /// Get the points-to info from cache `pts`.
     /// If not exists, then perform points-to analysis
     /// and add the obtained points-to info to cache.
@@ -1008,7 +1064,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             self.pts.get(&def_id).unwrap()
         } else {
             // 2. 如果没有，执行新的 points-to 分析
-            let mut pointer_analysis = Andersen::new(body, self.tcx);
+            let mut pointer_analysis = Andersen::new(body, self.tcx, self.av);
             pointer_analysis.analyze();
             let pts = pointer_analysis.finish();
             self.pts.entry(def_id).or_insert(pts)

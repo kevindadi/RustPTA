@@ -296,7 +296,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                             Operand::Constant(ref const_op) => const_op.ty(),
                         };
 
-                        if let ty::Closure(closure_def_id, _) = closure_ty.kind() {
+                        if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                            closure_ty.kind()
+                        {
                             if let Some(callee) =
                                 Instance::try_resolve(self.tcx, typing_env, *closure_def_id, substs)
                                     .ok()
@@ -309,6 +311,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                                         destination: destination.local,
                                     },
                                 ));
+
                                 return;
                             }
                         }

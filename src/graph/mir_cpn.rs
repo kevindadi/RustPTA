@@ -477,7 +477,9 @@ impl<'cpn, 'translate, 'tcx> Visitor<'tcx> for BodyToColorPetriNet<'cpn, 'transl
                                     Operand::Constant(ref const_op) => const_op.ty(),
                                 };
 
-                                if let ty::Closure(closure_def_id, _) = closure_ty.kind() {
+                                if let ty::Closure(closure_def_id, _)
+                                | ty::FnDef(closure_def_id, _) = closure_ty.kind()
+                                {
                                     self.add_edge(
                                         call_transition,
                                         self.function_counter.get(&closure_def_id).unwrap().0,
@@ -551,7 +553,7 @@ impl<'cpn, 'translate, 'tcx> Visitor<'tcx> for BodyToColorPetriNet<'cpn, 'transl
                         }
 
                         // 如果被调用的函数不属于当前crate,则忽略,直接链接到下一个Block
-                        match callee_func_name.starts_with(&self.options.crate_name) {
+                        match callee_func_name.contains(&self.options.crate_name) {
                             true => {}
                             false => {
                                 match (target, unwind) {
@@ -585,7 +587,7 @@ impl<'cpn, 'translate, 'tcx> Visitor<'tcx> for BodyToColorPetriNet<'cpn, 'transl
                                 (Some(target_block), _) => {
                                     let target_place =
                                         self.get_or_insert_bb_entry_node(*target_block, &fn_name);
-                                    self.add_edge(*callee_end, target_place, 1);
+                                    self.add_edge(*callee_end, ret_transition, 1);
                                     self.add_edge(ret_transition, target_place, 1);
                                 }
                                 _ => {}

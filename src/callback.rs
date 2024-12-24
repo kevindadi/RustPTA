@@ -135,100 +135,112 @@ impl PTACallbacks {
         let mut callgraph = CallGraph::new();
         callgraph.analyze(instances.clone(), tcx);
 
-        // 收集atomic变量和操作信息
-        log::debug!("Starting atomic operation collection");
-        let mut atomic_collector =
-            AtomicCollector::new(tcx, &callgraph, self.options.crate_name.clone());
-        let atomic_vars = atomic_collector.analyze();
+        if self.options.crate_type == OwnCrateType::Lib {
+            let api_spec = parse_api_spec(self.options.lib_apis_path.as_ref().unwrap())
+                .unwrap_or_else(|e| {
+                    log::error!("Failed to parse api spec: {}", e);
+                    ApiSpec::default()
+                });
 
-        // 输出收集到的atomic信息
-        atomic_collector.to_json_pretty().unwrap();
-        let mut pn = PetriNet::new(&self.options, tcx, &callgraph, ApiSpec::default());
+            let mut pn = PetriNet::new(&self.options, tcx, &callgraph, api_spec, false);
+            pn.construct();
+            pn.save_petri_net_to_file();
+            // log::info!("apis_marks: {:?}", pn.api_marks);
+            let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+            for (api_name, initial_mark) in pn.api_marks.iter() {
+                state_graph.generate_states_with_api(api_name.clone(), initial_mark.clone());
+            }
 
-        if !atomic_vars.is_empty() {
-            pn.add_atomic_places(&atomic_vars);
+            log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
+            return;
         }
+        log::info!("{}", callgraph.format_spawn_calls());
+        match &self.options.detector_kind {
+            DetectorKind::DataRace => {
+                let unsafe_analyzer =
+                    UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
+                let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
+                unsafe_info.iter().for_each(|(def_id, info)| {
+                    log::info!(
+                        "{}:\n{}",
+                        format_name(*def_id),
+                        serde_json::to_string_pretty(&json!({
+                            "unsafe_fn": info.is_unsafe_fn,
+                            "unsafe_blocks": info.unsafe_blocks,
+                            "unsafe_places": info.unsafe_places
+                        }))
+                        .unwrap()
+                    )
+                });
+                log::info!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
+                let mut cpn =
+                    ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data, false);
+                cpn.construct();
+                cpn.cpn_to_dot("cpn.dot").unwrap();
 
-        pn.construct();
-        pn.save_petri_net_to_file();
+                let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
+                state_graph.generate_states();
+                state_graph
+                    .race_info
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .for_each(|race_info| {
+                        log::info!(
+                            "Race {:?}:\n{}",
+                            serde_json::to_string(&json!({
+                                "unsafe_transitions": race_info.transitions,
+                            })),
+                            serde_json::to_string_pretty(&json!({
+                                "operations": race_info.span_str,
+                            }))
+                            .unwrap()
+                        )
+                    });
+            }
+            DetectorKind::AtomicityViolation => {
+                // 收集atomic变量和操作信息
+                log::debug!("Starting atomic operation collection");
+                let mut atomic_collector =
+                    AtomicCollector::new(tcx, &callgraph, self.options.crate_name.clone());
+                let atomic_vars = atomic_collector.analyze();
 
-        let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
-        state_graph.generate_states();
-        state_graph.check_atomic_violation();
+                // 输出收集到的atomic信息
+                atomic_collector.to_json_pretty().unwrap();
+                let mut pn =
+                    PetriNet::new(&self.options, tcx, &callgraph, ApiSpec::default(), true);
 
-        // if self.options.crate_type == OwnCrateType::Lib {
-        //     let api_spec = parse_api_spec(self.options.lib_apis_path.as_ref().unwrap())
-        //         .unwrap_or_else(|e| {
-        //             log::error!("Failed to parse api spec: {}", e);
-        //             ApiSpec::default()
-        //         });
+                if !atomic_vars.is_empty() {
+                    pn.add_atomic_places(&atomic_vars);
+                }
 
-        //     let mut pn = PetriNet::new(&self.options, tcx, &callgraph, api_spec);
-        //     pn.construct();
-        //     pn.save_petri_net_to_file();
-        //     // log::info!("apis_marks: {:?}", pn.api_marks);
-        //     let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
-        //     for (api_name, initial_mark) in pn.api_marks.iter() {
-        //         state_graph.generate_states_with_api(api_name.clone(), initial_mark.clone());
-        //     }
+                pn.construct();
+                pn.save_petri_net_to_file();
 
-        //     log::info!("deadlock state: {}", state_graph.check_api_deadlock());
-        //     return;
-        // }
-        // log::info!("{}", callgraph.format_spawn_calls());
-        // match &self.options.detector_kind {
-        //     DetectorKind::DataRace => {
-        //         let unsafe_analyzer =
-        //             UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
-        //         let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
-        //         unsafe_info.iter().for_each(|(def_id, info)| {
-        //             log::info!(
-        //                 "{}:\n{}",
-        //                 format_name(*def_id),
-        //                 serde_json::to_string_pretty(&json!({
-        //                     "unsafe_fn": info.is_unsafe_fn,
-        //                     "unsafe_blocks": info.unsafe_blocks,
-        //                     "unsafe_places": info.unsafe_places
-        //                 }))
-        //                 .unwrap()
-        //             )
-        //         });
+                let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+                state_graph.generate_states();
 
-        //         let mut cpn =
-        //             ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data);
-        //         cpn.construct();
-        //         cpn.cpn_to_dot("cpn.dot").unwrap();
+                state_graph.detect_atomic_violation();
+                if self.options.dump_options.dump_points_to {
+                    pn.alias.borrow_mut().print_all_points_to_relations();
+                }
+            }
+            _ => {
+                let mut pn =
+                    PetriNet::new(&self.options, tcx, &callgraph, ApiSpec::default(), false);
+                pn.construct();
+                pn.save_petri_net_to_file();
 
-        //         let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
-        //         state_graph.generate_states();
-        //         state_graph
-        //             .race_info
-        //             .lock()
-        //             .unwrap()
-        //             .iter()
-        //             .for_each(|race_info| {
-        //                 log::info!(
-        //                     "Race {:?}:\n{}",
-        //                     serde_json::to_string(&json!({
-        //                         "unsafe_transitions": race_info.transitions,
-        //                     })),
-        //                     serde_json::to_string_pretty(&json!({
-        //                         "operations": race_info.span_str,
-        //                     }))
-        //                     .unwrap()
-        //                 )
-        //             });
-        //     }
-        //     _ => {
-        //         let mut pn = PetriNet::new(&self.options, tcx, &callgraph, ApiSpec::default());
-        //         pn.construct();
-        //         pn.save_petri_net_to_file();
+                let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+                state_graph.generate_states();
+                let result = state_graph.detect_deadlock_use_state_reachable_graph();
+                log::info!("deadlock state: {}", result);
+                state_graph.detect_deadlock_use_model_check();
 
-        //         let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
-        //         state_graph.generate_states();
-        //         let result = state_graph.check_deadlock();
-        //         log::info!("deadlock state: {}", result);
-        //     }
-        // }
+                if self.options.dump_options.dump_points_to {
+                    pn.alias.borrow_mut().print_all_points_to_relations();
+                }
+            }
+        }
     }
 }

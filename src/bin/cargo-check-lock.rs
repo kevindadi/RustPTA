@@ -40,7 +40,7 @@ fn show_help() {
 }
 
 fn show_version() {
-    println!("PetriNet for checking deadlock and data race 0.0.1");
+    println!("PetriNet for detecting concurrency bugs 0.0.1");
 }
 
 fn cargo() -> Command {

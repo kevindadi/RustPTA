@@ -36,7 +36,7 @@ fn make_options_parser() -> clap::Command {
                 .long("mode")
                 .help("Analysis mode: deadlock detection, data race detection, etc.")
                 .default_values(&["deadlock"])
-                .value_parser(["deadlock", "datarace", "memory", "all"])
+                .value_parser(["deadlock", "datarace", "atomic", "all"])
                 .hide_default_value(true),
         )
         .arg(
@@ -75,6 +75,7 @@ fn make_options_parser() -> clap::Command {
                     "dump_petrinet",
                     "dump_stategraph",
                     "dump_unsafe",
+                    "dump_points_to",
                 ])
                 .multiple(true),
         )
@@ -100,6 +101,12 @@ fn make_options_parser() -> clap::Command {
             Arg::new("dump_unsafe")
                 .long("viz-unsafe")
                 .help("Generate unsafe operations report")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("dump_points_to")
+                .long("viz-pointsto")
+                .help("Generate points-to relations report")
                 .action(clap::ArgAction::SetTrue),
         );
     parser
@@ -139,6 +146,7 @@ pub struct DumpOptions {
     pub dump_petri_net: bool,
     pub dump_state_graph: bool,
     pub dump_unsafe_info: bool,
+    pub dump_points_to: bool,
 }
 
 impl Default for DumpOptions {
@@ -148,6 +156,7 @@ impl Default for DumpOptions {
             dump_petri_net: false,
             dump_state_graph: false,
             dump_unsafe_info: false,
+            dump_points_to: false,
         }
     }
 }
@@ -186,7 +195,7 @@ impl Options {
         // 更新 Options 结构体
         self.detector_kind = match matches.get_one::<String>("analysis_mode").unwrap().as_str() {
             "deadlock" => DetectorKind::Deadlock,
-            "atomicity_violation" => DetectorKind::AtomicityViolation,
+            "atomic" => DetectorKind::AtomicityViolation,
             "all" => DetectorKind::All,
             "datarace" => DetectorKind::DataRace,
             _ => DetectorKind::Deadlock,
@@ -221,6 +230,7 @@ impl Options {
             dump_petri_net: matches.get_flag("dump_petrinet"),
             dump_state_graph: matches.get_flag("dump_stategraph"),
             dump_unsafe_info: matches.get_flag("dump_unsafe"),
+            dump_points_to: matches.get_flag("dump_points_to"),
         };
 
         // 返回 rustc 参数

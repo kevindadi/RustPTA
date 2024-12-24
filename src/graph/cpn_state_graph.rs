@@ -129,7 +129,7 @@ impl CpnStateGraph {
             // 获取当前状态下所有使能的变迁
 
             let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
-            let race_infos = self.check_race_condition(&enabled_transitions);
+            let race_infos = self.detect_race_condition(&enabled_transitions);
 
             for race_info in race_infos {
                 let race_info_clone = race_info.clone();
@@ -195,7 +195,7 @@ impl CpnStateGraph {
                     self.graph.add_edge(
                         current_node,
                         new_node,
-                        StateEdge::new(format!("{:?}", transition), 1),
+                        StateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 }
             }
@@ -371,7 +371,7 @@ impl CpnStateGraph {
     /// - 相同的数据操作(RaceDataInfo)
     /// - 相同的基本块集合
     /// - 相同的源代码位置集合（忽略具体的列号）
-    pub fn check_race_condition(&self, enabled_transitions: &[NodeIndex]) -> HashSet<RaceInfo> {
+    pub fn detect_race_condition(&self, enabled_transitions: &[NodeIndex]) -> HashSet<RaceInfo> {
         // 1. 收集所有UnsafeDataTransition，同时保存操作类型和span信息
         let mut data_groups: HashMap<AliasId, Vec<(NodeIndex, DataOpType, String, String, usize)>> =
             HashMap::new();

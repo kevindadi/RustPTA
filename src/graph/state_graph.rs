@@ -3,15 +3,16 @@ use petgraph::graph::{node_index, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::{Direction, Graph};
 use serde_json::json;
-
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::Hash;
-use std::hash::Hasher;
+use std::error::Error;
 
 use crate::concurrency::atomic::AtomicOrdering;
 use crate::memory::pointsto::AliasId;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::Hash;
+use std::hash::Hasher;
+use z3::{ast::Int, Config, Context, Solver};
 
-use super::pn::{ControlType, PetriNetEdge, PetriNetNode, PlaceType, TransitionType};
+use super::pn::{CallType, ControlType, DropType, PetriNetEdge, PetriNetNode, PlaceType};
 
 use std::sync::{Arc, Mutex};
 
@@ -33,12 +34,17 @@ struct Location {
 #[derive(Debug, Clone)]
 pub struct StateEdge {
     pub label: String,
+    pub transition: NodeIndex,
     pub weight: u32,
 }
 
 impl StateEdge {
-    pub fn new(label: String, weight: u32) -> Self {
-        Self { label, weight }
+    pub fn new(label: String, transition: NodeIndex, weight: u32) -> Self {
+        Self {
+            label,
+            transition,
+            weight,
+        }
     }
 }
 
@@ -196,7 +202,7 @@ impl StateGraph {
                     self.graph.add_edge(
                         current_node,
                         new_node,
-                        StateEdge::new(format!("{:?}", transition), 1),
+                        StateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 }
             }
@@ -282,7 +288,7 @@ impl StateGraph {
                         .add_edge(
                             current_node,
                             new_node,
-                            StateEdge::new(format!("{:?}", transition), 1),
+                            StateEdge::new(format!("{:?}", transition), transition, 1),
                         );
                 }
             }
@@ -438,7 +444,7 @@ impl StateGraph {
     }
 
     // Check Deadlock
-    pub fn check_deadlock(&mut self) -> String {
+    pub fn detect_deadlock_use_state_reachable_graph(&mut self) -> String {
         use petgraph::graph::node_index;
         // Remove the terminal mark
         self.deadlock_marks.retain(|v| {
@@ -475,7 +481,132 @@ impl StateGraph {
         result
     }
 
-    pub fn check_api_deadlock(&mut self) -> String {
+    fn trace_until_return(
+        &self,
+        start: NodeIndex,
+        lock_self_node: NodeIndex,
+    ) -> Result<NodeIndex, Box<dyn Error>> {
+        let mut visited = HashSet::new();
+        let mut stack = vec![start];
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue; // Skip if already visited to avoid cycles
+            }
+
+            if let PetriNetNode::T(t) = &self.initial_net[current] {
+                match &t.transition_type {
+                    ControlType::Drop(DropType::Unlock(lock_node)) => {
+                        if lock_node == &lock_self_node {
+                            return Ok(current);
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Stop this path if we hit a return
+                if matches!(t.transition_type, ControlType::Return(_)) {
+                    continue;
+                }
+            }
+
+            // Add all outgoing edges to stack
+            for edge in self.initial_net.edges(current) {
+                stack.push(edge.target());
+            }
+        }
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Not found Unlock in the path",
+        )));
+    }
+
+    pub fn detect_deadlock_use_model_check(&self) -> String {
+        let mut result = String::new();
+        // let mut deadlocks = Vec::new();
+        let mut lock_unlock_map = HashMap::<NodeIndex, NodeIndex>::new();
+        for node in self.initial_net.node_indices() {
+            if let PetriNetNode::T(transition) = &self.initial_net[node] {
+                match &transition.transition_type {
+                    ControlType::Call(CallType::Lock(lock_self)) => {
+                        let unlock_node = self.trace_until_return(node, *lock_self).unwrap();
+                        lock_unlock_map.insert(node, unlock_node);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Search for deadlocks in state graph
+        let mut deadlock_states = Vec::new();
+
+        // Check each state for deadlocks
+        for state in self.graph.node_indices() {
+            for edge in self.graph.edges(state) {
+                let trans = edge.weight().transition.clone();
+                if let Some(&unlock) = lock_unlock_map.get(&trans) {
+                    let mut visited = HashSet::new();
+                    if !self.has_unlock_in_successors(state, unlock, &mut visited) {
+                        deadlock_states.push((state, trans));
+                    }
+                }
+            }
+        }
+
+        // Generate report
+        if deadlock_states.is_empty() {
+            result.push_str("No deadlocks detected\n");
+        } else {
+            result.push_str("Deadlocks detected in following states:\n");
+            for (i, lock_trans) in deadlock_states.iter().enumerate() {
+                result.push_str(&format!("\nDeadlock State #{}\n", i + 1));
+                result.push_str("Active Places:\n");
+
+                let places: Vec<String> = self
+                    .graph
+                    .node_weight(lock_trans.0)
+                    .unwrap()
+                    .mark
+                    .iter()
+                    .filter_map(|x| match &self.initial_net[node_index(x.0)] {
+                        PetriNetNode::P(p) => Some(format!(
+                            "  - {} (tokens: {}, location: {})",
+                            p.name, x.1, p.span
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+
+                result.push_str(&places.join("\n"));
+                result.push('\n');
+            }
+        }
+        result
+    }
+
+    fn has_unlock_in_successors(
+        &self,
+        start: NodeIndex,
+        target_unlock: NodeIndex,
+        visited: &mut HashSet<NodeIndex>,
+    ) -> bool {
+        if !visited.insert(start) {
+            return false;
+        }
+
+        for edge in self.graph.edges(start) {
+            let trans = edge.weight().transition.clone();
+            if trans == target_unlock {
+                return true;
+            }
+            if self.has_unlock_in_successors(edge.target(), target_unlock, visited) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn detect_api_deadlock(&mut self) -> String {
         let mut result = String::from("\n");
         for (api_name, deadlock_marks) in self.apis_deadlock_marks.iter() {
             result.push_str(&format!("API: {}\n", api_name));
@@ -506,12 +637,12 @@ impl StateGraph {
         result
     }
 
-    pub fn check_atomic_violation(&mut self) -> String {
+    pub fn detect_atomic_violation(&mut self) -> String {
         let mut violations = Vec::new();
 
         for node_idx in self.graph.node_indices() {
             if let Some(PetriNetNode::T(transition)) = self.initial_net.node_weight(node_idx) {
-                if let TransitionType::AtomicLoad(var_id, _, load_span) =
+                if let ControlType::Call(CallType::AtomicLoad(var_id, _, load_span)) =
                     &transition.transition_type
                 {
                     let (forward_violation, forward_stores) =
@@ -562,8 +693,16 @@ impl StateGraph {
                     self.initial_net.node_weight(edge.target())
                 {
                     match &transition.transition_type {
-                        TransitionType::AtomicLoad(var_id, AtomicOrdering::Relaxed, span)
-                        | TransitionType::AtomicStore(var_id, AtomicOrdering::Relaxed, span) => {
+                        ControlType::Call(CallType::AtomicLoad(
+                            var_id,
+                            AtomicOrdering::Relaxed,
+                            span,
+                        ))
+                        | ControlType::Call(CallType::AtomicStore(
+                            var_id,
+                            AtomicOrdering::Relaxed,
+                            span,
+                        )) => {
                             relaxed_ops
                                 .entry(var_id.instance_id)
                                 .or_insert(Vec::new())
@@ -672,7 +811,11 @@ impl StateGraph {
 
             match self.initial_net.node_weight(current) {
                 Some(PetriNetNode::T(transition)) => match &transition.transition_type {
-                    TransitionType::AtomicStore(v_id, AtomicOrdering::Relaxed, span) => {
+                    ControlType::Call(CallType::AtomicStore(
+                        v_id,
+                        AtomicOrdering::Relaxed,
+                        span,
+                    )) => {
                         log::debug!("Comparing var_ids: current={:?}, target={:?}", v_id, var_id);
                         // 只比较 instance_id，忽略 local 字段
                         if v_id.instance_id == var_id.instance_id {
@@ -680,10 +823,10 @@ impl StateGraph {
                             violation_spans.push((span.clone(), direction_str.to_string()));
                         }
                     }
-                    TransitionType::Lock
-                    | TransitionType::Unlock
-                    | TransitionType::RwLockRead
-                    | TransitionType::RwLockWrite => {
+                    ControlType::Call(CallType::Lock(_))
+                    | ControlType::Drop(DropType::Unlock(_))
+                    | ControlType::Call(CallType::RwLockRead(_))
+                    | ControlType::Call(CallType::RwLockWrite(_)) => {
                         log::debug!("Found sync operation at {:?}, stopping path", current);
                         return (false, vec![]);
                     }
@@ -729,10 +872,10 @@ impl StateGraph {
 
             if let Some(PetriNetNode::T(transition)) = self.initial_net.node_weight(current) {
                 match transition.transition_type {
-                    TransitionType::Lock
-                    | TransitionType::Unlock
-                    | TransitionType::RwLockRead
-                    | TransitionType::RwLockWrite => {
+                    ControlType::Call(CallType::Lock(_))
+                    | ControlType::Drop(DropType::Unlock(_))
+                    | ControlType::Call(CallType::RwLockRead(_))
+                    | ControlType::Call(CallType::RwLockWrite(_)) => {
                         return true;
                     }
                     _ => {}
