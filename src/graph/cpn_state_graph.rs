@@ -148,11 +148,14 @@ impl CpnStateGraph {
                 continue;
             }
 
+            let mark_node_index = current_mark.clone().into_iter().map(|(n, _)| n).collect();
             let current_state = normalize_state(&current_mark);
             if !visited_states.insert(current_state.clone()) {
                 continue; // 跳过已访问的状态
             }
-            let current_node = self.graph.add_node(StateNode::new(current_state.clone()));
+            let current_node = self
+                .graph
+                .add_node(StateNode::new(current_state.clone(), mark_node_index));
             let new_states: Vec<_> = {
                 let mut handles = vec![];
 
@@ -189,7 +192,10 @@ impl CpnStateGraph {
                     queue.push_back((new_net.clone(), new_mark.clone()));
                     // log::info!("new state: {:?}", new_state);
                     // 在状态图中添加新状态节点
-                    let new_node = self.graph.add_node(StateNode::new(new_state));
+                    let new_node = self.graph.add_node(StateNode::new(
+                        new_state.clone(),
+                        new_mark.clone().into_iter().map(|(n, _)| n).collect(),
+                    ));
 
                     // 添加从当前状态到新状态的边，边的标签为变迁名
                     self.graph.add_edge(

@@ -8,7 +8,6 @@ use crate::utils::ApiSpec;
 use crate::Options;
 use log::debug;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::Control;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
 use petgraph::Graph;
@@ -29,9 +28,7 @@ use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::candvar::CondVarInfo;
 use crate::{
-    concurrency::locks::{
-        DeadlockPossibility, LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy,
-    },
+    concurrency::locks::{LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy},
     memory::pointsto::{AliasAnalysis, ApproximateAliasKind},
 };
 
@@ -210,7 +207,7 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'pn CallGraph<'tcx>,
     pub alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
-    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+    pub function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,

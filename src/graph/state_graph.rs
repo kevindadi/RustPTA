@@ -2,7 +2,9 @@ use petgraph::dot::{Config, Dot};
 use petgraph::graph::{node_index, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::{Direction, Graph};
+use rustc_hir::def_id::DefId;
 use serde_json::json;
+use std::cell::RefCell;
 use std::error::Error;
 
 use crate::concurrency::atomic::AtomicOrdering;
@@ -10,7 +12,6 @@ use crate::memory::pointsto::AliasId;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::hash::Hasher;
-use z3::{ast::Int, Config, Context, Solver};
 
 use super::pn::{CallType, ControlType, DropType, PetriNetEdge, PetriNetNode, PlaceType};
 
@@ -51,6 +52,7 @@ impl StateEdge {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateNode {
     pub mark: Vec<(usize, usize)>,
+    pub node_index: HashSet<NodeIndex>,
 }
 
 impl Hash for StateNode {
@@ -64,8 +66,8 @@ impl Hash for StateNode {
 impl Eq for StateNode {}
 
 impl StateNode {
-    pub fn new(mark: Vec<(usize, usize)>) -> Self {
-        Self { mark }
+    pub fn new(mark: Vec<(usize, usize)>, node_index: HashSet<NodeIndex>) -> Self {
+        Self { mark, node_index }
     }
 }
 
@@ -89,6 +91,13 @@ pub fn insert_with_comparison(
     return true;
 }
 
+#[derive(Debug, Serialize)]
+pub struct DeadlockInfo {
+    pub function_id: String,
+    pub start_state: usize,
+    pub deadlock_path: Vec<usize>,
+}
+
 #[derive(Debug, Clone)]
 pub struct StateGraph {
     pub graph: Graph<StateNode, StateEdge>,
@@ -97,12 +106,14 @@ pub struct StateGraph {
     deadlock_marks: HashSet<Vec<(usize, usize)>>,
     pub apis_deadlock_marks: HashMap<String, HashSet<Vec<(usize, usize)>>>,
     apis_graph: HashMap<String, Box<Graph<StateNode, StateEdge>>>,
+    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
 }
 
 impl StateGraph {
     pub fn new(
         initial_net: Graph<PetriNetNode, PetriNetEdge>,
         initial_mark: HashSet<(NodeIndex, usize)>,
+        function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     ) -> Self {
         Self {
             graph: Graph::<StateNode, StateEdge>::new(),
@@ -111,6 +122,7 @@ impl StateGraph {
             deadlock_marks: HashSet::new(),
             apis_deadlock_marks: HashMap::new(),
             apis_graph: HashMap::new(),
+            function_counter,
         }
     }
 
@@ -121,16 +133,26 @@ impl StateGraph {
     /// 如果生成的新状态是唯一的，则将其添到状态图中。
     pub fn generate_states(&mut self) {
         let mut queue = VecDeque::new();
-        let all_states = Arc::new(Mutex::new(HashSet::<Vec<(usize, usize)>>::new()));
+        let mut state_index_map = RefCell::new(HashMap::<Vec<(usize, usize)>, NodeIndex>::new());
         let mut visited_states = HashSet::new();
         // 初始状态队列，加入初始网和标识
         queue.push_back((self.initial_net.clone(), self.initial_mark.clone()));
         {
-            all_states
-                .lock()
-                .unwrap()
-                .insert(normalize_state(&self.initial_mark));
+            state_index_map
+                .borrow_mut()
+                .entry(normalize_state(&self.initial_mark))
+                .or_insert(
+                    self.graph.add_node(StateNode::new(
+                        normalize_state(&self.initial_mark),
+                        self.initial_mark
+                            .clone()
+                            .into_iter()
+                            .map(|(n, _)| n)
+                            .collect(),
+                    )),
+                );
         }
+
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
             // 获取当前状态下所有使能的变迁
 
@@ -142,23 +164,20 @@ impl StateGraph {
                 self.deadlock_marks.insert(current_state_normalized.clone());
                 continue;
             }
-
+            let mark_node_index: HashSet<NodeIndex> =
+                current_mark.clone().into_iter().map(|(n, _)| n).collect();
             let current_state = normalize_state(&current_mark);
             if !visited_states.insert(current_state.clone()) {
                 continue; // 跳过已访问的状态
             }
-            let current_node = self.graph.add_node(StateNode::new(current_state.clone()));
-            // 并行处理每个变迁，生成新状态，同时保存变迁信息
-            // let new_states: Vec<_> = enabled_transitions
-            //     .into_par_iter()
-            //     .map(|transition| {
-            //         let mut net_clone = current_net.clone();
-            //         let (new_net, new_mark) =
-            //             self.fire_transition(&mut net_clone, &current_mark, transition);
-            //         (transition, new_net, new_mark)
-            //     })
-            //     .collect();
-
+            let current_node = state_index_map
+                .borrow_mut()
+                .entry(current_state.clone())
+                .or_insert(self.graph.add_node(StateNode::new(
+                    current_state.clone(),
+                    mark_node_index.clone(),
+                )))
+                .clone();
             // 使用 std::thread 替换 rayon
             let new_states: Vec<_> = {
                 let mut handles = vec![];
@@ -186,22 +205,28 @@ impl StateGraph {
 
             // 处理每个新生成的状态
             for (transition, new_net, new_mark) in new_states {
+                let mark_node_index = new_mark.clone().into_iter().map(|(n, _)| n).collect();
                 let new_state = normalize_state(&new_mark);
                 // std::thread::sleep(std::time::Duration::from_millis(500));
                 // 检查新状态是否唯一，如果是则添加到状态图中
-                let mut all_states_guard = all_states.lock().unwrap();
-                if insert_with_comparison(&mut all_states_guard, &new_state) {
-                    // if all_states_guard.insert(new_state.clone()) {
-                    // 将新状态加入队列，等待后续处理
-                    queue.push_back((new_net.clone(), new_mark.clone()));
-                    // log::info!("new state: {:?}", new_state);
-                    // 在状态图中添加新状态节点
-                    let new_node = self.graph.add_node(StateNode::new(new_state));
 
-                    // 添加从当前状态到新状态的边，边的标签为变迁名
+                if !state_index_map.borrow().contains_key(&new_state) {
+                    queue.push_back((new_net.clone(), new_mark.clone()));
+                    let new_node = self
+                        .graph
+                        .add_node(StateNode::new(new_state.clone(), mark_node_index));
+
+                    state_index_map.borrow_mut().insert(new_state, new_node);
+
+                    self.graph.add_edge(
+                        current_node.clone(),
+                        new_node,
+                        StateEdge::new(format!("{:?}", transition), transition, 1),
+                    );
+                } else {
                     self.graph.add_edge(
                         current_node,
-                        new_node,
+                        state_index_map.borrow().get(&new_state).unwrap().clone(),
                         StateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 }
@@ -215,16 +240,22 @@ impl StateGraph {
         api_initial_mark: HashSet<(NodeIndex, usize)>,
     ) {
         let mut queue = VecDeque::new();
-        let all_states = Arc::new(Mutex::new(HashSet::<Vec<(usize, usize)>>::new()));
+        let mut state_index_map = HashMap::<Vec<(usize, usize)>, NodeIndex>::new();
         let mut visited_states = HashSet::new();
-        // 初始化状态队列，加入初始网和标识
+
+        // 初始化状态队列
         queue.push_back((self.initial_net.clone(), api_initial_mark.clone()));
         {
-            all_states
-                .lock()
-                .unwrap()
-                .insert(normalize_state(&api_initial_mark));
+            let initial_state = normalize_state(&api_initial_mark);
+            let mark_node_index = api_initial_mark.iter().map(|(n, _)| *n).collect();
+            let initial_node = self
+                .apis_graph
+                .entry(api_name.clone())
+                .or_insert(Box::new(Graph::<StateNode, StateEdge>::new()))
+                .add_node(StateNode::new(initial_state.clone(), mark_node_index));
+            state_index_map.insert(initial_state, initial_node);
         }
+
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
             let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
 
@@ -233,22 +264,19 @@ impl StateGraph {
                 self.apis_deadlock_marks
                     .entry(api_name.clone())
                     .or_insert(HashSet::new())
-                    .insert(current_state_normalized.clone());
+                    .insert(current_state_normalized);
                 continue;
             }
 
             let current_state = normalize_state(&current_mark);
             if !visited_states.insert(current_state.clone()) {
-                continue; // 跳过已访问的状态
+                continue;
             }
-            let current_node = self
-                .apis_graph
-                .entry(api_name.clone())
-                .or_insert(Box::new(Graph::<StateNode, StateEdge>::new()))
-                .add_node(StateNode::new(current_state.clone()));
+
+            let current_node = *state_index_map.get(&current_state).unwrap();
+
             let new_states: Vec<_> = {
                 let mut handles = vec![];
-
                 for transition in enabled_transitions {
                     let current_net = current_net.clone();
                     let current_mark = current_mark.clone();
@@ -260,27 +288,28 @@ impl StateGraph {
                             self_clone.fire_transition(&mut net_clone, &current_mark, transition);
                         (transition, new_net, new_mark)
                     });
-
                     handles.push(handle);
                 }
-
                 handles
                     .into_iter()
                     .map(|handle| handle.join().unwrap())
                     .collect()
             };
 
-            // 处理每个新生成的状态
             for (transition, new_net, new_mark) in new_states {
                 let new_state = normalize_state(&new_mark);
-                let mut all_states_guard = all_states.lock().unwrap();
-                if insert_with_comparison(&mut all_states_guard, &new_state) {
+                let mark_node_index = new_mark.iter().map(|(n, _)| *n).collect();
+
+                let existing_node = state_index_map.get(&new_state);
+                if existing_node.is_none() {
                     queue.push_back((new_net.clone(), new_mark.clone()));
                     let new_node = self
                         .apis_graph
                         .entry(api_name.clone())
                         .or_insert(Box::new(Graph::<StateNode, StateEdge>::new()))
-                        .add_node(StateNode::new(new_state));
+                        .add_node(StateNode::new(new_state.clone(), mark_node_index));
+
+                    state_index_map.insert(new_state, new_node);
 
                     self.apis_graph
                         .entry(api_name.clone())
@@ -288,6 +317,15 @@ impl StateGraph {
                         .add_edge(
                             current_node,
                             new_node,
+                            StateEdge::new(format!("{:?}", transition), transition, 1),
+                        );
+                } else {
+                    self.apis_graph
+                        .entry(api_name.clone())
+                        .or_insert(Box::new(Graph::<StateNode, StateEdge>::new()))
+                        .add_edge(
+                            current_node,
+                            *existing_node.unwrap(),
                             StateEdge::new(format!("{:?}", transition), transition, 1),
                         );
                 }
@@ -911,5 +949,99 @@ impl StateGraph {
                 Ok(())
             }
         }
+    }
+
+    pub fn detect_deadlock(&self) -> Vec<DeadlockInfo> {
+        let mut deadlocks = Vec::new();
+
+        // 直接遍历每个函数的起始和结束节点
+        for (def_id, (start, end)) in self.function_counter.iter() {
+            // 找到所有包含start的状态节点
+            let start_states: Vec<NodeIndex> = self
+                .graph
+                .node_indices()
+                .filter(|&node| self.graph[node].node_index.contains(start))
+                .collect();
+
+            // 对每个起始状态检查是否可以到达包含end的状态
+            for start_state in start_states {
+                if !self.can_reach_function_end(start_state, *end) {
+                    deadlocks.push(DeadlockInfo {
+                        function_id: format!("{:?}", def_id),
+                        start_state: start_state.index(),
+                        deadlock_path: self
+                            .find_deadlock_path(start_state)
+                            .iter()
+                            .map(|node| node.index())
+                            .collect(),
+                    });
+                }
+            }
+        }
+
+        deadlocks
+    }
+
+    fn can_reach_function_end(&self, start_state: NodeIndex, end_node: NodeIndex) -> bool {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(start_state);
+
+        while let Some(current) = queue.pop_front() {
+            if !visited.insert(current) {
+                continue;
+            }
+
+            // 检查当前状态是否包含end节点
+            if self.graph[current].node_index.contains(&end_node) {
+                return true;
+            }
+
+            // 将所有后继状态加入队列
+            for edge in self.graph.edges(current) {
+                queue.push_back(edge.target());
+            }
+        }
+
+        false
+    }
+
+    fn find_deadlock_path(&self, start_state: NodeIndex) -> Vec<NodeIndex> {
+        let mut path = Vec::new();
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut parent_map = HashMap::new();
+
+        queue.push_back(start_state);
+        visited.insert(start_state);
+
+        while let Some(current) = queue.pop_front() {
+            let mut has_unvisited_successor = false;
+
+            for edge in self.graph.edges(current) {
+                let target = edge.target();
+                if !visited.contains(&target) {
+                    visited.insert(target);
+                    queue.push_back(target);
+                    parent_map.insert(target, current);
+                    has_unvisited_successor = true;
+                }
+            }
+
+            // 如果没有未访问的后继节点，这可能是死锁状态
+            if !has_unvisited_successor {
+                // 重建路径
+                let mut current = current;
+                path.push(current);
+                while let Some(&parent) = parent_map.get(&current) {
+                    path.push(parent);
+                    current = parent;
+                }
+                path.reverse();
+                break;
+            }
+        }
+
+        path
     }
 }

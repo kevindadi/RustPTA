@@ -146,7 +146,11 @@ impl PTACallbacks {
             pn.construct();
             pn.save_petri_net_to_file();
             // log::info!("apis_marks: {:?}", pn.api_marks);
-            let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+            let mut state_graph = StateGraph::new(
+                pn.net.clone(),
+                pn.get_current_mark(),
+                pn.function_counter.clone(),
+            );
             for (api_name, initial_mark) in pn.api_marks.iter() {
                 state_graph.generate_states_with_api(api_name.clone(), initial_mark.clone());
             }
@@ -217,7 +221,11 @@ impl PTACallbacks {
                 pn.construct();
                 pn.save_petri_net_to_file();
 
-                let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+                let mut state_graph = StateGraph::new(
+                    pn.net.clone(),
+                    pn.get_current_mark(),
+                    pn.function_counter.clone(),
+                );
                 state_graph.generate_states();
 
                 state_graph.detect_atomic_violation();
@@ -231,12 +239,29 @@ impl PTACallbacks {
                 pn.construct();
                 pn.save_petri_net_to_file();
 
-                let mut state_graph = StateGraph::new(pn.net.clone(), pn.get_current_mark());
+                let mut state_graph = StateGraph::new(
+                    pn.net.clone(),
+                    pn.get_current_mark(),
+                    pn.function_counter.clone(),
+                );
                 state_graph.generate_states();
-                let result = state_graph.detect_deadlock_use_state_reachable_graph();
-                log::info!("deadlock state: {}", result);
-                state_graph.detect_deadlock_use_model_check();
-
+                state_graph.dot(Some("sg.dot")).unwrap();
+                // let result = state_graph.detect_deadlock_use_state_reachable_graph();
+                // log::info!("deadlock state: {}", result);
+                let result = state_graph.detect_deadlock();
+                println!(
+                    "{:?}",
+                    result.iter().for_each(|d| {
+                        println!(
+                            "Deadlock State {:?}:\n{}",
+                            d.function_id,
+                            serde_json::to_string_pretty(&json!({
+                                "deadlock_path": d.deadlock_path,
+                            }))
+                            .unwrap()
+                        )
+                    })
+                );
                 if self.options.dump_options.dump_points_to {
                     pn.alias.borrow_mut().print_all_points_to_relations();
                 }
