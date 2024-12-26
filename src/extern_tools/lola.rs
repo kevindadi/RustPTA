@@ -7,6 +7,7 @@ use std::{
     io::{self, Write},
 };
 
+use crate::extern_tools::normalize_name;
 use crate::graph::pn::{PetriNet, PetriNetNode};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,26 +24,6 @@ pub struct LolaAnalyzer {
     lola_path: String,
     net_file: String,
     pub output_directory: PathBuf,
-}
-
-// fn normalize_name(name: &str) -> String {
-//     name.chars()
-//         .map(|c| {
-//             if c.is_alphanumeric() || c == '.' || c == '_' {
-//                 c
-//             } else {
-//                 '.'
-//             }
-//         })
-//         .collect::<String>()
-//         .replace("::", ".")
-// }
-
-fn normalize_name(name: &str) -> String {
-    name.replace("::", ".")
-        .replace("{", "")
-        .replace("}", "")
-        .replace("#", "")
 }
 
 impl LolaAnalyzer {

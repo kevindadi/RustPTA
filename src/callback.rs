@@ -5,6 +5,7 @@ extern crate rustc_hir;
 
 use crate::concurrency::atomic::AtomicCollector;
 use crate::extern_tools::lola::LolaAnalyzer;
+use crate::extern_tools::tina::TinaAnalyzer;
 use crate::graph::callgraph::CallGraph;
 use crate::graph::cpn::ColorPetriNet;
 use crate::graph::cpn_state_graph::CpnStateGraph;
@@ -12,7 +13,7 @@ use crate::graph::pn::PetriNet;
 use crate::graph::state_graph::StateGraph;
 use crate::graph::unfolding_net::UnfoldingNet;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
-use crate::options::{Options, OwnCrateType};
+use crate::options::{AnalysisTool, Options, OwnCrateType};
 use crate::utils::{format_name, parse_api_spec, ApiSpec};
 use crate::DetectorKind;
 use log::debug;
@@ -279,47 +280,52 @@ impl PTACallbacks {
                 //     }
                 // }
 
-                let analyzer = LolaAnalyzer::new(
-                    "lola".to_string(),
-                    "pn.lola".to_string(),
-                    self.output_directory.clone(),
-                );
-                match analyzer.analyze_petri_net(&pn) {
-                    Ok(result) => {
-                        println!("分析结果: {}", result.has_deadlock);
-                        if let Some(trace) = result.deadlock_trace {
-                            println!("死锁路径: {:?}", trace);
-                        }
+                match self.options.analysis_tool {
+                    AnalysisTool::LoLA => {
+                        let analyzer = LolaAnalyzer::new(
+                            "lola".to_string(),
+                            "pn.lola".to_string(),
+                            self.output_directory.clone(),
+                        );
+                        log::info!("Lola Result: {:?}", analyzer.analyze_petri_net(&pn));
                     }
-                    Err(e) => {
-                        println!("Lola 分析失败: {:?}", e);
+                    AnalysisTool::Tina => {
+                        let analyzer = TinaAnalyzer::new(
+                            "tina".to_string(),
+                            "pn.tina".to_string(),
+                            self.output_directory.clone(),
+                        );
+                        println!("Tina Result: {}", analyzer.get_analysis_info().unwrap());
+                    }
+                    AnalysisTool::RPN => {
+                        let mut state_graph = StateGraph::new(
+                            pn.net.clone(),
+                            pn.get_current_mark(),
+                            pn.function_counter.clone(),
+                            self.options.clone(),
+                        );
+
+                        state_graph.generate_states();
+                        state_graph.dot().unwrap();
+                        let result = state_graph.detect_deadlock_use_state_reachable_graph();
+                        log::info!("deadlock state: {}", result);
+                        let result = state_graph.detect_deadlock();
+                        println!(
+                            "{:?}",
+                            result.iter().for_each(|d| {
+                                println!(
+                                    "Deadlock State {:?}:\n{}",
+                                    d.function_id,
+                                    serde_json::to_string_pretty(&json!({
+                                        "deadlock_path": d.deadlock_path,
+                                    }))
+                                    .unwrap()
+                                )
+                            })
+                        );
                     }
                 }
 
-                // let mut state_graph = StateGraph::new(
-                //     pn.net.clone(),
-                //     pn.get_current_mark(),
-                //     pn.function_counter.clone(),
-                // );
-
-                // state_graph.generate_states();
-                // state_graph.dot(Some("sg.dot")).unwrap();
-                // let result = state_graph.detect_deadlock_use_state_reachable_graph();
-                // log::info!("deadlock state: {}", result);
-                // let result = state_graph.detect_deadlock();
-                // println!(
-                //     "{:?}",
-                //     result.iter().for_each(|d| {
-                //         println!(
-                //             "Deadlock State {:?}:\n{}",
-                //             d.function_id,
-                //             serde_json::to_string_pretty(&json!({
-                //                 "deadlock_path": d.deadlock_path,
-                //             }))
-                //             .unwrap()
-                //         )
-                //     })
-                // );
                 if self.options.dump_options.dump_points_to {
                     pn.alias.borrow_mut().print_all_points_to_relations();
                 }

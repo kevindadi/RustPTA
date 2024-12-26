@@ -27,6 +27,19 @@ pub enum DetectorKind {
     // More to be supported.
 }
 
+#[derive(Debug, Clone)]
+pub enum AnalysisTool {
+    LoLA,
+    Tina,
+    RPN, // 默认使用 RPN
+}
+
+impl Default for AnalysisTool {
+    fn default() -> Self {
+        AnalysisTool::RPN
+    }
+}
+
 fn make_options_parser() -> clap::Command {
     let parser = Command::new("PN")
         .no_binary_name(true)
@@ -67,6 +80,14 @@ fn make_options_parser() -> clap::Command {
                 .long("api-spec")
                 .value_name("PATH")
                 .help("Path to library API specification file"),
+        )
+        .arg(
+            Arg::new("analysis_tool")
+                .long("tool")
+                .help("Choose analysis tool: lola, tina, or rpn")
+                .value_parser(["lola", "tina", "rpn"])
+                .default_value("rpn")
+                .hide_default_value(true),
         )
         // Visualization options group
         .group(
@@ -120,6 +141,7 @@ pub struct Options {
     pub crate_type: OwnCrateType,      // 区分 bin/lib lib 绑定libapis
     pub lib_apis_path: Option<String>, // lib APIs 文件路径
     pub dump_options: DumpOptions,     // dump 相关选项
+    pub analysis_tool: AnalysisTool,
 }
 
 impl Default for Options {
@@ -131,6 +153,7 @@ impl Default for Options {
             crate_type: OwnCrateType::Bin,
             lib_apis_path: None,
             dump_options: DumpOptions::default(),
+            analysis_tool: AnalysisTool::RPN,
         }
     }
 }
@@ -227,6 +250,12 @@ impl Options {
                 self.lib_apis_path = matches.get_one::<String>("api_spec").cloned();
             }
         }
+
+        self.analysis_tool = match matches.get_one::<String>("analysis_tool").unwrap().as_str() {
+            "tina" => AnalysisTool::Tina,
+            "lola" => AnalysisTool::LoLA,
+            _ => AnalysisTool::RPN,
+        };
 
         // 更新可视化选项
         self.dump_options = DumpOptions {
