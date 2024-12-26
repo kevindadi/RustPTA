@@ -6,14 +6,13 @@ extern crate rustc_middle;
 use once_cell::sync::Lazy;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use regex::Regex;
-use rustc_abi::VariantIdx;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
+use rustc_middle::mir::StatementKind;
 use rustc_middle::mir::{
-    visit::Visitor, Body, Local, Location, Operand, Place, Terminator, TerminatorKind,
+    visit::Visitor, Body, Local, Location, Operand, Terminator, TerminatorKind,
 };
-use rustc_middle::mir::{AggregateKind, ConstValue, Rvalue, StatementKind};
-use rustc_middle::ty::{self, GenericArg, Instance, List, Ty, TyCtxt, TyKind, TypingEnv};
+use rustc_middle::ty::{self, GenericArg, Instance, List, Ty, TyCtxt, TyKind};
 use serde_json::json;
 
 use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};

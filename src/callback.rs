@@ -4,11 +4,13 @@ extern crate rustc_driver;
 extern crate rustc_hir;
 
 use crate::concurrency::atomic::AtomicCollector;
+use crate::extern_tools::lola::LolaAnalyzer;
 use crate::graph::callgraph::CallGraph;
 use crate::graph::cpn::ColorPetriNet;
 use crate::graph::cpn_state_graph::CpnStateGraph;
 use crate::graph::pn::PetriNet;
 use crate::graph::state_graph::StateGraph;
+use crate::graph::unfolding_net::UnfoldingNet;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::{Options, OwnCrateType};
 use crate::utils::{format_name, parse_api_spec, ApiSpec};
@@ -25,17 +27,31 @@ use std::path::PathBuf;
 #[derive(Clone)]
 pub struct PTACallbacks {
     pub options: Options,
-    file_name: String,
-    output_directory: PathBuf,
+    pub output_directory: PathBuf,
     test_run: bool,
 }
 
 impl PTACallbacks {
     pub fn new(options: Options) -> Self {
+        // 构造默认的诊断输出路径
+        let diagnostics_output = if let Some(output) = options.output.clone() {
+            let mut path = PathBuf::from(output);
+            path.push(&options.crate_name);
+            path
+        } else {
+            let mut path = PathBuf::from("/tmp");
+            path.push(&options.crate_name);
+            path
+        };
+
+        // 确保目录存在
+        std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to create output directory: {}", e);
+        });
+
         Self {
             options,
-            file_name: String::new(),
-            output_directory: PathBuf::default(),
+            output_directory: diagnostics_output,
             test_run: false,
         }
     }
@@ -55,26 +71,26 @@ impl Default for PTACallbacks {
 
 impl rustc_driver::Callbacks for PTACallbacks {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
-        self.file_name = config
+        let file_name = config
             .input
             .source_name()
             //.prefer_remapped() // nightly-2023-09-13
             .prefer_remapped_unconditionaly()
             .to_string();
 
-        debug!("Processing input file: {}", self.file_name);
+        debug!("Processing input file: {}", file_name);
         if config.opts.test {
             debug!("in test only mode");
             // self.options.test_only = true;
         }
         //config.crate_cfg.insert("pta".to_string(), None);
-        match &config.output_dir {
-            None => {
-                self.output_directory = std::env::temp_dir();
-                self.output_directory.pop();
-            }
-            Some(path_buf) => self.output_directory.push(path_buf.as_path()),
-        }
+        // match &config.output_dir {
+        //     None => {
+        //         self.output_directory = std::env::temp_dir();
+        //         self.output_directory.pop();
+        //     }
+        //     Some(path_buf) => self.output_directory.push(path_buf.as_path()),
+        // }
     }
 
     fn after_analysis<'tcx>(
@@ -92,9 +108,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
             // No need to analyze a build script, but do generate code.
             return Compilation::Continue;
         }
-        // queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-        //     self.analyze_with_lockbud(compiler, tcx);
-        // });
 
         self.analyze_with_pta(compiler, tcx);
 
@@ -102,7 +115,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
             // We avoid code gen for test cases because LLVM is not used in a thread safe manner.
             Compilation::Stop
         } else {
-            // Although LockBud is only a checker, cargo still needs code generation to work.
             Compilation::Continue
         }
     }
@@ -127,11 +139,7 @@ impl PTACallbacks {
                 })
             })
             .collect();
-        // log::info!("Crate name: {:?}", self.options.crate_name);
-        // log::info!("---------------------------------------");
-        // for instance in instances.iter() {
-        //     log::info!("instance: {:?}", format_name(instance.def_id()));
-        // }
+
         let mut callgraph = CallGraph::new();
         callgraph.analyze(instances.clone(), tcx);
 
@@ -142,7 +150,14 @@ impl PTACallbacks {
                     ApiSpec::default()
                 });
 
-            let mut pn = PetriNet::new(&self.options, tcx, &callgraph, api_spec, false);
+            let mut pn = PetriNet::new(
+                &self.options,
+                tcx,
+                &callgraph,
+                api_spec,
+                false,
+                self.output_directory.clone(),
+            );
             pn.construct();
             pn.save_petri_net_to_file();
             // log::info!("apis_marks: {:?}", pn.api_marks);
@@ -150,6 +165,7 @@ impl PTACallbacks {
                 pn.net.clone(),
                 pn.get_current_mark(),
                 pn.function_counter.clone(),
+                self.options.clone(),
             );
             for (api_name, initial_mark) in pn.api_marks.iter() {
                 state_graph.generate_states_with_api(api_name.clone(), initial_mark.clone());
@@ -211,8 +227,14 @@ impl PTACallbacks {
 
                 // 输出收集到的atomic信息
                 atomic_collector.to_json_pretty().unwrap();
-                let mut pn =
-                    PetriNet::new(&self.options, tcx, &callgraph, ApiSpec::default(), true);
+                let mut pn = PetriNet::new(
+                    &self.options,
+                    tcx,
+                    &callgraph,
+                    ApiSpec::default(),
+                    true,
+                    self.output_directory.clone(),
+                );
 
                 if !atomic_vars.is_empty() {
                     pn.add_atomic_places(&atomic_vars);
@@ -225,6 +247,7 @@ impl PTACallbacks {
                     pn.net.clone(),
                     pn.get_current_mark(),
                     pn.function_counter.clone(),
+                    self.options.clone(),
                 );
                 state_graph.generate_states();
 
@@ -234,34 +257,69 @@ impl PTACallbacks {
                 }
             }
             _ => {
-                let mut pn =
-                    PetriNet::new(&self.options, tcx, &callgraph, ApiSpec::default(), false);
+                let mut pn = PetriNet::new(
+                    &self.options,
+                    tcx,
+                    &callgraph,
+                    ApiSpec::default(),
+                    false,
+                    self.output_directory.clone(),
+                );
                 pn.construct();
                 pn.save_petri_net_to_file();
+                log::info!("output_directory: {}", self.output_directory.display());
+                // let unfolding = UnfoldingNet::new(pn.net.clone(), pn.get_current_mark());
 
-                let mut state_graph = StateGraph::new(
-                    pn.net.clone(),
-                    pn.get_current_mark(),
-                    pn.function_counter.clone(),
+                // match unfolding.check_local_deadlock() {
+                //     Some(deadlock_path) => {
+                //         println!("发现死锁路径: {:?}", deadlock_path);
+                //     }
+                //     None => {
+                //         println!("未发现死锁");
+                //     }
+                // }
+
+                let analyzer = LolaAnalyzer::new(
+                    "lola".to_string(),
+                    "pn.lola".to_string(),
+                    self.output_directory.clone(),
                 );
-                state_graph.generate_states();
-                state_graph.dot(Some("sg.dot")).unwrap();
+                match analyzer.analyze_petri_net(&pn) {
+                    Ok(result) => {
+                        println!("分析结果: {}", result.has_deadlock);
+                        if let Some(trace) = result.deadlock_trace {
+                            println!("死锁路径: {:?}", trace);
+                        }
+                    }
+                    Err(e) => {
+                        println!("Lola 分析失败: {:?}", e);
+                    }
+                }
+
+                // let mut state_graph = StateGraph::new(
+                //     pn.net.clone(),
+                //     pn.get_current_mark(),
+                //     pn.function_counter.clone(),
+                // );
+
+                // state_graph.generate_states();
+                // state_graph.dot(Some("sg.dot")).unwrap();
                 // let result = state_graph.detect_deadlock_use_state_reachable_graph();
                 // log::info!("deadlock state: {}", result);
-                let result = state_graph.detect_deadlock();
-                println!(
-                    "{:?}",
-                    result.iter().for_each(|d| {
-                        println!(
-                            "Deadlock State {:?}:\n{}",
-                            d.function_id,
-                            serde_json::to_string_pretty(&json!({
-                                "deadlock_path": d.deadlock_path,
-                            }))
-                            .unwrap()
-                        )
-                    })
-                );
+                // let result = state_graph.detect_deadlock();
+                // println!(
+                //     "{:?}",
+                //     result.iter().for_each(|d| {
+                //         println!(
+                //             "Deadlock State {:?}:\n{}",
+                //             d.function_id,
+                //             serde_json::to_string_pretty(&json!({
+                //                 "deadlock_path": d.deadlock_path,
+                //             }))
+                //             .unwrap()
+                //         )
+                //     })
+                // );
                 if self.options.dump_options.dump_points_to {
                     pn.alias.borrow_mut().print_all_points_to_relations();
                 }

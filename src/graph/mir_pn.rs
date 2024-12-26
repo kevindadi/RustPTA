@@ -18,19 +18,17 @@ use petgraph::Graph;
 use regex::Regex;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{visit::Visitor, BasicBlock, BasicBlockData, Operand, SwitchTargets, TerminatorKind},
+    mir::{
+        visit::Visitor, BasicBlock, BasicBlockData, Const, ConstValue, Operand, SwitchTargets,
+        TerminatorKind,
+    },
     ty,
 };
 use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
-use rustc_span::Symbol;
-use rustc_span::{
-    source_map::Spanned,
-    sym::{self, sym},
-    Span,
-};
+use rustc_span::source_map::Spanned;
 use std::{cell::RefCell, collections::HashMap};
 
 /// 基于函数的控制流图(CFG)构建Petri网
@@ -103,7 +101,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     pub fn translate(&mut self) {
-        // TODO: 如果函数中不包含同步原语, Skip
         self.visit_body(self.body);
     }
 
@@ -339,26 +336,83 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end: NodeIndex,
     ) {
         if let Some(closure_arg) = args.first() {
-            if let Operand::Move(place) | Operand::Copy(place) = closure_arg.node {
-                let place_ty = place.ty(self.body, self.tcx).ty;
-                if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
-                    place_ty.kind()
-                {
-                    self.net.add_edge(
-                        bb_end,
-                        self.function_counter.get(&closure_def_id).unwrap().0,
-                        PetriNetEdge { label: 1usize },
-                    );
-                }
-                match self.net.node_weight_mut(bb_end) {
-                    Some(PetriNetNode::T(t)) => {
-                        t.transition_type = ControlType::Call(CallType::Spawn);
+            match &closure_arg.node {
+                Operand::Move(place) | Operand::Copy(place) => {
+                    let place_ty = place.ty(self.body, self.tcx).ty;
+                    if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                        place_ty.kind()
+                    {
+                        self.net.add_edge(
+                            bb_end,
+                            self.function_counter.get(&closure_def_id).unwrap().0,
+                            PetriNetEdge { label: 1usize },
+                        );
                     }
-                    _ => {}
                 }
-                self.connect_to_target(bb_end, target);
+                Operand::Constant(constant) => {
+                    let const_val = constant.const_;
+                    match const_val {
+                        // Const::Val(val, ty) => {
+                        //     // 首先尝试从类型中获取 def_id
+                        //     if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                        //         ty.kind()
+                        //     {
+                        //         self.net.add_edge(
+                        //             bb_end,
+                        //             self.function_counter.get(closure_def_id).unwrap().0,
+                        //             PetriNetEdge { label: 1usize },
+                        //         );
+                        //     } else {
+                        //         // 如果类型中没有，尝试从值中获取
+                        //         if let ConstValue::Scalar(scalar) = val {
+                        //             let raw_id = scalar.to_u64().unwrap();
+
+                        //             if let Some(def_id) =
+                        //                 self.tcx.def_key(DefId::from_u32(raw_id as u32)).as_def_id()
+                        //             {
+                        //                 self.net.add_edge(
+                        //                     bb_end,
+                        //                     self.function_counter.get(&def_id).unwrap().0,
+                        //                     PetriNetEdge { label: 1usize },
+                        //                 );
+                        //             }
+                        //         }
+                        //     }
+                        // }
+                        Const::Unevaluated(unevaluated, _) => {
+                            // 直接从未求值的常量中获取 def_id
+                            let closure_def_id = unevaluated.def;
+                            self.net.add_edge(
+                                bb_end,
+                                self.function_counter.get(&closure_def_id).unwrap().0,
+                                PetriNetEdge { label: 1usize },
+                            );
+                        }
+                        _ => {
+                            // 尝试从类型中获取
+                            if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                                constant.ty().kind()
+                            {
+                                self.net.add_edge(
+                                    bb_end,
+                                    self.function_counter.get(closure_def_id).unwrap().0,
+                                    PetriNetEdge { label: 1usize },
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
+
+        match self.net.node_weight_mut(bb_end) {
+            Some(PetriNetNode::T(t)) => {
+                t.transition_type = ControlType::Call(CallType::Spawn);
+            }
+            _ => {}
+        }
+        self.connect_to_target(bb_end, target);
     }
 
     fn handle_join(
@@ -419,7 +473,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_normal_call(
         &mut self,
-        callee_func_name: &str,
         bb_end: NodeIndex,
         target: &Option<BasicBlock>,
         name: &str,
@@ -427,39 +480,21 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         span: &str,
         callee_id: &DefId,
     ) {
-        match callee_func_name.starts_with(&self.options.crate_name) {
-            true => {}
-            false => {
-                match target {
-                    Some(return_block) => {
-                        self.net.add_edge(
-                            bb_end,
-                            *self.bb_node_start_end.get(return_block).unwrap(),
-                            PetriNetEdge { label: 1usize },
-                        );
-                    }
-                    _ => {}
-                }
-                log::debug!("ignore function not include in main crate!");
-                return;
-            }
-        }
-
-        let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
-        let bb_wait_place =
-            Place::new_with_span(bb_wait_name, 0, PlaceType::BasicBlock, span.to_string());
-        let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
-
-        let bb_ret_name = format!("{}_{}_{}", name, bb_idx.index(), "return");
-        let bb_ret_transition = Transition::new(bb_ret_name, ControlType::Call(CallType::Function));
-        let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
-
-        self.net
-            .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1usize });
-        self.net
-            .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
-
         if let Some((callee_start, callee_end)) = self.function_counter.get(callee_id) {
+            let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
+            let bb_wait_place =
+                Place::new_with_span(bb_wait_name, 0, PlaceType::BasicBlock, span.to_string());
+            let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
+
+            let bb_ret_name = format!("{}_{}_{}", name, bb_idx.index(), "return");
+            let bb_ret_transition =
+                Transition::new(bb_ret_name, ControlType::Call(CallType::Function));
+            let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
+
+            self.net
+                .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1usize });
+            self.net
+                .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
             self.net
                 .add_edge(bb_end, *callee_start, PetriNetEdge { label: 1usize });
             match target {
@@ -475,7 +510,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 _ => {}
             }
         } else {
-            self.connect_to_target(bb_ret, target);
+            self.connect_to_target(bb_end, target);
         }
     }
 
@@ -978,15 +1013,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
         // 5. 处理普通函数调用
-        self.handle_normal_call(
-            &callee_func_name,
-            bb_end,
-            target,
-            name,
-            bb_idx,
-            span,
-            &callee_def_id,
-        );
+        self.handle_normal_call(bb_end, target, name, bb_idx, span, &callee_def_id);
     }
 
     fn handle_drop(

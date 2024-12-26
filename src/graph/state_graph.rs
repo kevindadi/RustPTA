@@ -4,18 +4,17 @@ use petgraph::visit::EdgeRef;
 use petgraph::{Direction, Graph};
 use rustc_hir::def_id::DefId;
 use serde_json::json;
-use std::cell::RefCell;
 use std::error::Error;
+use std::io::Write;
 
 use crate::concurrency::atomic::AtomicOrdering;
 use crate::memory::pointsto::AliasId;
+use crate::options::Options;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::hash::Hasher;
 
 use super::pn::{CallType, ControlType, DropType, PetriNetEdge, PetriNetNode, PlaceType};
-
-use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
@@ -49,7 +48,7 @@ impl StateEdge {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq)]
 pub struct StateNode {
     pub mark: Vec<(usize, usize)>,
     pub node_index: HashSet<NodeIndex>,
@@ -57,13 +56,15 @@ pub struct StateNode {
 
 impl Hash for StateNode {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let mut sorted_mark = self.mark.clone();
-        sorted_mark.sort(); // 确保排序后再计算哈希值
-        sorted_mark.hash(state);
+        self.mark.hash(state)
     }
 }
 
-impl Eq for StateNode {}
+impl PartialEq for StateNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.mark == other.mark
+    }
+}
 
 impl StateNode {
     pub fn new(mark: Vec<(usize, usize)>, node_index: HashSet<NodeIndex>) -> Self {
@@ -101,12 +102,13 @@ pub struct DeadlockInfo {
 #[derive(Debug, Clone)]
 pub struct StateGraph {
     pub graph: Graph<StateNode, StateEdge>,
-    initial_net: Box<Graph<PetriNetNode, PetriNetEdge>>,
-    initial_mark: HashSet<(NodeIndex, usize)>,
-    deadlock_marks: HashSet<Vec<(usize, usize)>>,
+    pub initial_net: Box<Graph<PetriNetNode, PetriNetEdge>>,
+    pub initial_mark: HashSet<(NodeIndex, usize)>,
+    pub deadlock_marks: HashSet<Vec<(usize, usize)>>,
     pub apis_deadlock_marks: HashMap<String, HashSet<Vec<(usize, usize)>>>,
-    apis_graph: HashMap<String, Box<Graph<StateNode, StateEdge>>>,
+    pub apis_graph: HashMap<String, Box<Graph<StateNode, StateEdge>>>,
     function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+    pub options: Options,
 }
 
 impl StateGraph {
@@ -114,6 +116,7 @@ impl StateGraph {
         initial_net: Graph<PetriNetNode, PetriNetEdge>,
         initial_mark: HashSet<(NodeIndex, usize)>,
         function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+        options: Options,
     ) -> Self {
         Self {
             graph: Graph::<StateNode, StateEdge>::new(),
@@ -123,6 +126,7 @@ impl StateGraph {
             apis_deadlock_marks: HashMap::new(),
             apis_graph: HashMap::new(),
             function_counter,
+            options,
         }
     }
 
@@ -133,29 +137,24 @@ impl StateGraph {
     /// 如果生成的新状态是唯一的，则将其添到状态图中。
     pub fn generate_states(&mut self) {
         let mut queue = VecDeque::new();
-        let mut state_index_map = RefCell::new(HashMap::<Vec<(usize, usize)>, NodeIndex>::new());
-        let mut visited_states = HashSet::new();
+        let mut state_index_map = HashMap::<StateNode, NodeIndex>::new();
+        let mut visited_states: HashSet<StateNode> = HashSet::new();
         // 初始状态队列，加入初始网和标识
         queue.push_back((self.initial_net.clone(), self.initial_mark.clone()));
-        {
-            state_index_map
-                .borrow_mut()
-                .entry(normalize_state(&self.initial_mark))
-                .or_insert(
-                    self.graph.add_node(StateNode::new(
-                        normalize_state(&self.initial_mark),
-                        self.initial_mark
-                            .clone()
-                            .into_iter()
-                            .map(|(n, _)| n)
-                            .collect(),
-                    )),
-                );
-        }
+
+        let initial_state = StateNode::new(
+            normalize_state(&self.initial_mark),
+            self.initial_mark
+                .clone()
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect(),
+        );
+        let initial_node = self.graph.add_node(initial_state.clone());
+        state_index_map.insert(initial_state.clone(), initial_node);
 
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
             // 获取当前状态下所有使能的变迁
-
             let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
 
             // 如果没有使能的变迁，将当前状态添加到死锁标识集合中
@@ -164,21 +163,18 @@ impl StateGraph {
                 self.deadlock_marks.insert(current_state_normalized.clone());
                 continue;
             }
-            let mark_node_index: HashSet<NodeIndex> =
-                current_mark.clone().into_iter().map(|(n, _)| n).collect();
-            let current_state = normalize_state(&current_mark);
-            if !visited_states.insert(current_state.clone()) {
-                continue; // 跳过已访问的状态
+            let current_state_node = StateNode::new(
+                normalize_state(&current_mark),
+                current_mark.clone().into_iter().map(|(n, _)| n).collect(),
+            );
+            if visited_states.contains(&current_state_node) {
+                continue;
+            } else {
+                visited_states.insert(current_state_node.clone());
             }
-            let current_node = state_index_map
-                .borrow_mut()
-                .entry(current_state.clone())
-                .or_insert(self.graph.add_node(StateNode::new(
-                    current_state.clone(),
-                    mark_node_index.clone(),
-                )))
-                .clone();
-            // 使用 std::thread 替换 rayon
+
+            let current_node = state_index_map.get(&current_state_node).unwrap().clone();
+
             let new_states: Vec<_> = {
                 let mut handles = vec![];
 
@@ -205,28 +201,25 @@ impl StateGraph {
 
             // 处理每个新生成的状态
             for (transition, new_net, new_mark) in new_states {
-                let mark_node_index = new_mark.clone().into_iter().map(|(n, _)| n).collect();
-                let new_state = normalize_state(&new_mark);
-                // std::thread::sleep(std::time::Duration::from_millis(500));
-                // 检查新状态是否唯一，如果是则添加到状态图中
+                let mark_node_index = new_mark.iter().map(|(n, _)| *n).collect();
+                let new_state = StateNode::new(normalize_state(&new_mark), mark_node_index);
 
-                if !state_index_map.borrow().contains_key(&new_state) {
+                if let Some(&existing_node) = state_index_map.get(&new_state) {
+                    // 状态已存在，只添加边
+                    self.graph.add_edge(
+                        current_node.clone(),
+                        existing_node,
+                        StateEdge::new(format!("{:?}", transition), transition, 1),
+                    );
+                } else {
+                    // 新状态，添加节点和边
                     queue.push_back((new_net.clone(), new_mark.clone()));
-                    let new_node = self
-                        .graph
-                        .add_node(StateNode::new(new_state.clone(), mark_node_index));
-
-                    state_index_map.borrow_mut().insert(new_state, new_node);
+                    let new_node = self.graph.add_node(new_state.clone());
+                    state_index_map.insert(new_state, new_node);
 
                     self.graph.add_edge(
                         current_node.clone(),
                         new_node,
-                        StateEdge::new(format!("{:?}", transition), transition, 1),
-                    );
-                } else {
-                    self.graph.add_edge(
-                        current_node,
-                        state_index_map.borrow().get(&new_state).unwrap().clone(),
                         StateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 }
@@ -371,7 +364,7 @@ impl StateGraph {
     /// 3. 对于每个变迁节点，检查其所有输入库所是否有足够的 token
     /// 4. 如果所有输入库所的 token 数量均满足要求，则该变迁为使能状态
     /// 5. 将所有使能的变迁节点索引添加到返回的向量中
-    fn get_enabled_transitions(
+    pub fn get_enabled_transitions(
         &self,
         net: &mut Graph<PetriNetNode, PetriNetEdge>,
         mark: &HashSet<(NodeIndex, usize)>,
@@ -416,7 +409,7 @@ impl StateGraph {
     /// 3. 从变迁的输入库所中减去相应的 token
     /// 4. 向变迁的输出库所中添加相应的 token（考虑容量限制）
     /// 5. 生成并返回新的状态
-    fn fire_transition(
+    pub fn fire_transition(
         &self,
         net: &mut Graph<PetriNetNode, PetriNetEdge>,
         mark: &HashSet<(NodeIndex, usize)>,
@@ -487,7 +480,7 @@ impl StateGraph {
         // Remove the terminal mark
         self.deadlock_marks.retain(|v| {
             v.iter().all(|m| match &self.initial_net[node_index(m.0)] {
-                PetriNetNode::P(p) => !p.name.contains("mainend"),
+                PetriNetNode::P(p) => !p.name.contains("main_end"),
                 _ => false,
             })
         });
@@ -930,25 +923,33 @@ impl StateGraph {
     }
 
     #[allow(dead_code)]
-    pub fn dot(&self, path: Option<&str>) -> std::io::Result<()> {
-        let dot_string = format!(
-            "digraph {{\n{:?}\n}}",
-            Dot::with_config(&self.graph, &[Config::GraphContentOnly])
-        );
+    pub fn dot(&self) -> std::io::Result<()> {
+        if self.options.dump_options.dump_state_graph {
+            let sg_dot = format!(
+                "digraph {{\n{:?}\n}}",
+                Dot::with_config(&self.graph, &[Config::GraphContentOnly])
+            );
 
-        match path {
-            Some(file_path) => {
-                use std::fs::File;
-                use std::io::Write;
-                let mut file = File::create(file_path)?;
-                file.write_all(dot_string.as_bytes())?;
-                Ok(())
-            }
-            None => {
-                println!("{}", dot_string);
-                Ok(())
-            }
+            let mut file = std::fs::File::create(
+                self.options
+                    .output
+                    .as_ref()
+                    .unwrap()
+                    .join("state_graph.dot"),
+            )
+            .unwrap();
+            let _ = file.write_all(format!("{:?}", sg_dot).as_bytes());
+            log::info!(
+                "State graph saved to {}",
+                self.options
+                    .output
+                    .as_ref()
+                    .unwrap()
+                    .join("state_graph.dot")
+                    .display()
+            );
         }
+        Ok(())
     }
 
     pub fn detect_deadlock(&self) -> Vec<DeadlockInfo> {
@@ -963,17 +964,13 @@ impl StateGraph {
                 .filter(|&node| self.graph[node].node_index.contains(start))
                 .collect();
 
-            // 对每个起始状态检查是否可以到达包含end的状态
+            // 对每个起始状态检查所有路径
             for start_state in start_states {
-                if !self.can_reach_function_end(start_state, *end) {
+                if let Some(deadlock_path) = self.find_deadlock_path(start_state, *end) {
                     deadlocks.push(DeadlockInfo {
                         function_id: format!("{:?}", def_id),
                         start_state: start_state.index(),
-                        deadlock_path: self
-                            .find_deadlock_path(start_state)
-                            .iter()
-                            .map(|node| node.index())
-                            .collect(),
+                        deadlock_path: deadlock_path.iter().map(|node| node.index()).collect(),
                     });
                 }
             }
@@ -982,66 +979,45 @@ impl StateGraph {
         deadlocks
     }
 
-    fn can_reach_function_end(&self, start_state: NodeIndex, end_node: NodeIndex) -> bool {
+    fn find_deadlock_path(&self, start: NodeIndex, end: NodeIndex) -> Option<Vec<NodeIndex>> {
         let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(start_state);
+        let mut path = Vec::new();
 
-        while let Some(current) = queue.pop_front() {
-            if !visited.insert(current) {
-                continue;
-            }
-
-            // 检查当前状态是否包含end节点
-            if self.graph[current].node_index.contains(&end_node) {
-                return true;
-            }
-
-            // 将所有后继状态加入队列
-            for edge in self.graph.edges(current) {
-                queue.push_back(edge.target());
-            }
+        // 如果找到一条不包含end的完整路径，返回该路径
+        if self.dfs_check_path(start, end, &mut visited, &mut path) {
+            Some(path)
+        } else {
+            None
         }
-
-        false
     }
 
-    fn find_deadlock_path(&self, start_state: NodeIndex) -> Vec<NodeIndex> {
-        let mut path = Vec::new();
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
-        let mut parent_map = HashMap::new();
+    fn dfs_check_path(
+        &self,
+        current: NodeIndex,
+        end: NodeIndex,
+        visited: &mut HashSet<NodeIndex>,
+        path: &mut Vec<NodeIndex>,
+    ) -> bool {
+        visited.insert(current);
+        path.push(current);
 
-        queue.push_back(start_state);
-        visited.insert(start_state);
+        // 如果是叶子节点（没有出边）且不包含end，找到一条死锁路径
+        if self.graph.edges(current).count() == 0 && !self.graph[current].node_index.contains(&end)
+        {
+            return true;
+        }
 
-        while let Some(current) = queue.pop_front() {
-            let mut has_unvisited_successor = false;
-
-            for edge in self.graph.edges(current) {
-                let target = edge.target();
-                if !visited.contains(&target) {
-                    visited.insert(target);
-                    queue.push_back(target);
-                    parent_map.insert(target, current);
-                    has_unvisited_successor = true;
+        // 遍历所有出边
+        for edge in self.graph.edges(current) {
+            let next = edge.target();
+            if !visited.contains(&next) {
+                if self.dfs_check_path(next, end, visited, path) {
+                    return true;
                 }
-            }
-
-            // 如果没有未访问的后继节点，这可能是死锁状态
-            if !has_unvisited_successor {
-                // 重建路径
-                let mut current = current;
-                path.push(current);
-                while let Some(&parent) = parent_map.get(&current) {
-                    path.push(parent);
-                    current = parent;
-                }
-                path.reverse();
-                break;
             }
         }
 
-        path
+        path.pop();
+        false
     }
 }

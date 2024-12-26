@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "lock-closure"
+name = "local_deadlock"
 version = "0.1.0"

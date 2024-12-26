@@ -1,6 +1,3 @@
-/// Copied from lockbud (https://github.com/BurtonQin/lockbud/)
-/// Copyright (c) 2022, Boqin Qin(秦 伯钦)
-/// Collect LockGuard info.
 extern crate rustc_hash;
 extern crate rustc_span;
 
@@ -29,33 +26,6 @@ impl LockGuardId {
     }
 }
 
-/// The possibility of deadlock.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DeadlockPossibility {
-    Probably,
-    Possibly,
-    Unlikely,
-    Unknown,
-}
-
-impl PartialOrd for DeadlockPossibility {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        use DeadlockPossibility::*;
-        match (*self, *other) {
-            (Probably, Probably)
-            | (Possibly, Possibly)
-            | (Unlikely, Unlikely)
-            | (Unknown, Unknown) => Some(Ordering::Equal),
-            (Probably, _) | (Possibly, Unlikely) | (Possibly, Unknown) | (Unlikely, Unknown) => {
-                Some(Ordering::Greater)
-            }
-            (_, Probably) | (Unlikely, Possibly) | (Unknown, Possibly) | (Unknown, Unlikely) => {
-                Some(Ordering::Less)
-            }
-        }
-    }
-}
-
 /// LockGuardKind, DataTy
 #[derive(Clone, Debug)]
 pub enum LockGuardTy<'tcx> {
@@ -72,12 +42,6 @@ pub enum LockGuardTy<'tcx> {
 
 impl<'tcx> LockGuardTy<'tcx> {
     pub fn from_local_ty(local_ty: ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
-        // e.g.
-        // extract i32 from
-        // sync: MutexGuard<i32, Poison>
-        // spin: MutexGuard<i32>
-        // parking_lot: MutexGuard<RawMutex, i32>
-        // async, tokio, future: currently Unsupported
         if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() {
             let path = tcx.def_path_str(adt_def.did());
             // quick fail
@@ -141,43 +105,6 @@ impl<'tcx> LockGuardTy<'tcx> {
             }
         } else {
             None
-        }
-    }
-
-    /// In parking_lot, the read lock is by default non-recursive if not specified.
-    /// if two recursively acquired read locks in one thread are interleaved
-    /// by a write lock from another thread, a deadlock may happen.
-    /// The reason is write lock has higher priority than read lock in parking_lot.
-    /// In std::sync, the implementation of read lock depends on the underlying OS.
-    /// AFAIK, the implementation on Windows and Mac have write priority.
-    /// So read lock in std::sync cannot be acquired recursively on the two systems.
-    /// spin explicitly documents no write priority. So the read lock in spin can
-    /// be acquired recursively.
-    pub fn deadlock_with(&self, other: &Self) -> DeadlockPossibility {
-        use LockGuardTy::*;
-        match (self, other) {
-            (StdMutex(a), StdMutex(b))
-            | (ParkingLotMutex(a), ParkingLotMutex(b))
-            | (SpinMutex(a), SpinMutex(b))
-            | (StdRwLockWrite(a), StdRwLockWrite(b))
-            | (StdRwLockWrite(a), StdRwLockRead(b))
-            | (StdRwLockRead(a), StdRwLockWrite(b))
-            | (ParkingLotWrite(a), ParkingLotWrite(b))
-            | (ParkingLotWrite(a), ParkingLotRead(b))
-            | (ParkingLotRead(a), ParkingLotWrite(b))
-            | (SpinWrite(a), SpinWrite(b))
-            | (SpinWrite(a), SpinRead(b))
-            | (SpinRead(a), SpinWrite(b))
-                if a == b =>
-            {
-                DeadlockPossibility::Probably
-            }
-            (StdRwLockRead(a), StdRwLockRead(b)) | (ParkingLotRead(a), ParkingLotRead(b))
-                if a == b =>
-            {
-                DeadlockPossibility::Possibly
-            }
-            _ => DeadlockPossibility::Unlikely,
         }
     }
 }

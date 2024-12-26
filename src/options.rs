@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::error::ErrorKind;
 
 use clap::{Arg, ArgGroup, Command};
@@ -41,11 +43,10 @@ fn make_options_parser() -> clap::Command {
         )
         .arg(
             Arg::new("diagnostics_output")
-                .short('o')
-                .long("output")
+                .long("pn-analysis-dir")
                 .value_name("PATH")
-                .help("Output path for analysis diagnostics and reports")
-                .default_value("diagnostics.json"),
+                .help("Directory for Petri net analysis outputs (default: ./tmp/<crate_name>)")
+                .default_value("/tmp"), // 改用相对路径作为默认值
         )
         .arg(
             Arg::new("target_crate")
@@ -114,7 +115,7 @@ fn make_options_parser() -> clap::Command {
 #[derive(Debug, Clone)]
 pub struct Options {
     pub detector_kind: DetectorKind,
-    pub output: Option<String>,
+    pub output: Option<PathBuf>,
     pub crate_name: String,
     pub crate_type: OwnCrateType,      // 区分 bin/lib lib 绑定libapis
     pub lib_apis_path: Option<String>, // lib APIs 文件路径
@@ -201,8 +202,11 @@ impl Options {
             _ => DetectorKind::Deadlock,
         };
 
-        self.output = matches.get_one::<String>("diagnostics_output").cloned();
         self.crate_name = matches.get_one::<String>("target_crate").unwrap().clone();
+        self.output = matches
+            .get_one::<String>("diagnostics_output")
+            .cloned()
+            .map(PathBuf::from);
 
         // 解析crate类型
         self.crate_type = match matches.get_one::<String>("crate_type").unwrap().as_str() {

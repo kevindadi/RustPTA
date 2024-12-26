@@ -20,6 +20,7 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
@@ -203,6 +204,7 @@ impl Hash for Marking {
 
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
+    output_directory: PathBuf,
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'pn CallGraph<'tcx>,
@@ -227,11 +229,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         callgraph: &'pn CallGraph<'tcx>,
         api_spec: ApiSpec,
         av: bool,
+        output_directory: PathBuf,
     ) -> Self {
         let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph, av));
         Self {
             options,
             tcx,
+            output_directory,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
             callgraph,
             alias,
@@ -986,8 +990,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 },
             );
 
-            let mut file = std::fs::File::create("graph.dot").unwrap();
+            let mut file = std::fs::File::create(self.output_directory.join("graph.dot")).unwrap();
             let _ = file.write_all(format!("{:?}", pn_dot).as_bytes());
+            log::info!(
+                "Petri net saved to {}",
+                self.output_directory.join("graph.dot").display()
+            );
         }
     }
 

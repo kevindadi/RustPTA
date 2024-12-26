@@ -1,5 +1,3 @@
-/// Copied from lockbud (https://github.com/BurtonQin/lockbud/)
-/// Copyright (c) 2022, Boqin Qin(秦 伯钦)
 extern crate rustc_hir;
 extern crate rustc_index;
 
@@ -15,7 +13,7 @@ use rustc_middle::mir::{
 };
 
 use rustc_middle::mir::Const;
-use rustc_middle::ty::{self, Instance, TyCtxt, TyKind};
+use rustc_middle::ty::{Instance, TyCtxt, TyKind};
 
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
@@ -33,7 +31,6 @@ pub struct Andersen<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     pts: PointsToMap<'tcx>,
     pub av: bool,
-    // pub callgraph: CallGraph<'tcx>,
 }
 
 pub type PointsToMap<'tcx> = FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>>;
@@ -418,22 +415,56 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
     fn process_assignment(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>) {
         let lhs_pattern = Self::process_place(place.as_ref());
         let rhs_patterns = Self::process_rvalue(rvalue, self.av);
-        // TODO(boqin): check if mk_place_field work for all places.
-        // original closure impl:
-        //   _x = closure => _x[0], _x[1], ... are upvars. Inside the closure, I check if a local var aliases with the upvars.
-        // current closure impl:
-        //   _x = closure(def_id, args, fields) => fields[0], fields[1], ... are upvars
-        // For compatibility, I create new places: _x[0], _x[1], ...
-        // and add constraints for _x[0] = fields[0], _x[1] = fields[1], ...
-        // Note that creating new places with mk_place_field is a hack. I need to check it against large projects.
+
+        // 处理闭包
         if let Rvalue::Aggregate(box AggregateKind::Closure(_def_id, _args), fields) = rvalue {
-            for (idx, operand) in fields.iter_enumerated() {
-                if let Some(rhs) = operand.place() {
-                    let op_ty = operand.ty(&self.body.local_decls, self.tcx);
-                    let lhs = self.tcx.mk_place_field(*place, idx, op_ty);
-                    self.graph.add_copy(lhs.as_ref(), rhs.as_ref());
+            // 获取闭包的upvars
+            let upvar_tys = _args.as_closure().upvar_tys();
+
+            for (idx, (operand, upvar_ty)) in fields.iter_enumerated().zip(upvar_tys).enumerate() {
+                if let Some(rhs) = operand.1.place() {
+                    // 创建对应的闭包字段位置
+                    let lhs_field = match place.projection.last() {
+                        // 如果已经是投影，直接使用 mk_place_field
+                        Some(_) => self.tcx.mk_place_field(*place, idx.into(), upvar_ty),
+                        // 否则创建新的投影
+                        None => Place {
+                            local: place.local,
+                            projection: self
+                                .tcx
+                                .mk_place_elems(&[ProjectionElem::Field(idx.into(), upvar_ty)]),
+                        },
+                    };
+
+                    // 添加约束：闭包字段 = upvar
+                    self.graph.add_copy(lhs_field.as_ref(), rhs.as_ref());
+
+                    // 如果是引用类型，还需要添加地址约束
+                    if upvar_ty.is_ref() {
+                        self.graph.add_address(lhs_field.as_ref(), rhs.as_ref());
+                    }
+
+                    // (TODO:)检查闭包内部的别名关系
+                    // if let Some(closure_body) = self.tcx.optimized_mir(def_id) {
+                    //     // 获取闭包内部使用 upvar 的位置
+                    //     for (local, decl) in closure_body.local_decls.iter_enumerated() {
+                    //         if decl.ty == upvar_ty {
+                    //             // 添加闭包内部局部变量与 upvar 的别名关系
+                    //             let closure_local = Place::from(local);
+                    //             self.graph.add_copy(closure_local.as_ref(), rhs.as_ref());
+                    //         }
+                    //     }
+                    // }
                 }
             }
+
+            // for (idx, operand) in fields.iter_enumerated() {
+            //     if let Some(rhs) = operand.place() {
+            //         let op_ty = operand.ty(&self.body.local_decls, self.tcx);
+            //         let lhs = self.tcx.mk_place_field(*place, idx, op_ty);
+            //         self.graph.add_copy(lhs.as_ref(), rhs.as_ref());
+            //     }
+            // }
         }
 
         for rhs_pattern in rhs_patterns.into_iter() {
