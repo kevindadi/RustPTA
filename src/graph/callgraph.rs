@@ -1,14 +1,3 @@
-//! Generate a CallGraph for instances in each crate.
-//! You can roughly think of instances as a monomorphic function.
-//! If an instance calls another instance, then we have an edge
-//! from caller to callee with callsite locations as edge weight.
-//! This is a fundamental analysis for other analysis,
-//! e.g., points-to analysis, lockguard collector, etc.
-//! We also track where a closure is defined rather than called
-//! to record the defined function and the parameter of the closure,
-//! which is pointed to by upvars.
-use std::fmt::Debug;
-
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
@@ -307,7 +296,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                             Operand::Constant(ref const_op) => const_op.ty(),
                         };
 
-                        if let ty::Closure(closure_def_id, _) = closure_ty.kind() {
+                        if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                            closure_ty.kind()
+                        {
                             if let Some(callee) =
                                 Instance::try_resolve(self.tcx, typing_env, *closure_def_id, substs)
                                     .ok()
@@ -320,6 +311,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                                         destination: destination.local,
                                     },
                                 ));
+
                                 return;
                             }
                         }

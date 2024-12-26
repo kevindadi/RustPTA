@@ -1,3 +1,0 @@
-Data Race Report:
-Location: main.rs:6->data_race::main
-main thread write in main.rs:8--->thread T1 Write in main.rs:6

@@ -2,15 +2,16 @@
 #![feature(box_patterns)]
 #![warn(non_snake_case)]
 
-pub mod analysis;
 pub mod callback;
 pub mod concurrency;
+pub mod extern_tools;
 pub mod graph;
 pub mod memory;
 pub mod options;
 pub mod report;
 pub mod utils;
 
+extern crate rustc_abi;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hash;
@@ -19,6 +20,7 @@ extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate rustc_symbol_mangling;
 
 use log::debug;
 use options::Options;
@@ -33,20 +35,20 @@ fn main() {
         rustc_driver::init_rustc_env_logger(&handler);
     }
 
-    if std::env::var("PTA_LOG").is_ok() {
+    if std::env::var("PN_LOG").is_ok() {
         let e = env_logger::Env::new()
-            .filter("PTA_LOG")
-            .write_style("PTA_LOG_STYLE");
+            .filter("PN_LOG")
+            .write_style("PN_LOG_STYLE");
         env_logger::init_from_env(e);
     }
 
     let mut options = Options::default();
 
-    let _ = options.parse_from_str(&std::env::var("PTA_FLAGS").unwrap_or_default(), &handler);
+    let _ = options.parse_from_str(&std::env::var("PN_FLAGS").unwrap_or_default(), &handler);
 
     //let _ = options.parse_from_str(&std::env::args().skip(2), &early_error_handler);
 
-    log::debug!("PTA options from environment: {:?}", options);
+    log::debug!("PN options from environment: {:?}", options);
     // panic!();
     let mut args = std::env::args_os()
         .enumerate()
@@ -95,13 +97,6 @@ fn main() {
                 // Tell compiler to emit MIR into crate for every function with a body.
                 rustc_command_line_arguments.push("-Z".into());
                 rustc_command_line_arguments.push(always_encode_mir);
-            }
-
-            match options.detector_kind {
-                DetectorKind::DataRace => {
-                    rustc_command_line_arguments.push("-Zsanitizer=thread".into())
-                }
-                _ => {}
             }
         }
 

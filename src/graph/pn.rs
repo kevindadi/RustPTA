@@ -1,4 +1,10 @@
+use crate::concurrency::atomic::AtomicOrdering;
+use crate::concurrency::atomic::AtomicVarMap;
+use crate::memory::pointsto::AliasId;
+use crate::options::OwnCrateType;
 use crate::utils::format_name;
+use crate::utils::ApiEntry;
+use crate::utils::ApiSpec;
 use crate::Options;
 use log::debug;
 use petgraph::graph::NodeIndex;
@@ -14,6 +20,7 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
@@ -22,10 +29,8 @@ use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
 use crate::concurrency::candvar::CondVarInfo;
 use crate::{
-    analysis::pointsto::{AliasAnalysis, ApproximateAliasKind},
-    concurrency::locks::{
-        DeadlockPossibility, LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy,
-    },
+    concurrency::locks::{LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy},
+    memory::pointsto::{AliasAnalysis, ApproximateAliasKind},
 };
 
 #[derive(Debug, Clone)]
@@ -40,37 +45,47 @@ pub struct Place {
     pub tokens: Arc<RwLock<usize>>,
     pub capacity: usize,
     pub span: String,
-    pub details: String,
+    pub place_type: PlaceType,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
+pub enum PlaceType {
+    Atomic,
+    Lock,
+    CondVar,
+    FunctionStart,
+    FunctionEnd,
+    BasicBlock,
 }
 
 impl Place {
-    pub fn new(name: String, token: usize) -> Self {
+    pub fn new(name: String, token: usize, place_type: PlaceType) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(token)),
             capacity: token,
             span: String::new(),
-            details: String::new(),
+            place_type,
         }
     }
 
-    pub fn new_with_span(name: String, token: usize, span: String) -> Self {
+    pub fn new_with_span(name: String, token: usize, place_type: PlaceType, span: String) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(token)),
             capacity: 1usize,
             span,
-            details: String::new(),
+            place_type,
         }
     }
 
-    pub fn new_with_no_token(name: String) -> Self {
+    pub fn new_with_no_token(name: String, place_type: PlaceType) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(0)),
             capacity: 1usize,
             span: String::new(),
-            details: String::new(),
+            place_type,
         }
     }
 }
@@ -85,17 +100,63 @@ impl std::fmt::Display for Place {
 #[derive(Debug, Clone)]
 pub struct Transition {
     pub name: String,
-    time: (u32, u32),
     pub weight: u32,
     shape: Shape,
+    pub transition_type: ControlType,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlType {
+    // 基本控制结构
+    Start(InstanceId),
+    Goto,               // 直接跳转
+    Switch,             // 条件分支
+    Return(InstanceId), // 函数返回
+    Drop(DropType),     // 资源释放
+
+    // 函数调用
+    Call(CallType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallType {
+    // 同步原语调用
+    Lock(NodeIndex),
+    RwLockRead(NodeIndex),
+    RwLockWrite(NodeIndex),
+    Notify(NodeIndex),
+    Wait,
+
+    // 原子操作
+    AtomicLoad(AliasId, AtomicOrdering, String),
+    AtomicStore(AliasId, AtomicOrdering, String),
+    AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String),
+    // 内存访问相关
+    UnsafeRead(NodeIndex),
+    UnsafeWrite(NodeIndex),
+
+    // 线程操作
+    Spawn,
+    Join,
+
+    // 普通函数调用
+    Function,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DropType {
+    Unlock(NodeIndex),
+    DropRead(NodeIndex),
+    DropWrite(NodeIndex),
+    Basic,
 }
 
 impl Transition {
-    pub fn new(name: String, time: (u32, u32), weight: u32) -> Self {
+    pub fn new(name: String, transition_type: ControlType) -> Self {
         Self {
             name,
-            time,
-            weight,
+            transition_type,
+            weight: 1,
             shape: Shape::Box,
         }
     }
@@ -143,17 +204,22 @@ impl Hash for Marking {
 
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
+    output_directory: PathBuf,
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: Graph<PetriNetNode, PetriNetEdge>,
     callgraph: &'pn CallGraph<'tcx>,
-    alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
-    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+    pub alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
+    pub function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
     // all condvars
     condvars: HashMap<CondVarId, NodeIndex>,
     pub entry_node: NodeIndex,
+    pub api_spec: ApiSpec,
+    pub api_marks: HashMap<String, HashSet<(NodeIndex, usize)>>,
+    atomic_places: HashMap<AliasId, NodeIndex>,
+    atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
@@ -161,11 +227,15 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         options: &'compilation Options,
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         callgraph: &'pn CallGraph<'tcx>,
+        api_spec: ApiSpec,
+        av: bool,
+        output_directory: PathBuf,
     ) -> Self {
-        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
+        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph, av));
         Self {
             options,
             tcx,
+            output_directory,
             net: Graph::<PetriNetNode, PetriNetEdge>::new(),
             callgraph,
             alias,
@@ -175,12 +245,91 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             lock_info: HashMap::default(),
             condvars: HashMap::<CondVarId, NodeIndex>::new(),
             entry_node: NodeIndex::new(0),
+            api_spec,
+            api_marks: HashMap::<String, HashSet<(NodeIndex, usize)>>::new(),
+            atomic_places: HashMap::<AliasId, NodeIndex>::new(),
+            atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
+        }
+    }
+
+    fn marking_api(&mut self) {
+        // 匹配format DefId
+        let func_map: HashMap<String, NodeIndex> = self
+            .function_counter
+            .iter()
+            .map(|(def_id, (start_node, _))| {
+                let func_name = format_name(*def_id);
+                (func_name, *start_node)
+            })
+            .collect();
+
+        for api_entry in &self.api_spec.apis {
+            match api_entry {
+                ApiEntry::Single(api_name) => {
+                    if let Some(&start_node) = func_map.get(api_name) {
+                        let mut mark = HashSet::new();
+                        mark.insert((start_node, 1)); // 设置初始 token 为 1
+                        self.api_marks.insert(api_name.clone(), mark);
+                        log::debug!("Added mark for single API: {}", api_name);
+                    }
+                }
+                ApiEntry::Group(apis) => {
+                    let mut group_mark = HashSet::new();
+                    for api_name in apis {
+                        if let Some(&start_node) = func_map.get(api_name) {
+                            group_mark.insert((start_node, 1));
+                        }
+                    }
+                    if !group_mark.is_empty() {
+                        // 使用组中的第一个 API 名称作为键
+                        let group_key = format!("group_{}", apis.join("_"));
+                        self.api_marks.insert(group_key, group_mark);
+                        log::debug!("Added mark for API group: [{}]", apis.join(", "));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn add_atomic_places(&mut self, atomic_var: &AtomicVarMap) {
+        log::info!("add atomic places");
+        for (_, atomic_info) in atomic_var {
+            let atomic_type = atomic_info.var_type.clone();
+            let alias_id = atomic_info.get_alias_id();
+            log::debug!("id: {:?}", alias_id);
+            if !atomic_type.starts_with("&") {
+                log::debug!("add atomic: {:?}", atomic_type);
+                let atomic_name = atomic_type.clone();
+                let atomic_place = Place::new_with_span(
+                    atomic_name,
+                    1,
+                    PlaceType::Atomic,
+                    atomic_info.span.clone(),
+                );
+                let atomic_node = self.net.add_node(PetriNetNode::P(atomic_place));
+
+                self.atomic_places.insert(alias_id, atomic_node);
+            } else {
+                log::debug!(
+                    "Adding atomic ordering: {:?} -> {:?}",
+                    alias_id,
+                    atomic_info.operations[0].ordering
+                );
+                self.atomic_order_maps
+                    .insert(alias_id, atomic_info.operations[0].ordering);
+            }
         }
     }
 
     pub fn construct(&mut self /*alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>*/) {
         log::info!("construct petri net");
         self.construct_func();
+
+        if !self.api_spec.apis.is_empty() {
+            log::info!("construct api");
+            self.marking_api();
+        }
+
         log::info!("construct function");
         self.construct_lock_with_dfs();
         log::info!("construct lock");
@@ -205,9 +354,18 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
 
-        self.reduce_state();
-        log::info!("reduce state");
+        // 如果CrateType是LIB，不优化以防初始标识被改变
+        if self.api_spec.apis.is_empty() {
+            self.reduce_state();
+            log::info!("reduce state");
+        }
         //self.reduce_state_from(self.entry_node);
+
+        // 验证网络结构
+        if let Err(err) = self.verify_structure() {
+            log::error!("Petri net structure verification failed: {}", err);
+            // 可以选择在这里panic或者进行其他错误处理
+        }
     }
 
     pub fn visitor_function_body(
@@ -240,52 +398,88 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             // &mut self.thread_id_handler,
             // &mut self.handler_id,
             &self.condvars,
+            &self.atomic_places,
+            &self.atomic_order_maps,
         );
         func_body.translate();
     }
 
     // Construct Function Start and End Place by callgraph
     pub fn construct_func(&mut self) {
-        if let Some((main_func, _)) = self.tcx.entry_fn(()) {
-            for node_idx in self.callgraph.graph.node_indices() {
-                let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
-                let func_id = func_instance.instance().def_id();
-                let func_name = format_name(func_id);
-                if !func_name.starts_with(&self.options.crate_name) {
-                    continue;
-                }
-
-                // 检查是否已经存在
-                if self.function_counter.contains_key(&func_id) {
-                    continue;
-                }
-
-                let (func_start_node_id, func_end_node_id) = if func_id == main_func {
-                    let func_start = Place::new(format!("{}_start", func_name), 1);
-                    let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                    let func_end = Place::new_with_no_token(format!("{}_end", func_name));
-                    let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                    self.entry_node = func_start_node_id;
-                    (func_start_node_id, func_end_node_id)
-                } else {
-                    let func_start = Place::new_with_no_token(format!("{}_start", func_name));
-                    let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                    let func_end = Place::new_with_no_token(format!("{}_end", func_name));
-                    let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
-                    (func_start_node_id, func_end_node_id)
-                };
-
-                self.function_counter
-                    .insert(func_id, (func_start_node_id, func_end_node_id));
-                self.function_vec.insert(func_id, vec![func_start_node_id]);
-            }
-        } else {
-            log::debug!("cargo pta need a entry point!");
+        // 如果crate是BIN，则需要找到main函数
+        match self.options.crate_type {
+            OwnCrateType::Bin => self.construct_bin_funcs(),
+            OwnCrateType::Lib => self.construct_lib_funcs(),
         }
     }
 
+    fn construct_bin_funcs(&mut self) {
+        let main_func = match self.tcx.entry_fn(()) {
+            Some((main_func, _)) => main_func,
+            None => {
+                log::debug!("cargo pta need a entry point!");
+                return;
+            }
+        };
+
+        self.process_functions(|self_, func_id, func_name| {
+            if func_id == main_func {
+                let (start, end) = self_.create_function_places(func_name, true);
+                self_.entry_node = start;
+                (start, end)
+            } else {
+                self_.create_function_places(func_name, false)
+            }
+        });
+    }
+
+    fn construct_lib_funcs(&mut self) {
+        log::info!("construct lib funcs");
+        self.process_functions(|self_, _, func_name| {
+            self_.create_function_places(func_name, false)
+        });
+    }
+
+    fn process_functions<F>(&mut self, create_places: F)
+    where
+        F: Fn(&mut Self, DefId, String) -> (NodeIndex, NodeIndex),
+    {
+        for node_idx in self.callgraph.graph.node_indices() {
+            let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
+            let func_id = func_instance.instance().def_id();
+            let func_name = format_name(func_id);
+            if !func_name.starts_with(&self.options.crate_name)
+                || self.function_counter.contains_key(&func_id)
+            {
+                continue;
+            }
+
+            let (start, end) = create_places(self, func_id, func_name);
+            self.function_counter.insert(func_id, (start, end));
+            self.function_vec.insert(func_id, vec![start]);
+        }
+    }
+
+    fn create_function_places(
+        &mut self,
+        func_name: String,
+        with_token: bool,
+    ) -> (NodeIndex, NodeIndex) {
+        let start = if with_token {
+            Place::new(format!("{}_start", func_name), 1, PlaceType::FunctionStart)
+        } else {
+            Place::new_with_no_token(format!("{}_start", func_name), PlaceType::FunctionStart)
+        };
+        let end = Place::new_with_no_token(format!("{}_end", func_name), PlaceType::FunctionEnd);
+
+        let start_id = self.net.add_node(PetriNetNode::P(start));
+        let end_id = self.net.add_node(PetriNetNode::P(end));
+
+        (start_id, end_id)
+    }
+
     // Construct lock for place
-    pub fn construct_lock(&mut self, alias_analysis: &RefCell<AliasAnalysis>) {
+    pub fn construct_lock(&mut self) {
         let lockguards = self.collect_lockguards();
         // classify the lock point to the same memory location
         // let mut lockguard_relations = FxHashSet::<(LockGuardId, LockGuardId)>::default();
@@ -305,9 +499,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 if a == b {
                     continue;
                 }
-                let possibility = self.deadlock_possibility(a, b, &info, alias_analysis);
+                let possibility = self
+                    .alias
+                    .borrow_mut()
+                    .alias(a.clone().into(), b.clone().into());
                 match possibility {
-                    DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                         if !lock_map.contains_key(a) && !lock_map.contains_key(b) {
                             lock_map.insert(*a, counter);
                             lock_map.insert(*b, counter);
@@ -345,14 +542,14 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_p = Place::new(format!("Mutex_{}", id), 1);
+                    let lock_p = Place::new(format!("Mutex_{}", id), 1, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
                 }
                 _ => {
-                    let lock_p = Place::new(format!("RwLock_{}", id), 10);
+                    let lock_p = Place::new(format!("RwLock_{}", id), 10, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -376,9 +573,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         debug!("{:?}", lockid_vec);
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
-                match self.deadlock_possibility(&lockid_vec[i], &lockid_vec[j], &info, &self.alias)
+                match self
+                    .alias
+                    .borrow_mut()
+                    .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
                 {
-                    DeadlockPossibility::Probably | DeadlockPossibility::Possibly => {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                         adj_list.entry(i).or_insert_with(Vec::new).push(j);
                         adj_list.entry(j).or_insert_with(Vec::new).push(i);
                     }
@@ -421,7 +621,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 | LockGuardTy::SpinMutex(_) => {
                     let lock_name = format!("Mutex_{}", id);
 
-                    let lock_p = Place::new(lock_name, 1);
+                    let lock_p = Place::new(lock_name, 1, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -429,7 +629,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
                 _ => {
                     let lock_name = format!("RwLock_{}", id);
-                    let lock_p = Place::new(lock_name, 10);
+                    let lock_p = Place::new(lock_name, 10, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     for lock in lock_vec {
                         self.locks_counter.insert(lock.clone(), lock_node);
@@ -531,8 +731,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     // 创建新的Transition
                     let new_trans = Transition::new(
                         format!("merged_trans_{}_{}", p1.index(), p2.index()),
-                        (0, 0),
-                        1,
+                        ControlType::Goto,
                     );
                     let new_trans_idx = self.net.add_node(PetriNetNode::T(new_trans));
 
@@ -569,13 +768,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     /// 分析并简化从起始节点到终止节点的路径，保留与特殊节点相连的路径
-    ///
-    /// # Arguments
-    /// * `start_node` - 起始Place节点
-    /// * `end_node` - 终止Place节点
-    /// * `special_nodes` - 特殊节点集合，与这些节点相连的路径将被保留
-    ///
-    /// # 工作流程
     /// 1. 使用DFS收集所有从start_node到end_node的路径
     /// 2. 标记与特殊节点相连的路径为有效路径
     /// 3. 收集需要保留的节点（出现在有效路径中的节点）
@@ -633,16 +825,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
     /// 递归收集从起点到终点的所有路径
     ///
-    /// # Arguments
-    /// * `current` - 当前正在访问的节点
-    /// * `end` - 目标终点节点
-    /// * `all_paths` - 存储所有发现的路径
-    /// * `current_path` - 当前正在构建的路径
-    /// * `visited` - 记录已访问节点，用于避免环路
-    /// * `special_nodes` - 特殊节点集合
-    /// * `valid_paths` - 存储与特殊节点相连的有效路径
-    ///
-    /// # 工作流程
     /// 1. 如果到达终点，检查当前路径是否与特殊节点相连
     /// 2. 如果路径有效，添加到valid_paths中
     /// 3. 将当前路径添加到all_paths中
@@ -717,86 +899,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         lockguards
     }
 
-    /// JoinHandle 一般在Body内部调用,在CallGraph中保留
-    // fn collect_handle(
-    //     &mut self,
-    //     //alias_analysis: &RefCell<AliasAnalysis>,
-    // ) -> HashMap<InstanceId, JoinHandlerMap<'tcx>> {
-    //     let mut handlers = HashMap::default();
-    //     for (instance_id, node) in self.callgraph.graph.node_references() {
-    //         let instance = match node {
-    //             CallGraphNode::WithBody(instance) => instance,
-    //             _ => continue,
-    //         };
-
-    //         if !instance.def_id().is_local() {
-    //             continue;
-    //         }
-
-    //         let body = self.tcx.instance_mir(instance.def);
-    //         let mut handle_collector =
-    //             JoinHandlerCollector::new(instance_id, instance, body, self.tcx);
-    //         handle_collector.analyze();
-    //         if !handle_collector.handlers.is_empty() {
-    //             handlers.insert(instance_id, handle_collector.handlers);
-    //         }
-    //     }
-    //     let mut info = FxHashMap::default();
-
-    //     for (_, map) in handlers.clone().into_iter() {
-    //         info.extend(map.clone().into_iter());
-    //     }
-
-    //     let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
-    //     let lockid_vec: Vec<JoinHanderId> = info.clone().into_keys().collect::<Vec<JoinHanderId>>();
-    //     debug!("{:?}", lockid_vec);
-    //     for i in 0..lockid_vec.len() {
-    //         for j in i + 1..lockid_vec.len() {
-    //             match self
-    //                 .alias
-    //                 .borrow_mut()
-    //                 .alias_handle(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
-    //             {
-    //                 ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-    //                     adj_list.entry(i).or_insert_with(Vec::new).push(j);
-    //                     adj_list.entry(j).or_insert_with(Vec::new).push(i);
-    //                 }
-    //                 ApproximateAliasKind::Unlikely => {}
-    //                 ApproximateAliasKind::Unknown => {}
-    //             }
-    //         }
-    //     }
-    //     debug!("{:?}", adj_list);
-    //     let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
-    //     let mut group_id = 0;
-    //     // let mut groups: HashMap<usize, Vec<JoinHanderId>> = HashMap::new();
-
-    //     for i in 0..lockid_vec.len() {
-    //         if !visited[i] {
-    //             let mut stack: VecDeque<usize> = VecDeque::new();
-    //             stack.push_back(i);
-    //             visited[i] = true;
-    //             while let Some(node) = stack.pop_front() {
-    //                 self.thread_id_handler
-    //                     .entry(group_id)
-    //                     .or_insert_with(Vec::new)
-    //                     .push(lockid_vec[node].clone());
-    //                 if let Some(neighbors) = adj_list.get(&node) {
-    //                     for &neighbor in neighbors {
-    //                         if !visited[neighbor] {
-    //                             stack.push_back(neighbor);
-    //                             visited[neighbor] = true;
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //             group_id += 1;
-    //         }
-    //     }
-
-    //     handlers
-    // }
-
     fn collect_condvar(&mut self) {
         let mut condvars: FxHashMap<NodeIndex, HashMap<CondVarId, CondVarInfo>> =
             FxHashMap::default();
@@ -824,7 +926,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             for condvar_map in condvars.into_values() {
                 for condvar in condvar_map.into_iter() {
                     let condvar_name = format!("condvar:{:?}", condvar.1.span);
-                    let condvar_p = Place::new(condvar_name, 1);
+                    let condvar_p = Place::new(condvar_name, 1, PlaceType::CondVar);
                     let condvar_node = self.net.add_node(PetriNetNode::P(condvar_p));
                     self.condvars.insert(condvar.0.clone(), condvar_node);
                 }
@@ -849,56 +951,15 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         current_mark
     }
 
-    fn deadlock_possibility(
-        &self,
-        a: &LockGuardId,
-        b: &LockGuardId,
-        lockguards: &LockGuardMap<'tcx>,
-        alias_analysis: &RefCell<AliasAnalysis>,
-    ) -> DeadlockPossibility {
-        let a_ty = &lockguards[a].lockguard_ty;
-        let b_ty = &lockguards[b].lockguard_ty;
-        if let (LockGuardTy::ParkingLotRead(_), LockGuardTy::ParkingLotRead(_)) = (a_ty, b_ty) {
-            if lockguards[b].is_gen_only_by_recursive() {
-                return DeadlockPossibility::Unlikely;
-            }
-        }
-        // Assume that a lock in a loop or recursive functions will not deadlock with itself,
-        // in which case the lock spans of the two locks are the same.
-        // This may miss some bugs but can reduce many FPs.
-        if lockguards[a].span == lockguards[b].span {
-            return DeadlockPossibility::Unlikely;
-        }
-        let possibility = match a_ty.deadlock_with(b_ty) {
-            DeadlockPossibility::Probably => {
-                match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
-                    ApproximateAliasKind::Probably => DeadlockPossibility::Probably,
-                    ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-                    ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-                    ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-                }
-            }
-            DeadlockPossibility::Possibly => {
-                match alias_analysis.borrow_mut().alias((*a).into(), (*b).into()) {
-                    ApproximateAliasKind::Probably => DeadlockPossibility::Possibly,
-                    ApproximateAliasKind::Possibly => DeadlockPossibility::Possibly,
-                    ApproximateAliasKind::Unlikely => DeadlockPossibility::Unlikely,
-                    ApproximateAliasKind::Unknown => DeadlockPossibility::Unknown,
-                }
-            }
-            _ => DeadlockPossibility::Unlikely,
-        };
-        possibility
-    }
-
     pub fn get_or_insert_node(&mut self, def_id: DefId) -> (NodeIndex, NodeIndex) {
         match self.function_counter.entry(def_id) {
             Entry::Occupied(node) => node.get().to_owned(),
             Entry::Vacant(v) => {
                 let func_name = self.tcx.def_path_str(def_id);
-                let func_start = Place::new(format!("{}_start", func_name), 0);
+                let func_start =
+                    Place::new(format!("{}_start", func_name), 0, PlaceType::FunctionStart);
                 let func_start_node_id = self.net.add_node(PetriNetNode::P(func_start));
-                let func_end = Place::new(format!("{}_end", func_name), 0);
+                let func_end = Place::new(format!("{}_end", func_name), 0, PlaceType::FunctionEnd);
                 let func_end_node_id = self.net.add_node(PetriNetNode::P(func_end));
                 *v.insert((func_start_node_id, func_end_node_id))
             }
@@ -906,29 +967,108 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn save_petri_net_to_file(&self) {
-        use petgraph::dot::{Config, Dot};
-        let pn_dot = Dot::with_attr_getters(
-            &self.net,
-            &[Config::NodeNoLabel],
-            &|_, _| "arrowhead = vee".to_string(),
-            &|_, nr| {
-                let label = match &nr.1 {
-                    PetriNetNode::P(place) => {
-                        let tokens = *place.tokens.read().unwrap();
-                        format!(
-                            "label = \"{}\\n(tokens: {})\", shape = circle",
-                            place.name, tokens
-                        )
-                    }
-                    PetriNetNode::T(transition) => {
-                        format!("label = \"{}\", shape = box", transition.name)
-                    }
-                };
-                label
-            },
-        );
+        if self.options.dump_options.dump_petri_net {
+            use petgraph::dot::{Config, Dot};
+            let pn_dot = Dot::with_attr_getters(
+                &self.net,
+                &[Config::NodeNoLabel],
+                &|_, _| "arrowhead = vee".to_string(),
+                &|_, nr| {
+                    let label = match &nr.1 {
+                        PetriNetNode::P(place) => {
+                            let tokens = *place.tokens.read().unwrap();
+                            format!(
+                                "label = \"{}\\n(tokens: {})\", shape = circle",
+                                place.name, tokens
+                            )
+                        }
+                        PetriNetNode::T(transition) => {
+                            format!("label = \"{}\", shape = box", transition.name)
+                        }
+                    };
+                    label
+                },
+            );
 
-        let mut file = std::fs::File::create("graph.dot").unwrap();
-        let _ = file.write_all(format!("{:?}", pn_dot).as_bytes());
+            let mut file = std::fs::File::create(self.output_directory.join("graph.dot")).unwrap();
+            let _ = file.write_all(format!("{:?}", pn_dot).as_bytes());
+            log::info!(
+                "Petri net saved to {}",
+                self.output_directory.join("graph.dot").display()
+            );
+        }
+    }
+
+    /// 验证Petri网的结构正确性
+    ///
+    /// 检查以下规则:
+    /// 1. Transition节点的所有前驱和后继必须是Place节点
+    /// 2. Place节点的所有前驱和后继必须是Transition节点
+    /// 3. Place节点可以没有前驱或后继
+    ///
+    /// 返回:
+    /// - Ok(()) 如果网络结构正确
+    /// - Err(String) 包含错误描述的字符串
+    pub fn verify_structure(&self) -> Result<(), String> {
+        for node_idx in self.net.node_indices() {
+            match &self.net[node_idx] {
+                PetriNetNode::T(transition) => {
+                    // 检查Transition的前驱
+                    for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
+                        match &self.net[pred] {
+                            PetriNetNode::T(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Transition '{}' has a Transition predecessor",
+                                    transition.name
+                                ));
+                            }
+                            PetriNetNode::P(_) => {} // 正确的情况
+                        }
+                    }
+
+                    // 检查Transition的后继
+                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
+                        match &self.net[succ] {
+                            PetriNetNode::T(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Transition '{}' has a Transition successor",
+                                    transition.name
+                                ));
+                            }
+                            PetriNetNode::P(_) => {} // 正确的情况
+                        }
+                    }
+                }
+                PetriNetNode::P(place) => {
+                    // 检查Place的前驱（如果有的话）
+                    for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
+                        match &self.net[pred] {
+                            PetriNetNode::P(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Place '{}' has a Place predecessor",
+                                    place.name
+                                ));
+                            }
+                            PetriNetNode::T(_) => {} // 正确的情况
+                        }
+                    }
+
+                    // 检查Place的后继（如果有的话）
+                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
+                        match &self.net[succ] {
+                            PetriNetNode::P(_) => {
+                                return Err(format!(
+                                    "Invalid structure: Place '{}' has a Place successor",
+                                    place.name
+                                ));
+                            }
+                            PetriNetNode::T(_) => {} // 正确的情况
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }

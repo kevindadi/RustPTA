@@ -8,7 +8,7 @@ use std::hash::Hash;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hasher;
 
-use crate::analysis::pointsto::AliasId;
+use crate::memory::pointsto::AliasId;
 
 use super::cpn::{ColorPetriEdge, ColorPetriNode, DataOpType};
 use super::state_graph::{insert_with_comparison, normalize_state, StateEdge, StateNode};
@@ -25,7 +25,6 @@ pub struct RaceInfo {
 }
 
 impl RaceInfo {
-    // 辅助函数：提取 span 的关键部分（文件:行:列）
     fn extract_span_key(span: &str) -> String {
         // 匹配形如 "src/main.rs:19:17" 的部分
         if let Some(idx) = span.find(": ") {
@@ -130,7 +129,7 @@ impl CpnStateGraph {
             // 获取当前状态下所有使能的变迁
 
             let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
-            let race_infos = self.check_race_condition(&enabled_transitions);
+            let race_infos = self.detect_race_condition(&enabled_transitions);
 
             for race_info in race_infos {
                 let race_info_clone = race_info.clone();
@@ -149,11 +148,14 @@ impl CpnStateGraph {
                 continue;
             }
 
+            let mark_node_index = current_mark.clone().into_iter().map(|(n, _)| n).collect();
             let current_state = normalize_state(&current_mark);
             if !visited_states.insert(current_state.clone()) {
                 continue; // 跳过已访问的状态
             }
-            let current_node = self.graph.add_node(StateNode::new(current_state.clone()));
+            let current_node = self
+                .graph
+                .add_node(StateNode::new(current_state.clone(), mark_node_index));
             let new_states: Vec<_> = {
                 let mut handles = vec![];
 
@@ -190,13 +192,16 @@ impl CpnStateGraph {
                     queue.push_back((new_net.clone(), new_mark.clone()));
                     // log::info!("new state: {:?}", new_state);
                     // 在状态图中添加新状态节点
-                    let new_node = self.graph.add_node(StateNode::new(new_state));
+                    let new_node = self.graph.add_node(StateNode::new(
+                        new_state.clone(),
+                        new_mark.clone().into_iter().map(|(n, _)| n).collect(),
+                    ));
 
                     // 添加从当前状态到新状态的边，边的标签为变迁名
                     self.graph.add_edge(
                         current_node,
                         new_node,
-                        StateEdge::new(format!("{:?}", transition), 1),
+                        StateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 }
             }
@@ -355,13 +360,6 @@ impl CpnStateGraph {
     }
 
     /// 检查并收集所有可能的数据竞争情况
-    ///
-    /// # Input
-    /// * `enabled_transitions` - 当前状态下所有使能的变迁节点索引
-    ///
-    /// # Output
-    /// 返回一个 HashSet<RaceInfo>，包含所有检测到的不重复的数据竞争信息
-    ///
     /// # Algorithm
     /// 1. 首先按照数据操作(AliasId)对所有不安全变迁进行分组
     /// 2. 对每组数据访问进行分析：
@@ -379,7 +377,7 @@ impl CpnStateGraph {
     /// - 相同的数据操作(RaceDataInfo)
     /// - 相同的基本块集合
     /// - 相同的源代码位置集合（忽略具体的列号）
-    pub fn check_race_condition(&self, enabled_transitions: &[NodeIndex]) -> HashSet<RaceInfo> {
+    pub fn detect_race_condition(&self, enabled_transitions: &[NodeIndex]) -> HashSet<RaceInfo> {
         // 1. 收集所有UnsafeDataTransition，同时保存操作类型和span信息
         let mut data_groups: HashMap<AliasId, Vec<(NodeIndex, DataOpType, String, String, usize)>> =
             HashMap::new();

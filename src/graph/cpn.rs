@@ -1,26 +1,26 @@
 use petgraph::{
     graph::{DiGraph, NodeIndex},
     visit::IntoNodeReferences,
+    Direction,
 };
-use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local};
 use serde::Serialize;
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, RwLock},
+    collections::{HashMap, HashSet, VecDeque},
+    sync::{Arc, RwLock},
 };
 
 use crate::{
-    analysis::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
-    memory::unsafe_memory::{UnsafeData, UnsafeDataInfo, UnsafeInfo},
+    memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
+    memory::unsafe_memory::UnsafeData,
     options::Options,
     utils::format_name,
 };
 
 use super::{
-    callgraph::{CallGraph, CallGraphNode, InstanceId},
+    callgraph::{CallGraph, CallGraphNode},
     mir_cpn::BodyToColorPetriNet,
 };
 
@@ -128,8 +128,9 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         callgraph: &'analysis CallGraph<'tcx>,
         unsafe_data: UnsafeData,
+        av: bool,
     ) -> Self {
-        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
+        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph, av));
         ColorPetriNet {
             options,
             tcx,
@@ -274,6 +275,14 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                 visited_func_id.insert(caller.instance().def_id());
             }
         }
+
+        self.reduce_state();
+
+        // 验证网络结构
+        if let Err(err) = self.verify_structure() {
+            log::error!("Color Petri net structure verification failed: {}", err);
+            // 可以选择在这里panic或进行其他错误处理
+        }
     }
 
     pub fn cpn_to_dot(&self, filename: &str) -> std::io::Result<()> {
@@ -411,6 +420,247 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
             }
         } else {
             log::debug!("cargo pta need a entry point!");
+        }
+    }
+
+    /// 验证彩色Petri网的结构正确性
+    ///
+    /// 检查规则:
+    /// 1. UnsafeTransition的前驱必须包含至少一个控制库所和一个数据库所
+    /// 2. UnsafeTransition的后继必须包含至少一个控制库所
+    /// 3. Cfg变迁的前驱和后继只能是ControlPlace
+    /// 4. 所有库所(DataPlace/TempDataPlace/ControlPlace)的前驱和后继只能是变迁
+    pub fn verify_structure(&self) -> Result<(), String> {
+        use petgraph::Direction;
+
+        for node_idx in self.net.node_indices() {
+            match &self.net[node_idx] {
+                ColorPetriNode::UnsafeTransition { info, span, .. } => {
+                    // 检查前驱
+                    let mut has_control_pred = false;
+                    let mut has_data_pred = false;
+
+                    for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
+                        match &self.net[pred] {
+                            ColorPetriNode::ControlPlace { .. } => has_control_pred = true,
+                            ColorPetriNode::DataPlace { .. } | ColorPetriNode::TempDataPlace { .. } => has_data_pred = true,
+                            _ => return Err(format!(
+                                "Invalid structure: UnsafeTransition at {} has invalid predecessor type",
+                                span
+                            )),
+                        }
+                    }
+
+                    if !has_control_pred || !has_data_pred {
+                        return Err(format!(
+                            "Invalid structure: UnsafeTransition at {} must have both control and data place predecessors",
+                            span
+                        ));
+                    }
+
+                    // 检查后继
+                    let mut has_control_succ = false;
+                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
+                        match &self.net[succ] {
+                            ColorPetriNode::ControlPlace { .. } => has_control_succ = true,
+                            _ => return Err(format!(
+                                "Invalid structure: UnsafeTransition at {} has invalid successor type {}",
+                                span,
+                                succ.index()
+                            )),
+                        }
+                    }
+
+                    if !has_control_succ {
+                        return Err(format!(
+                            "Invalid structure: UnsafeTransition at {} must have at least one control place successor",
+                            span
+                        ));
+                    }
+                }
+
+                ColorPetriNode::Cfg { name } => {
+                    // 检查Cfg变迁的前驱和后继
+                    for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
+                        if !matches!(&self.net[pred], ColorPetriNode::ControlPlace { .. }) {
+                            return Err(format!(
+                                "Invalid structure: Cfg transition '{}' must only have ControlPlace predecessors",
+                                name
+                            ));
+                        }
+                    }
+
+                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
+                        if !matches!(&self.net[succ], ColorPetriNode::ControlPlace { .. }) {
+                            return Err(format!(
+                                "Invalid structure: Cfg transition '{}' must only have ControlPlace successors",
+                                name
+                            ));
+                        }
+                    }
+                }
+                ColorPetriNode::ControlPlace { basic_block, .. }
+                | ColorPetriNode::TempDataPlace { basic_block, .. } => {
+                    // 检查所有库所的前驱和后继
+                    for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
+                        if !matches!(
+                            &self.net[pred],
+                            ColorPetriNode::UnsafeTransition { .. } | ColorPetriNode::Cfg { .. }
+                        ) {
+                            return Err(format!(
+                                "Invalid structure: Place at {} has invalid predecessor type",
+                                basic_block
+                            ));
+                        }
+                    }
+
+                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
+                        if !matches!(
+                            &self.net[succ],
+                            ColorPetriNode::UnsafeTransition { .. } | ColorPetriNode::Cfg { .. }
+                        ) {
+                            return Err(format!(
+                                "Invalid structure: Place at {} has invalid successor type",
+                                basic_block
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 简化彩色Petri网中的状态，通过合并简单路径来减少网络的复杂度
+    ///
+    /// 具体步骤:
+    /// 1. 找到所有入度和出度都≤1的控制库所作为起始点
+    /// 2. 从每个起始点开始，向两个方向搜索，找到可以合并的路径
+    /// 3. 对于每条找到的路径:
+    ///    - 确保路径的起点和终点都是控制库所
+    ///    - 如果路径长度>3，则创建一个新的Cfg变迁来替代中间的节点
+    ///    - 保持路径两端的控制库所不变，删除中间的所有节点
+    /// 4. 最后统一删除所有被标记为需要移除的节点
+    pub fn reduce_state(&mut self) {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut all_nodes_to_remove = Vec::new();
+
+        // 找到所有入度和出度都≤1的控制库所
+        for node in self.net.node_indices() {
+            if let ColorPetriNode::ControlPlace { .. } = &self.net[node] {
+                let in_degree = self.net.edges_directed(node, Direction::Incoming).count();
+                let out_degree = self.net.edges_directed(node, Direction::Outgoing).count();
+
+                if in_degree <= 1 && out_degree <= 1 {
+                    queue.push_back(node);
+                }
+            }
+        }
+
+        while let Some(start) = queue.pop_front() {
+            if visited.contains(&start) {
+                continue;
+            }
+
+            // 从start开始BFS，找到一条链
+            let mut chain = vec![start];
+            let mut current = start;
+            visited.insert(start);
+
+            // 向两个方向遍历
+            for direction in &[Direction::Outgoing, Direction::Incoming] {
+                current = start;
+                loop {
+                    let neighbors: Vec<_> =
+                        self.net.neighbors_directed(current, *direction).collect();
+
+                    if neighbors.len() != 1 {
+                        break;
+                    }
+
+                    let next = neighbors[0];
+                    let next_in_degree = self.net.edges_directed(next, Direction::Incoming).count();
+                    let next_out_degree =
+                        self.net.edges_directed(next, Direction::Outgoing).count();
+
+                    // 只处理简单的控制流路径
+                    match &self.net[next] {
+                        ColorPetriNode::ControlPlace { .. } | ColorPetriNode::Cfg { .. } => {
+                            if next_in_degree > 1 || next_out_degree > 1 || visited.contains(&next)
+                            {
+                                break;
+                            }
+                            visited.insert(next);
+                            if *direction == Direction::Outgoing {
+                                chain.push(next);
+                            } else {
+                                chain.insert(0, next);
+                            }
+                            current = next;
+                        }
+                        // 不处理包含数据操作的路径
+                        _ => break,
+                    }
+                }
+            }
+
+            // 调整链，确保起始和结束都是ControlPlace
+            if !chain.is_empty() {
+                if !matches!(&self.net[chain[0]], ColorPetriNode::ControlPlace { .. }) {
+                    chain.remove(0);
+                }
+            }
+            if !chain.is_empty() {
+                if !matches!(
+                    &self.net[chain[chain.len() - 1]],
+                    ColorPetriNode::ControlPlace { .. }
+                ) {
+                    chain.pop();
+                }
+            }
+
+            // 检查调整后的链长度是否满足简化条件
+            if chain.len() > 3 {
+                let p1 = chain[0];
+                let p2 = chain[chain.len() - 1];
+
+                // 确保p1和p2都是ControlPlace
+                if let (
+                    ColorPetriNode::ControlPlace {
+                        basic_block: bb1, ..
+                    },
+                    ColorPetriNode::ControlPlace {
+                        basic_block: bb2, ..
+                    },
+                ) = (&self.net[p1], &self.net[p2])
+                {
+                    // 创建新的Cfg变迁
+                    let new_cfg = ColorPetriNode::Cfg {
+                        name: format!("merged_cfg_{}_to_{}", bb1, bb2),
+                    };
+                    let new_cfg_idx = self.net.add_node(new_cfg);
+
+                    // 添加新边
+                    self.add_edge(p1, new_cfg_idx, 1);
+                    self.add_edge(new_cfg_idx, p2, 1);
+
+                    // 收集要删除的节点
+                    all_nodes_to_remove.extend(chain[1..chain.len() - 1].iter().cloned());
+                }
+            }
+        }
+
+        // 在循环结束后统一删除节点
+        if !all_nodes_to_remove.is_empty() {
+            // 按索引从大到小排序
+            all_nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+            // 删除节点
+            for node in all_nodes_to_remove {
+                self.net.remove_node(node);
+            }
         }
     }
 }

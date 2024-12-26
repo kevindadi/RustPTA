@@ -1,5 +1,5 @@
-use crate::analysis::pointsto::AliasId;
 use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use crate::memory::pointsto::AliasId;
 use crate::utils::format_name;
 use petgraph::csr::IndexType;
 use petgraph::visit::{IntoNodeReferences, NodeRef};

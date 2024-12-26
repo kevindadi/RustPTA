@@ -1,9 +1,3 @@
-//! Denotes Condvar APIs in std and parking_lot.
-//!
-//! 1. std::Condvar::wait.*(&Condvar, MutexGuard,.*) -> MutexGuard
-//! 2. std::Condvar::notify.*(&Condvar)
-//! 3. parking_lot::Condvar::wait.*(&Condvar, &mut MutexGuard,.*)
-//! 4. parking_lot::Condvar::notify.*(&Condvar)
 extern crate rustc_hash;
 extern crate rustc_span;
 
