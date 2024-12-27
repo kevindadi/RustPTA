@@ -135,9 +135,10 @@ pub enum CallType {
     UnsafeRead(NodeIndex),
     UnsafeWrite(NodeIndex),
 
-    // 线程操作
-    Spawn,
-    Join,
+    // 线程操作-后续reduce网会改变NodeIndex
+    // 资源最先创建不因网结构改变
+    Spawn(String),
+    Join(String),
 
     // 普通函数调用
     Function,
@@ -387,7 +388,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             caller.instance(),
             body,
             self.tcx,
-            &self.options,
             // self.param_env,
             &self.callgraph,
             &mut self.net,

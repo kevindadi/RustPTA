@@ -1,9 +1,6 @@
 use std::env;
 use std::ffi::OsString;
-use std::io::Write;
-use std::process::{Command, Stdio};
-
-use RustPTA::parse_thread_sanitizer_report;
+use std::process::Command;
 
 const CARGO_PN_HELP: &str = r#"Petri Net-based Analysis Tool for Rust Programs
 
@@ -79,34 +76,33 @@ fn in_cargo_pta() {
     };
 }
 
-#[allow(dead_code)]
-fn cargo_sanitizer() {
-    let mut cmd = cargo();
-    cmd.arg("run");
-    cmd.env("RUSTFLAGS", "-Zsanitizer=thread");
-    let args = std::env::args().skip(2);
-    let mut flags = Vec::new();
-    for arg in args {
-        if arg == "--" {
-            break;
-        }
-        flags.push(arg);
-    }
+// fn cargo_sanitizer() {
+//     let mut cmd = cargo();
+//     cmd.arg("run");
+//     cmd.env("RUSTFLAGS", "-Zsanitizer=thread");
+//     let args = std::env::args().skip(2);
+//     let mut flags = Vec::new();
+//     for arg in args {
+//         if arg == "--" {
+//             break;
+//         }
+//         flags.push(arg);
+//     }
 
-    let output = cmd
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to execute command");
+//     let output = cmd
+//         .stderr(Stdio::piped())
+//         .output()
+//         .expect("Failed to execute command");
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+//     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let reports = parse_thread_sanitizer_report(&stderr);
-    let mut file = std::fs::File::create("data_race_report.txt").unwrap();
+//     let reports = parse_thread_sanitizer_report(&stderr);
+//     let mut file = std::fs::File::create("data_race_report.txt").unwrap();
 
-    for report in reports {
-        writeln!(file, "{}", report).unwrap();
-    }
-}
+//     for report in reports {
+//         writeln!(file, "{}", report).unwrap();
+//     }
+// }
 
 fn main() {
     if has_arg_flag("--help") || has_arg_flag("-h") {
@@ -121,7 +117,7 @@ fn main() {
 
     // let args: Vec<String> = std::env::args().collect();
     // for arg in &args {
-    //     if arg == "datarace" {
+    //     if arg == "tsan" {
     //         cargo_sanitizer();
     //         return;
     //     }

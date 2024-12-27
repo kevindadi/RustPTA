@@ -40,6 +40,19 @@ impl Default for AnalysisTool {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum PetriNetType {
+    PTNet,
+    CPN,
+    TPN,
+}
+
+impl Default for PetriNetType {
+    fn default() -> Self {
+        PetriNetType::PTNet
+    }
+}
+
 fn make_options_parser() -> clap::Command {
     let parser = Command::new("PN")
         .no_binary_name(true)

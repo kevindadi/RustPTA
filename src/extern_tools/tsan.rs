@@ -16,7 +16,7 @@ pub struct ActionDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataRaceReport {
     pub filename: String,              // 发生数据竞争的文件名
-    pub line_number: usize,            // 发生数据竞争的行号         // 发生数据竞争的变量名
+    pub line_number: usize,            // 发生数据竞争的行号 发生数据竞争的变量名
     pub current_action: ActionDetail,  // 当前操作
     pub previous_action: ActionDetail, // 之前操作
     pub message: String,               // 详细描述或附加消息
@@ -33,7 +33,6 @@ impl fmt::Display for ActionDetail {
 }
 
 impl DataRaceReport {
-    /// 创建一个新的数据竞争报告
     fn new(
         filename: String,
         message: String,
@@ -49,12 +48,8 @@ impl DataRaceReport {
         }
     }
 
-    /// 将报告保存到文件中
     pub fn save_to_file(&self, file_path: &str) -> std::io::Result<()> {
         let mut file = std::fs::File::create(file_path)?;
-        // let mut writer = std::io::BufWriter::new(file);
-        // let report = serde_json::to_string_pretty(&self)?;
-        // writer.write_all(report.as_bytes())
         writeln!(file, "{}", self)
     }
 }

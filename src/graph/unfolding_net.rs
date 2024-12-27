@@ -1,14 +1,10 @@
-use petgraph::{
-    graph::{EdgeIndex, NodeIndex},
-    visit::EdgeRef,
-    Direction, Graph,
-};
-use std::collections::{HashSet, VecDeque};
+use petgraph::{graph::NodeIndex, visit::EdgeRef, Direction, Graph};
+use rustc_hir::def_id::DefId;
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::{
-    pn::{PetriNetEdge, PetriNetNode},
-    state_graph::StateGraph,
-};
+use crate::options::Options;
+
+use super::pn::{PetriNetEdge, PetriNetNode};
 
 #[derive(Debug)]
 struct UnfoldingEvent {
@@ -21,16 +17,23 @@ struct UnfoldingEvent {
 pub struct UnfoldingNet {
     pub initial_net: Graph<PetriNetNode, PetriNetEdge>,
     pub initial_mark: HashSet<(NodeIndex, usize)>,
+
+    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+    options: Options,
 }
 
 impl UnfoldingNet {
     pub fn new(
         graph: Graph<PetriNetNode, PetriNetEdge>,
         mark: HashSet<(NodeIndex, usize)>,
+        function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+        options: Options,
     ) -> Self {
         UnfoldingNet {
             initial_net: graph,
             initial_mark: mark,
+            function_counter,
+            options,
         }
     }
 

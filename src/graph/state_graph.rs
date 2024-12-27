@@ -107,7 +107,7 @@ pub struct StateGraph {
     pub deadlock_marks: HashSet<Vec<(usize, usize)>>,
     pub apis_deadlock_marks: HashMap<String, HashSet<Vec<(usize, usize)>>>,
     pub apis_graph: HashMap<String, Box<Graph<StateNode, StateEdge>>>,
-    function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
+    pub function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub options: Options,
 }
 
@@ -950,74 +950,5 @@ impl StateGraph {
             );
         }
         Ok(())
-    }
-
-    pub fn detect_deadlock(&self) -> Vec<DeadlockInfo> {
-        let mut deadlocks = Vec::new();
-
-        // 直接遍历每个函数的起始和结束节点
-        for (def_id, (start, end)) in self.function_counter.iter() {
-            // 找到所有包含start的状态节点
-            let start_states: Vec<NodeIndex> = self
-                .graph
-                .node_indices()
-                .filter(|&node| self.graph[node].node_index.contains(start))
-                .collect();
-
-            // 对每个起始状态检查所有路径
-            for start_state in start_states {
-                if let Some(deadlock_path) = self.find_deadlock_path(start_state, *end) {
-                    deadlocks.push(DeadlockInfo {
-                        function_id: format!("{:?}", def_id),
-                        start_state: start_state.index(),
-                        deadlock_path: deadlock_path.iter().map(|node| node.index()).collect(),
-                    });
-                }
-            }
-        }
-
-        deadlocks
-    }
-
-    fn find_deadlock_path(&self, start: NodeIndex, end: NodeIndex) -> Option<Vec<NodeIndex>> {
-        let mut visited = HashSet::new();
-        let mut path = Vec::new();
-
-        // 如果找到一条不包含end的完整路径，返回该路径
-        if self.dfs_check_path(start, end, &mut visited, &mut path) {
-            Some(path)
-        } else {
-            None
-        }
-    }
-
-    fn dfs_check_path(
-        &self,
-        current: NodeIndex,
-        end: NodeIndex,
-        visited: &mut HashSet<NodeIndex>,
-        path: &mut Vec<NodeIndex>,
-    ) -> bool {
-        visited.insert(current);
-        path.push(current);
-
-        // 如果是叶子节点（没有出边）且不包含end，找到一条死锁路径
-        if self.graph.edges(current).count() == 0 && !self.graph[current].node_index.contains(&end)
-        {
-            return true;
-        }
-
-        // 遍历所有出边
-        for edge in self.graph.edges(current) {
-            let next = edge.target();
-            if !visited.contains(&next) {
-                if self.dfs_check_path(next, end, visited, path) {
-                    return true;
-                }
-            }
-        }
-
-        path.pop();
-        false
     }
 }

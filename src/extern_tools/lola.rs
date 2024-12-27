@@ -9,6 +9,7 @@ use std::{
 
 use crate::extern_tools::normalize_name;
 use crate::graph::pn::{PetriNet, PetriNetNode};
+use crate::report::deadlock::{DeadlockReport, DeadlockTrace};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LolaResult {
@@ -174,27 +175,36 @@ impl LolaAnalyzer {
         todo!("Implement custom formula checking")
     }
 
-    pub fn get_deadlock_info(&self) -> io::Result<String> {
-        if let Ok(result) = self.check_deadlock() {
-            if result.has_deadlock {
-                let mut info = String::new();
-                info.push_str("发现死锁！\n");
-                info.push_str(&format!("执行时间: {}秒\n", result.execution_time));
-
-                if let Some(trace) = result.deadlock_trace {
-                    info.push_str("\n死锁路径:\n");
-                    for (i, step) in trace.iter().enumerate() {
-                        info.push_str(&format!("步骤 {}: {}\n", i + 1, step));
-                    }
-                }
-
-                Ok(info)
-            } else {
-                Ok("未发现死锁".to_string())
-            }
-        } else {
-            Ok("死锁检测执行失败".to_string())
+    pub fn generate_deadlock_report(&self, petri_net: &PetriNet) -> io::Result<DeadlockReport> {
+        if !self.check_lola_available() {
+            log::error!("LoLA is not available");
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "LoLA is not available",
+            ));
         }
+
+        let start_time = std::time::Instant::now();
+        let lola_result = self.analyze_petri_net(petri_net)?;
+        let analysis_time = start_time.elapsed();
+
+        let mut report = DeadlockReport::new("LoLA".to_string());
+        report.analysis_time = analysis_time;
+        report.has_deadlock = lola_result.has_deadlock;
+
+        if let Some(trace) = lola_result.deadlock_trace {
+            report.deadlock_count = 1;
+            report.traces.push(DeadlockTrace {
+                steps: trace,
+                final_state: None,
+            });
+        }
+
+        if let Some(error) = lola_result.error {
+            report.error = Some(error);
+        }
+
+        Ok(report)
     }
 }
 

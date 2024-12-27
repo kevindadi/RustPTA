@@ -1,5 +1,6 @@
 pub mod lola;
 pub mod tina;
+pub mod tsan;
 
 pub fn normalize_name(name: &str) -> String {
     name.replace("::", ".")

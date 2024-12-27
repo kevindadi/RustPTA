@@ -29,7 +29,10 @@ use rustc_middle::{
     ty::{Instance, TyCtxt},
 };
 use rustc_span::source_map::Spanned;
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 /// 基于函数的控制流图(CFG)构建Petri网
 /// 该结构体负责将Rust MIR中的基本块(Basic Block)转换为Petri网表示
@@ -39,7 +42,6 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     instance: &'translate Instance<'tcx>, // 函数实例
     body: &'translate Body<'tcx>,         // 函数体MIR
     tcx: TyCtxt<'tcx>,                    // 类型上下文
-    options: &'translate Options,         // 配置选项
     callgraph: &'translate CallGraph<'tcx>,
     pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>, // Petri网图结构
     alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>, // 别名分析
@@ -53,6 +55,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     atomic_store_re: Regex,
     atomic_places: &'translate HashMap<AliasId, NodeIndex>,
     atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
+    pub exclude_bb: HashSet<usize>,
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -61,7 +64,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         instance: &'translate Instance<'tcx>,
         body: &'translate Body<'tcx>,
         tcx: TyCtxt<'tcx>,
-        options: &'translate Options,
         // param_env: ParamEnv<'tcx>,
         callgraph: &'translate CallGraph<'tcx>,
         net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
@@ -81,7 +83,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             instance,
             body,
             tcx,
-            options,
             callgraph,
             net,
             alias,
@@ -97,6 +98,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             atomic_store_re: Regex::new(r"atomic[:a-zA-Z0-9]*::store").unwrap(),
             atomic_places,
             atomic_order_maps,
+            exclude_bb: HashSet::new(),
         }
     }
 
@@ -106,7 +108,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn init_basic_block(&mut self, body: &Body<'tcx>, body_name: &str) {
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
-            if bb.is_cleanup {
+            if bb.is_cleanup || bb.is_empty_unreachable() {
+                self.exclude_bb.insert(bb_idx.index());
                 continue;
             }
             let bb_span = bb.terminator.as_ref().map_or("".to_string(), |term| {
@@ -168,7 +171,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 &format!("{:?}", term.source_info.span),
             ),
             TerminatorKind::Drop { place, target, .. } => {
-                self.handle_drop(bb_idx, place, target, name, bb)
+                self.handle_drop(&bb_idx, place, target, name, bb)
+            }
+            TerminatorKind::Unreachable => {
+                // 在Petri网中属于终止表示
+                todo!("unreachable")
             }
             _ => {}
         }
@@ -193,6 +200,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn handle_switch(&mut self, bb_idx: BasicBlock, targets: &SwitchTargets, name: &str) {
         let mut t_num = 1usize;
         for t in targets.all_targets() {
+            // TODO: 测试 unreachable block 是否只在 switchInt 的target中
+            if self.exclude_bb.contains(&t.index()) {
+                continue;
+            }
             let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "switch")
                 + "switch"
                 + t_num.to_string().as_str();
@@ -319,10 +330,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end: NodeIndex,
     ) -> bool {
         if callee_func_name.contains("thread::spawn") {
-            self.handle_spawn(args, target, bb_end);
+            self.handle_spawn(callee_func_name, args, target, bb_end);
             true
         } else if callee_func_name.contains("::join") {
-            self.handle_join(args, target, bb_end);
+            self.handle_join(callee_func_name, args, target, bb_end);
             true
         } else {
             false
@@ -331,6 +342,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_spawn(
         &mut self,
+        callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
         bb_end: NodeIndex,
@@ -408,7 +420,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         match self.net.node_weight_mut(bb_end) {
             Some(PetriNetNode::T(t)) => {
-                t.transition_type = ControlType::Call(CallType::Spawn);
+                t.transition_type =
+                    ControlType::Call(CallType::Spawn(callee_func_name.to_string()));
             }
             _ => {}
         }
@@ -417,6 +430,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_join(
         &mut self,
+        callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
         bb_end: NodeIndex,
@@ -457,7 +471,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         // 3. 更新变迁类型并建立连接
         if let Some(PetriNetNode::T(transition)) = self.net.node_weight_mut(bb_end) {
-            transition.transition_type = ControlType::Call(CallType::Join);
+            transition.transition_type =
+                ControlType::Call(CallType::Join(callee_func_name.to_string()));
         }
 
         // 4. 连接spawn结束到join
@@ -1018,7 +1033,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_drop(
         &mut self,
-        bb_idx: BasicBlock,
+        bb_idx: &BasicBlock,
         place: &rustc_middle::mir::Place<'tcx>,
         target: &BasicBlock,
         name: &str,
@@ -1029,14 +1044,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
         self.net.add_edge(
-            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            *self.bb_node_start_end.get(bb_idx).unwrap(),
             bb_end,
             PetriNetEdge { label: 1usize },
         );
 
         if !bb.is_cleanup {
             // bb不检测数据竞争，仅提取操作语义，若Drop MutexGuard跳过
-
             let lockguard_id = LockGuardId::new(self.instance_id, place.local);
             // local is lockguard
             if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
@@ -1085,7 +1099,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
 
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
             // 不检测cleanup的块，所有的unwind操作忽略
-            if bb.is_cleanup {
+            if bb.is_cleanup || bb.is_empty_unreachable() {
                 continue;
             }
 

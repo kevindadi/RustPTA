@@ -84,14 +84,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
             debug!("in test only mode");
             // self.options.test_only = true;
         }
-        //config.crate_cfg.insert("pta".to_string(), None);
-        // match &config.output_dir {
-        //     None => {
-        //         self.output_directory = std::env::temp_dir();
-        //         self.output_directory.pop();
-        //     }
-        //     Some(path_buf) => self.output_directory.push(path_buf.as_path()),
-        // }
     }
 
     fn after_analysis<'tcx>(
@@ -175,7 +167,6 @@ impl PTACallbacks {
             log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
             return;
         }
-        log::info!("{}", callgraph.format_spawn_calls());
         match &self.options.detector_kind {
             DetectorKind::DataRace => {
                 let unsafe_analyzer =
@@ -268,7 +259,6 @@ impl PTACallbacks {
                 );
                 pn.construct();
                 pn.save_petri_net_to_file();
-                log::info!("output_directory: {}", self.output_directory.display());
                 // let unfolding = UnfoldingNet::new(pn.net.clone(), pn.get_current_mark());
 
                 // match unfolding.check_local_deadlock() {
@@ -309,20 +299,6 @@ impl PTACallbacks {
                         state_graph.dot().unwrap();
                         let result = state_graph.detect_deadlock_use_state_reachable_graph();
                         log::info!("deadlock state: {}", result);
-                        let result = state_graph.detect_deadlock();
-                        println!(
-                            "{:?}",
-                            result.iter().for_each(|d| {
-                                println!(
-                                    "Deadlock State {:?}:\n{}",
-                                    d.function_id,
-                                    serde_json::to_string_pretty(&json!({
-                                        "deadlock_path": d.deadlock_path,
-                                    }))
-                                    .unwrap()
-                                )
-                            })
-                        );
                     }
                 }
 

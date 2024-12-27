@@ -1,4 +1,5 @@
 use crate::graph::pn::{PetriNet, PetriNetNode};
+use crate::report::deadlock::{DeadlockReport, DeadlockState, StateSpaceInfo};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 use serde::{Deserialize, Serialize};
@@ -249,6 +250,47 @@ impl TinaAnalyzer {
         } else {
             Ok("分析执行失败".to_string())
         }
+    }
+
+    pub fn generate_deadlock_report(&self, petri_net: &PetriNet) -> io::Result<DeadlockReport> {
+        if !self.check_tina_available() {
+            log::error!("Tina is not available");
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Tina is not available",
+            ));
+        }
+
+        let start_time = std::time::Instant::now();
+        let tina_result = self.analyze_petri_net(petri_net)?;
+        let analysis_time = start_time.elapsed();
+
+        let mut report = DeadlockReport::new("TINA".to_string());
+        report.analysis_time = analysis_time;
+        report.has_deadlock = tina_result.has_deadlock;
+
+        if let Some(states) = tina_result.deadlock_states {
+            report.deadlock_count = states.len();
+            for state in states {
+                report.deadlock_states.push(DeadlockState {
+                    state_id: "unknown".to_string(),
+                    marking: Vec::new(),
+                    description: state,
+                });
+            }
+        }
+
+        report.state_space_info = Some(StateSpaceInfo {
+            total_states: tina_result.state_space_size,
+            total_transitions: tina_result.transition_count,
+            reachable_states: tina_result.state_space_size,
+        });
+
+        if let Some(error) = tina_result.error {
+            report.error = Some(error);
+        }
+
+        Ok(report)
     }
 }
 
