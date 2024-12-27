@@ -102,6 +102,12 @@ fn make_options_parser() -> clap::Command {
                 .default_value("rpn")
                 .hide_default_value(true),
         )
+        .arg(
+            Arg::new("petri_net_test")
+                .long("pn-test")
+                .help("Test mode")
+                .action(clap::ArgAction::SetTrue),
+        )
         // Visualization options group
         .group(
             ArgGroup::new("visualization")
@@ -155,6 +161,7 @@ pub struct Options {
     pub lib_apis_path: Option<String>, // lib APIs 文件路径
     pub dump_options: DumpOptions,     // dump 相关选项
     pub analysis_tool: AnalysisTool,
+    pub test: bool,
 }
 
 impl Default for Options {
@@ -167,6 +174,7 @@ impl Default for Options {
             lib_apis_path: None,
             dump_options: DumpOptions::default(),
             analysis_tool: AnalysisTool::RPN,
+            test: false,
         }
     }
 }
@@ -279,6 +287,7 @@ impl Options {
             dump_points_to: matches.get_flag("dump_points_to"),
         };
 
+        self.test = matches.get_flag("petri_net_test");
         // 返回 rustc 参数
         rustc_args.to_vec()
     }

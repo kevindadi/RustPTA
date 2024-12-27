@@ -221,6 +221,7 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub api_marks: HashMap<String, HashSet<(NodeIndex, usize)>>,
     atomic_places: HashMap<AliasId, NodeIndex>,
     atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
+    pub exit_node: NodeIndex,
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
@@ -250,6 +251,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             api_marks: HashMap::<String, HashSet<(NodeIndex, usize)>>::new(),
             atomic_places: HashMap::<AliasId, NodeIndex>::new(),
             atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
+            exit_node: NodeIndex::new(0),
         }
     }
 
@@ -356,7 +358,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
 
         // 如果CrateType是LIB，不优化以防初始标识被改变
-        if self.api_spec.apis.is_empty() {
+        if self.api_spec.apis.is_empty() && !self.options.test {
             self.reduce_state();
             log::info!("reduce state");
         }
@@ -426,6 +428,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             if func_id == main_func {
                 let (start, end) = self_.create_function_places(func_name, true);
                 self_.entry_node = start;
+                self_.exit_node = end;
                 (start, end)
             } else {
                 self_.create_function_places(func_name, false)
@@ -1070,5 +1073,23 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
 
         Ok(())
+    }
+
+    pub fn get_terminal_states(&self) -> Vec<(usize, usize)> {
+        let mut terminal_states = Vec::new();
+        terminal_states.push((self.exit_node.index(), 1));
+        for node_idx in self.net.node_indices() {
+            if let Some(PetriNetNode::P(place)) = self.net.node_weight(node_idx) {
+                match place.place_type {
+                    PlaceType::FunctionStart | PlaceType::FunctionEnd | PlaceType::BasicBlock => {
+                        continue;
+                    }
+                    _ => {
+                        terminal_states.push((node_idx.index(), *place.tokens.read().unwrap()));
+                    }
+                }
+            }
+        }
+        terminal_states
     }
 }

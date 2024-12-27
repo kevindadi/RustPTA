@@ -90,9 +90,9 @@ impl RaceDataInfo {
 #[derive(Debug, Clone)]
 pub struct CpnStateGraph {
     pub graph: Graph<StateNode, StateEdge>,
-    initial_net: Box<Graph<ColorPetriNode, ColorPetriEdge>>,
-    initial_mark: HashSet<(NodeIndex, usize)>,
-    pub(crate) race_info: Arc<Mutex<HashSet<RaceInfo>>>,
+    pub initial_net: Box<Graph<ColorPetriNode, ColorPetriEdge>>,
+    pub initial_mark: HashSet<(NodeIndex, usize)>,
+    pub race_info: Arc<Mutex<HashSet<RaceInfo>>>,
 }
 
 impl CpnStateGraph {
@@ -359,24 +359,6 @@ impl CpnStateGraph {
         }
     }
 
-    /// 检查并收集所有可能的数据竞争情况
-    /// # Algorithm
-    /// 1. 首先按照数据操作(AliasId)对所有不安全变迁进行分组
-    /// 2. 对每组数据访问进行分析：
-    ///    - 检查是否存在至少两个操作
-    ///    - 检查是否存在写操作
-    /// 3. 对于满足条件的数据访问，收集相关信息：
-    ///    - 变迁序列
-    ///    - 数据操作信息
-    ///    - 源代码位置(span)
-    ///    - 读写类型
-    ///    - 基本块信息
-    ///
-    /// # 去重策略
-    /// 通过 RaceInfo 的 PartialEq 和 Hash 实现，基于以下条件去重：
-    /// - 相同的数据操作(RaceDataInfo)
-    /// - 相同的基本块集合
-    /// - 相同的源代码位置集合（忽略具体的列号）
     pub fn detect_race_condition(&self, enabled_transitions: &[NodeIndex]) -> HashSet<RaceInfo> {
         // 1. 收集所有UnsafeDataTransition，同时保存操作类型和span信息
         let mut data_groups: HashMap<AliasId, Vec<(NodeIndex, DataOpType, String, String, usize)>> =

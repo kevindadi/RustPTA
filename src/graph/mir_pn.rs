@@ -107,7 +107,17 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     fn init_basic_block(&mut self, body: &Body<'tcx>, body_name: &str) {
+        // TODO: loop循环后，线程不可join，其后代码不会执行，Petri网模型无法建模join
+        // 这应该是个编译器Bug
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
+            log::debug!(
+                "BB{}: cleanup={}, empty_unreachable={}, statements={}, terminator={:?}",
+                bb_idx.index(),
+                bb.is_cleanup,
+                bb.is_empty_unreachable(),
+                bb.statements.len(),
+                bb.terminator.as_ref().map(|t| &t.kind)
+            );
             if bb.is_cleanup || bb.is_empty_unreachable() {
                 self.exclude_bb.insert(bb_idx.index());
                 continue;

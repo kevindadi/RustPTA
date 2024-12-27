@@ -9,7 +9,7 @@ use std::{
 
 use crate::extern_tools::normalize_name;
 use crate::graph::pn::{PetriNet, PetriNetNode};
-use crate::report::deadlock::{DeadlockReport, DeadlockTrace};
+use crate::report::{DeadlockReport, DeadlockTrace};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LolaResult {

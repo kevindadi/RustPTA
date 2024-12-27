@@ -4,6 +4,8 @@ extern crate rustc_driver;
 extern crate rustc_hir;
 
 use crate::concurrency::atomic::AtomicCollector;
+use crate::detect::atomicity_violation::AtomicityViolationDetector;
+use crate::detect::deadlock::DeadlockDetector;
 use crate::extern_tools::lola::LolaAnalyzer;
 use crate::extern_tools::tina::TinaAnalyzer;
 use crate::graph::callgraph::CallGraph;
@@ -153,18 +155,20 @@ impl PTACallbacks {
             );
             pn.construct();
             pn.save_petri_net_to_file();
+            let terminal_states = pn.get_terminal_states();
             // log::info!("apis_marks: {:?}", pn.api_marks);
             let mut state_graph = StateGraph::new(
                 pn.net.clone(),
                 pn.get_current_mark(),
                 pn.function_counter.clone(),
                 self.options.clone(),
+                terminal_states,
             );
             for (api_name, initial_mark) in pn.api_marks.iter() {
                 state_graph.generate_states_with_api(api_name.clone(), initial_mark.clone());
             }
 
-            log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
+            // log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
             return;
         }
         match &self.options.detector_kind {
@@ -234,16 +238,19 @@ impl PTACallbacks {
 
                 pn.construct();
                 pn.save_petri_net_to_file();
-
+                let terminal_states = pn.get_terminal_states();
                 let mut state_graph = StateGraph::new(
                     pn.net.clone(),
                     pn.get_current_mark(),
                     pn.function_counter.clone(),
                     self.options.clone(),
+                    terminal_states,
                 );
                 state_graph.generate_states();
+                let detector = AtomicityViolationDetector::new(&state_graph);
+                let atomicity_violation = detector.detect();
+                log::info!("atomicity_violation: {}", atomicity_violation);
 
-                state_graph.detect_atomic_violation();
                 if self.options.dump_options.dump_points_to {
                     pn.alias.borrow_mut().print_all_points_to_relations();
                 }
@@ -293,11 +300,13 @@ impl PTACallbacks {
                             pn.get_current_mark(),
                             pn.function_counter.clone(),
                             self.options.clone(),
+                            pn.get_terminal_states(),
                         );
 
                         state_graph.generate_states();
                         state_graph.dot().unwrap();
-                        let result = state_graph.detect_deadlock_use_state_reachable_graph();
+                        let deadlock_detector = DeadlockDetector::new(&state_graph);
+                        let result = deadlock_detector.detect();
                         log::info!("deadlock state: {}", result);
                     }
                 }

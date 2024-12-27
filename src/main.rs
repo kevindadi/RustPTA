@@ -4,6 +4,7 @@
 
 pub mod callback;
 pub mod concurrency;
+pub mod detect;
 pub mod extern_tools;
 pub mod graph;
 pub mod memory;

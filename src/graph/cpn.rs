@@ -103,11 +103,11 @@ pub enum Token {
 #[derive(Debug, Clone)]
 pub struct DataOp {
     // 操作类型(读/写)
-    pub(crate) op_type: DataOpType,
+    pub op_type: DataOpType,
     // 操作的数据
-    pub(crate) data: DataTokenType,
+    pub data: DataTokenType,
     // 操作的线程
-    pub(crate) thread_name: String,
+    pub thread_name: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -304,7 +304,7 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                         .map(|t| format!("{:?}:{}", t.local, t.ty))
                         .collect();
                     format!(
-                            "label = \"Data Place\\n{}\", shape = circle, style = filled, fillcolor = lightblue",
+                            "label = \"DP\\n{}\", shape = circle, style = filled, fillcolor = lightblue",
                             type_labels.join("\\n")
                         )
                 }
@@ -314,7 +314,7 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                     token_num,
                 } => {
                     format!(
-                        "label = \"Unsafe Data Place\\n{} and {}\", shape = circle, style = filled, fillcolor = red",
+                        "label = \"UDP\\n{} and {}\", shape = circle, style = filled, fillcolor = red",
                         basic_block,
                         local
                     )

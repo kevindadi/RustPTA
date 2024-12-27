@@ -1,5 +1,5 @@
 use crate::graph::pn::{PetriNet, PetriNetNode};
-use crate::report::deadlock::{DeadlockReport, DeadlockState, StateSpaceInfo};
+use crate::report::{DeadlockReport, DeadlockState, StateSpaceInfo};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 use serde::{Deserialize, Serialize};
