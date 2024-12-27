@@ -92,6 +92,7 @@ impl<'a> DeadlockDetector<'a> {
         let mut deadlocks = HashSet::new();
         let mut visited = HashSet::new();
         let mut stack = HashSet::new();
+        let mut cycle_groups = HashMap::new(); // 改为使用 Vec 作为键
 
         // 从每个节点开始搜索环路
         for start_node in self.state_graph.graph.node_indices() {
@@ -100,9 +101,18 @@ impl<'a> DeadlockDetector<'a> {
                     start_node,
                     &mut visited,
                     &mut stack,
-                    &mut deadlocks,
+                    &mut cycle_groups,
                     &Vec::new(),
                 );
+            }
+        }
+
+        // 合并具有相同阻塞变迁的环路
+        for (blocked_transitions, states) in cycle_groups {
+            if !blocked_transitions.is_empty() {
+                if let Some(state) = states.into_iter().next() {
+                    deadlocks.insert(state);
+                }
             }
         }
 
@@ -114,7 +124,7 @@ impl<'a> DeadlockDetector<'a> {
         current: NodeIndex,
         visited: &mut HashSet<NodeIndex>,
         stack: &mut HashSet<NodeIndex>,
-        deadlocks: &mut HashSet<Vec<(usize, usize)>>,
+        cycle_groups: &mut HashMap<Vec<NodeIndex>, HashSet<Vec<(usize, usize)>>>,
         current_path: &Vec<NodeIndex>,
     ) {
         visited.insert(current);
@@ -122,30 +132,117 @@ impl<'a> DeadlockDetector<'a> {
         let mut path = current_path.clone();
         path.push(current);
 
-        // 检查当前节点的所有后继
         for edge in self.state_graph.graph.edges(current) {
             let next = edge.target();
 
             if !visited.contains(&next) {
-                // 继续DFS
-                self.find_deadlock_cycles(next, visited, stack, deadlocks, &path);
+                self.find_deadlock_cycles(next, visited, stack, cycle_groups, &path);
             } else if stack.contains(&next) {
-                // 找到环路，检查是否是死锁环路
                 let cycle_start_idx = path.iter().position(|&x| x == next).unwrap();
                 let cycle = &path[cycle_start_idx..];
 
-                if self.is_deadlock_cycle(cycle) {
-                    // 将环路中的所有状态添加到死锁集合
-                    for &node in cycle {
-                        if let Some(state) = self.state_graph.graph.node_weight(node) {
-                            deadlocks.insert(state.mark.clone());
-                        }
+                if let Some(blocked_trans) = self.get_consistently_blocked_transitions(cycle) {
+                    if !blocked_trans.is_empty() {
+                        cycle_groups
+                            .entry(blocked_trans.into_iter().collect::<Vec<_>>())
+                            .or_insert_with(HashSet::new)
+                            .extend(cycle.iter().filter_map(|&node| {
+                                self.state_graph
+                                    .graph
+                                    .node_weight(node)
+                                    .map(|state| state.mark.clone())
+                            }));
                     }
                 }
             }
         }
 
         stack.remove(&current);
+    }
+
+    /// 获取环路中始终被阻塞的变迁集合
+    ///
+    /// # 算法流程
+    /// 1. 收集所有锁相关的变迁和所有可用的锁资源
+    /// 2. 从环路的第一个状态开始,找出被阻塞的变迁
+    /// 3. 遍历环路中的其他状态,找出在所有状态中都被阻塞的变迁
+    /// 4. 验证环路的有效性:
+    ///    - 检查环路是否稳定(所有后继状态都在环路中)
+    ///    - 检查被阻塞的锁是否构成死锁(不能包含所有锁资源)
+    ///
+    /// # 死锁判定条件
+    /// - 环路必须稳定
+    /// - 必须存在始终被阻塞的变迁
+    /// - 被阻塞的锁不能包含所有锁资源(否则说明是正常的执行路径)
+    fn get_consistently_blocked_transitions(
+        &self,
+        cycle: &[NodeIndex],
+    ) -> Option<HashSet<NodeIndex>> {
+        let lock_transitions = self.collect_lock_transitions();
+        let mut consistently_blocked = HashSet::new();
+        let all_locks: HashSet<_> = lock_transitions.keys().cloned().collect();
+
+        // 首先收集第一个状态的被阻塞变迁
+        if let Some(&first_node) = cycle.first() {
+            for (lock, transitions) in &lock_transitions {
+                let mut is_blocked = true;
+                for &trans in transitions {
+                    if self.is_transition_enabled(first_node, trans) {
+                        is_blocked = false;
+                        break;
+                    }
+                }
+                if is_blocked {
+                    consistently_blocked.insert(*lock);
+                }
+            }
+        }
+
+        // 检查这些变迁是否在循环中的所有状态都被阻塞
+        for &node in &cycle[1..] {
+            let mut current_blocked = HashSet::new();
+            for &lock in &consistently_blocked {
+                if let Some(transitions) = lock_transitions.get(&lock) {
+                    let mut is_blocked = true;
+                    for &trans in transitions {
+                        if self.is_transition_enabled(node, trans) {
+                            is_blocked = false;
+                            break;
+                        }
+                    }
+                    if is_blocked {
+                        current_blocked.insert(lock);
+                    }
+                }
+            }
+            consistently_blocked = consistently_blocked
+                .intersection(&current_blocked)
+                .cloned()
+                .collect();
+
+            if consistently_blocked.is_empty() {
+                return None;
+            }
+        }
+
+        // 检查环路的稳定性
+        let is_stable = cycle.iter().all(|&node| {
+            self.state_graph
+                .graph
+                .edges(node)
+                .all(|edge| cycle.contains(&edge.target()))
+        });
+
+        // 如果被阻塞的锁包含了所有锁,说明这是正常的执行路径而不是死锁
+        if all_locks.is_subset(&consistently_blocked) {
+            return None;
+        }
+
+        if is_stable {
+            Some(consistently_blocked)
+        } else {
+            None
+        }
     }
 
     /// 判断一个环路是否是死锁环路
@@ -171,22 +268,51 @@ impl<'a> DeadlockDetector<'a> {
             return false;
         }
 
-        // 2. 检查是否存在被永久阻塞的锁操作
+        // 2. 找出在整个循环中始终被阻塞的锁变迁
         let lock_transitions = self.collect_lock_transitions();
-        let mut permanently_blocked = HashSet::new();
+        let mut consistently_blocked = HashSet::new();
 
-        for &node in cycle {
+        // 首先收集第一个状态的被阻塞变迁
+        if let Some(&first_node) = cycle.first() {
             for (lock, transitions) in &lock_transitions {
                 let mut is_blocked = true;
                 for &trans in transitions {
-                    if self.is_transition_enabled(node, trans) {
+                    if self.is_transition_enabled(first_node, trans) {
                         is_blocked = false;
                         break;
                     }
                 }
                 if is_blocked {
-                    permanently_blocked.insert(lock);
+                    consistently_blocked.insert(*lock);
                 }
+            }
+        }
+
+        // 检查这些变迁是否在循环中的所有状态都被阻塞
+        for &node in &cycle[1..] {
+            let mut current_blocked = HashSet::new();
+            for &lock in &consistently_blocked {
+                if let Some(transitions) = lock_transitions.get(&lock) {
+                    let mut is_blocked = true;
+                    for &trans in transitions {
+                        if self.is_transition_enabled(node, trans) {
+                            is_blocked = false;
+                            break;
+                        }
+                    }
+                    if is_blocked {
+                        current_blocked.insert(lock);
+                    }
+                }
+            }
+            consistently_blocked = consistently_blocked
+                .intersection(&current_blocked)
+                .cloned()
+                .collect();
+
+            // 如果没有始终被阻塞的变迁了，提前返回
+            if consistently_blocked.is_empty() {
+                return false;
             }
         }
 
@@ -198,7 +324,7 @@ impl<'a> DeadlockDetector<'a> {
                 .all(|edge| cycle.contains(&edge.target()))
         });
 
-        !permanently_blocked.is_empty() && is_stable
+        !consistently_blocked.is_empty() && is_stable
     }
 
     /// 收集所有锁相关的变迁
