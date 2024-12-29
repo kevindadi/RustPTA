@@ -128,9 +128,9 @@ pub enum CallType {
     Wait,
 
     // 原子操作
-    AtomicLoad(AliasId, AtomicOrdering, String),
-    AtomicStore(AliasId, AtomicOrdering, String),
-    AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String),
+    AtomicLoad(AliasId, AtomicOrdering, String, InstanceId),
+    AtomicStore(AliasId, AtomicOrdering, String, InstanceId),
+    AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String, InstanceId),
     // 内存访问相关
     UnsafeRead(NodeIndex),
     UnsafeWrite(NodeIndex),

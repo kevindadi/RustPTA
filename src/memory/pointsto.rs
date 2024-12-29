@@ -2,7 +2,7 @@ extern crate rustc_hir;
 extern crate rustc_index;
 
 use std::cmp::{Ordering, PartialOrd};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -1155,6 +1155,38 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
+    fn new_intraproc_points_to(
+        &mut self,
+        instance: &Instance<'tcx>,
+        node1: &ConstraintNode<'tcx>,
+        node2: &ConstraintNode<'tcx>,
+    ) -> Option<ApproximateAliasKind> {
+        let body = self.tcx.instance_mir(instance.def);
+        let points_to_map = self.get_or_insert_pts(instance.def_id(), body);
+
+        let pts1 = points_to_map.get(&node1)?;
+        let pts2 = points_to_map.get(&node2)?;
+
+        if !pts1.is_disjoint(pts2) {
+            let allocs1: HashSet<_> = pts1
+                .iter()
+                .filter(|n| matches!(n, ConstraintNode::Alloc(_)))
+                .collect();
+            let allocs2: HashSet<_> = pts2
+                .iter()
+                .filter(|n| matches!(n, ConstraintNode::Alloc(_)))
+                .collect();
+
+            let common_allocs: HashSet<_> = allocs1.intersection(&allocs2).collect();
+
+            if !common_allocs.is_empty() {
+                return Some(ApproximateAliasKind::Probably);
+            }
+        }
+
+        Some(ApproximateAliasKind::Unlikely)
+    }
+
     /// 检查 p1 和 p2 是否在不同函数中存在别名关系。
     /// 为了避免复杂的过程间分析，使用了一些启发式假设：
     /// 如果 p1 和 p2 满足以下条件之一，则认为它们存在别名关系：
@@ -1197,6 +1229,8 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         if point_to_same_type_param(pts1, pts2, body1, body2) {
             return Some(ApproximateAliasKind::Possibly);
         }
+
+        log::info!("node1: {:?}", node1);
         // 3. Check if `node1` and `node2` point to upvars of closures and the upvars alias in the def func.
         // 3.1 Get defsite upvars of `node1` then check if `node2` points to the upvar.
         let mut defsite_upvars1 = None;
@@ -1210,7 +1244,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance2.def_id() {
                         let alias_kind = self
-                            .intraproc_points_to(def_inst, node2.clone(), upvar.clone())
+                            .new_intraproc_points_to(def_inst, node2, upvar)
                             .unwrap_or(ApproximateAliasKind::Unknown);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);
@@ -1235,7 +1269,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance1.def_id() {
                         let alias_kind = self
-                            .intraproc_points_to(def_inst, node1.clone(), upvar.clone())
+                            .new_intraproc_points_to(def_inst, node1, upvar)
                             .unwrap_or(ApproximateAliasKind::Unknown);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);
@@ -1254,7 +1288,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 for (instance2, node2) in &defsite_upvars2 {
                     if instance1.def_id() == instance2.def_id() {
                         let alias_kind = self
-                            .intraproc_alias(instance1, &node1, node2)
+                            .new_intraproc_points_to(instance1, &node1, node2)
                             .unwrap_or(ApproximateAliasKind::Unknown);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);

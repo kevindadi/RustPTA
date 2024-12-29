@@ -549,9 +549,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         span: &str,
     ) -> bool {
         if callee_func_name.contains("::load") {
-            self.handle_atomic_load(args, bb_end, target, bb_idx, span)
+            if !self.handle_atomic_load(args, bb_end, target, bb_idx, span) {
+                // 没找到alias的id, 保证控制流，链接到下一个target
+                log::info!("no alias found for atomic load in {:?}", span);
+                self.connect_to_target(bb_end, target);
+            }
+            return true;
         } else if callee_func_name.contains("::store") {
-            self.handle_atomic_store(args, bb_end, target, bb_idx, span)
+            if !self.handle_atomic_store(args, bb_end, target, bb_idx, span) {
+                // 没找到alias的id, 保证控制流，链接到下一个target
+                log::info!("no alias found for atomic store in {:?}", span);
+                self.connect_to_target(bb_end, target);
+            }
+            return true;
         } else if callee_func_name.contains("::compare_exchange") {
             self.handle_atomic_compare_exchange(args, bb_end, target, bb_idx, span)
         } else {
@@ -582,8 +592,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 continue;
             }
 
-            log::info!("atomic load: {:?}", atomic_e.0);
-
             // 创建load操作的库所
             let atomic_load_place = Place::new_with_span(
                 format!(
@@ -612,6 +620,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         atomic_e.0.clone().into(),
                         order.clone(),
                         span.to_string(),
+                        self.instance_id,
                     )),
                 );
                 let atomic_load_transition_node =
@@ -644,7 +653,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             return true;
         }
-        true
+        false
     }
 
     fn handle_atomic_store(
@@ -659,7 +668,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.instance_id,
             args.first().unwrap().node.place().unwrap().local,
         );
-
         for atomic_e in self.atomic_places.iter() {
             if !matches!(
                 self.alias
@@ -669,8 +677,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             ) {
                 continue;
             }
-
-            log::info!("atomic store: {:?}", atomic_e.0);
 
             // 创建store操作的库所
             let atomic_store_place = Place::new_with_span(
@@ -700,6 +706,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         atomic_e.0.clone().into(),
                         order.clone(),
                         span.to_string(),
+                        self.instance_id,
                     )),
                 );
                 let atomic_store_transition_node =
@@ -732,7 +739,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             return true;
         }
-        true
+        false
     }
 
     fn handle_atomic_compare_exchange(
@@ -796,6 +803,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         success_order.clone(),
                         failure_order.clone(),
                         span.to_string(),
+                        self.instance_id,
                     )),
                 );
                 let atomic_cmpxchg_transition_node = self

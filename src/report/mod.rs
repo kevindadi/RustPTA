@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,20 +113,24 @@ impl DeadlockReport {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AtomicOperation {
-    pub operation_type: String, // "load" 或 "store"
-    pub ordering: String,       // 内存序
-    pub variable: String,       // 变量标识
-    pub location: String,       // 源代码位置
+    pub operation_type: String,
+    pub ordering: String,
+    pub variable: String,
+    pub location: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AtomicViolation {
-    pub violation_type: String, // 违背类型 (e.g. "unsynchronized_path", "concurrent_relaxed")
-    pub operations: Vec<AtomicOperation>, // 相关的原子操作
-    pub state: Option<Vec<(usize, usize)>>, // 发生违背的状态
-    pub path: Option<Vec<String>>, // 违背路径
+    pub pattern: ViolationPattern,
+    pub states: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ViolationPattern {
+    pub load_op: AtomicOperation,
+    pub store_ops: Vec<AtomicOperation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,41 +138,37 @@ pub struct AtomicReport {
     pub tool_name: String,
     pub has_violation: bool,
     pub violation_count: usize,
-    pub violations: Vec<AtomicViolation>,
+    pub violations: Vec<ViolationPattern>,
     pub analysis_time: Duration,
     pub error: Option<String>,
 }
 
 impl fmt::Display for AtomicReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "���子性违背分析报告")?;
+        writeln!(f, "原子性违背分析报告")?;
         writeln!(f, "分析工具: {}", self.tool_name)?;
         writeln!(f, "分析时间: {:?}", self.analysis_time)?;
         writeln!(f, "是否存在违背: {}", self.has_violation)?;
 
         if self.has_violation {
-            writeln!(f, "\n发现 {} 个原子性违背:", self.violation_count)?;
-            for (i, violation) in self.violations.iter().enumerate() {
-                writeln!(f, "\n违背 #{}", i + 1)?;
-                writeln!(f, "违背类型: {}", violation.violation_type)?;
-                writeln!(f, "相关操作:")?;
-                for op in &violation.operations {
+            writeln!(f, "\n发现 {} 个原子性违背模式:", self.violation_count)?;
+            for (i, pattern) in self.violations.iter().enumerate() {
+                writeln!(f, "\n违背模式 #{}:", i + 1)?;
+                writeln!(
+                    f,
+                    "- Load Operation: {} at {} ({})",
+                    pattern.load_op.variable, pattern.load_op.location, pattern.load_op.ordering
+                )?;
+                writeln!(f, "- Conflicting Store Operations:")?;
+                for (j, store) in pattern.store_ops.iter().enumerate() {
                     writeln!(
                         f,
-                        "  - {} ({}) on {} at {}",
-                        op.operation_type, op.ordering, op.variable, op.location
+                        "  {}. Store at {} ({}) on {}",
+                        j + 1,
+                        store.location,
+                        store.ordering,
+                        store.variable
                     )?;
-                }
-
-                if let Some(state) = &violation.state {
-                    writeln!(f, "违背状态: {:?}", state)?;
-                }
-
-                if let Some(path) = &violation.path {
-                    writeln!(f, "违背路径:")?;
-                    for (step_num, step) in path.iter().enumerate() {
-                        writeln!(f, "  步骤 {}: {}", step_num + 1, step)?;
-                    }
                 }
             }
         }
