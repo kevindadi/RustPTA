@@ -115,6 +115,7 @@ pub enum ControlType {
     Switch,             // 条件分支
     Return(InstanceId), // 函数返回
     Drop(DropType),     // 资源释放
+    Assert,
 
     // 函数调用
     Call(CallType),

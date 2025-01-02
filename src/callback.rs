@@ -74,6 +74,9 @@ impl Default for PTACallbacks {
 
 impl rustc_driver::Callbacks for PTACallbacks {
     fn config(&mut self, config: &mut rustc_interface::interface::Config) {
+        config.opts.optimize = rustc_session::config::OptLevel::No;
+        config.opts.debuginfo = rustc_session::config::DebugInfo::None;
+
         let file_name = config
             .input
             .source_name()

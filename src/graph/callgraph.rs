@@ -108,7 +108,9 @@ impl<'tcx> CallGraphNode<'tcx> {
 pub struct CallGraph<'tcx> {
     pub graph: Graph<CallGraphNode<'tcx>, Vec<CallSiteLocation>, Directed>,
     // key: 调用spawn的函数的DefId
-    // value: (spawn创建的闭包的InstanceId, spawn返回的JoinHandle存储位置)的集合
+    // value: (spawn创建的闭包的DefId, spawn返回的JoinHandle存储位置)的集合
+    // _0 = spawn::<{closure@src/main.rs:10:23: 10:30}, ()>(move _3)
+    // fix: 线程闭包可能不在函数本地调用,改为记录闭包结构
     pub spawn_calls: FxHashMap<DefId, FxHashSet<(DefId, Local)>>,
 }
 
