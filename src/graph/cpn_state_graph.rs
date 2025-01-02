@@ -92,7 +92,7 @@ pub struct CpnStateGraph {
     pub graph: Graph<StateNode, StateEdge>,
     pub initial_net: Box<Graph<ColorPetriNode, ColorPetriEdge>>,
     pub initial_mark: HashSet<(NodeIndex, usize)>,
-    pub race_info: Arc<Mutex<HashSet<RaceInfo>>>,
+    pub race_info: HashSet<RaceInfo>,
 }
 
 impl CpnStateGraph {
@@ -104,48 +104,38 @@ impl CpnStateGraph {
             graph: Graph::<StateNode, StateEdge>::new(),
             initial_net: Box::new(initial_net),
             initial_mark,
-            race_info: Arc::new(Mutex::new(HashSet::new())),
+            race_info: HashSet::new(),
         }
     }
 
     pub fn insert_race_info(&mut self, race_info: RaceInfo) {
-        self.race_info.lock().unwrap().insert(race_info);
+        self.race_info.insert(race_info);
     }
 
     pub fn generate_states(&mut self) {
         let mut queue = VecDeque::new();
-        let all_states = Arc::new(Mutex::new(HashSet::<Vec<(usize, usize)>>::new()));
+        let mut state_index_map = HashMap::<StateNode, NodeIndex>::new();
         let mut visited_states = HashSet::new();
-        // 初始化状态队列，加入初始网和标识
-        queue.push_back((self.initial_net.clone(), self.initial_mark.clone()));
-        {
-            all_states
-                .lock()
-                .unwrap()
-                .insert(normalize_state(&self.initial_mark));
-        }
-        let mut race_handles = vec![];
-        while let Some((mut current_net, current_mark)) = queue.pop_front() {
-            // 获取当前状态下所有使能的变迁
 
-            let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
+        queue.push_back(self.initial_mark.clone());
+
+        let initial_state = StateNode::new(
+            normalize_state(&self.initial_mark),
+            self.initial_mark
+                .clone()
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect(),
+        );
+        let initial_node = self.graph.add_node(initial_state.clone());
+        state_index_map.insert(initial_state.clone(), initial_node);
+
+        while let Some(current_mark) = queue.pop_front() {
+            let enabled_transitions = self.get_enabled_transitions(&current_mark);
             let race_infos = self.detect_race_condition(&enabled_transitions);
 
             for race_info in race_infos {
-                let race_info_clone = race_info.clone();
-                let race_info_arc = Arc::clone(&self.race_info);
-
-                let handle = std::thread::spawn(move || {
-                    let mut guard = race_info_arc.lock().unwrap();
-                    guard.insert(race_info_clone.clone());
-                });
-
-                race_handles.push(handle);
-            }
-
-            // 如果没有使能的变迁，将当前状态添加到死锁标识集合中
-            if enabled_transitions.is_empty() {
-                continue;
+                self.race_info.insert(race_info);
             }
 
             let mark_node_index = current_mark.clone().into_iter().map(|(n, _)| n).collect();
@@ -156,48 +146,29 @@ impl CpnStateGraph {
             let current_node = self
                 .graph
                 .add_node(StateNode::new(current_state.clone(), mark_node_index));
-            let new_states: Vec<_> = {
-                let mut handles = vec![];
 
-                for transition in enabled_transitions {
-                    let current_net = current_net.clone();
-                    let current_mark = current_mark.clone();
-                    let self_clone = self.clone();
+            // log::info!("Current state: {:?}", current_state);
 
-                    let handle = std::thread::spawn(move || {
-                        let mut net_clone = current_net.clone();
-                        let (new_net, new_mark) =
-                            self_clone.fire_transition(&mut net_clone, &current_mark, transition);
-                        (transition, new_net, new_mark)
-                    });
+            for transition in enabled_transitions {
+                let new_state = self.fire_transition(&current_mark, transition);
+                let new_normalize_state = normalize_state(&new_state);
+                let new_state_node = StateNode::new(
+                    new_normalize_state.clone(),
+                    new_state.iter().map(|x| x.0).collect(),
+                );
+                if let Some(&existing_node) = state_index_map.get(&new_state_node) {
+                    // log::info!("Existing node: {:?}", existing_node);
+                    self.graph.add_edge(
+                        current_node,
+                        existing_node,
+                        StateEdge::new(format!("{:?}", transition), transition, 1),
+                    );
+                } else {
+                    // log::info!("New state: {:?}", new_state_node);
+                    queue.push_back(new_state.clone());
+                    let new_node = self.graph.add_node(new_state_node.clone());
+                    state_index_map.insert(new_state_node, new_node);
 
-                    handles.push(handle);
-                }
-
-                handles
-                    .into_iter()
-                    .map(|handle| handle.join().unwrap())
-                    .collect()
-            };
-
-            // 处理每个新生成的状态
-            for (transition, new_net, new_mark) in new_states {
-                let new_state = normalize_state(&new_mark);
-                // std::thread::sleep(std::time::Duration::from_millis(500));
-                // 检查新状态是否唯一，如果是则添加到状态图中
-                let mut all_states_guard = all_states.lock().unwrap();
-                if insert_with_comparison(&mut all_states_guard, &new_state) {
-                    // if all_states_guard.insert(new_state.clone()) {
-                    // 将新状态加入队列，等待后续处理
-                    queue.push_back((new_net.clone(), new_mark.clone()));
-                    // log::info!("new state: {:?}", new_state);
-                    // 在状态图中添加新状态节点
-                    let new_node = self.graph.add_node(StateNode::new(
-                        new_state.clone(),
-                        new_mark.clone().into_iter().map(|(n, _)| n).collect(),
-                    ));
-
-                    // 添加从当前状态到新状态的边，边的标签为变迁名
                     self.graph.add_edge(
                         current_node,
                         new_node,
@@ -206,20 +177,13 @@ impl CpnStateGraph {
                 }
             }
         }
-        for handle in race_handles {
-            handle.join().unwrap();
-        }
     }
 
     #[inline]
-    fn set_current_mark(
-        &self,
-        net: &mut Graph<ColorPetriNode, ColorPetriEdge>,
-        mark: &HashSet<(NodeIndex, usize)>,
-    ) {
+    fn set_current_mark(&mut self, mark: &HashSet<(NodeIndex, usize)>) {
         // 首先将所有库所的 token 清零
-        for node in net.node_indices() {
-            match &net[node] {
+        for node in self.initial_net.node_indices() {
+            match &self.initial_net[node] {
                 ColorPetriNode::ControlPlace { token_num, .. }
                 | ColorPetriNode::TempDataPlace { token_num, .. } => {
                     *token_num.write().unwrap() = 0;
@@ -232,7 +196,7 @@ impl CpnStateGraph {
         for (node_index, _) in mark {
             if let Some(ColorPetriNode::ControlPlace { token_num, .. })
             | Some(ColorPetriNode::TempDataPlace { token_num, .. }) =
-                net.node_weight(*node_index)
+                self.initial_net.node_weight(*node_index)
             {
                 // let tokens = *place.tokens.write().unwrap();
                 {
@@ -242,24 +206,23 @@ impl CpnStateGraph {
         }
     }
 
-    fn get_enabled_transitions(
-        &self,
-        net: &mut Graph<ColorPetriNode, ColorPetriEdge>,
-        mark: &HashSet<(NodeIndex, usize)>,
-    ) -> Vec<NodeIndex> {
+    fn get_enabled_transitions(&mut self, mark: &HashSet<(NodeIndex, usize)>) -> Vec<NodeIndex> {
         let mut sched_transiton = Vec::<NodeIndex>::new();
 
         // 使用内联函数设置当前标识
-        self.set_current_mark(net, mark);
+        self.set_current_mark(mark);
 
         // 检查变迁使能的逻辑
-        for node_index in net.node_indices() {
-            match net.node_weight(node_index) {
+        for node_index in self.initial_net.node_indices() {
+            match self.initial_net.node_weight(node_index) {
                 Some(ColorPetriNode::UnsafeTransition { .. })
                 | Some(ColorPetriNode::Cfg { .. }) => {
                     let mut enabled = true;
-                    for edge in net.edges_directed(node_index, Direction::Incoming) {
-                        match net.node_weight(edge.source()).unwrap() {
+                    for edge in self
+                        .initial_net
+                        .edges_directed(node_index, Direction::Incoming)
+                    {
+                        match self.initial_net.node_weight(edge.source()).unwrap() {
                             ColorPetriNode::ControlPlace { token_num, .. }
                             | ColorPetriNode::TempDataPlace { token_num, .. } => {
                                 if *token_num.read().unwrap() == 0 {
@@ -284,21 +247,19 @@ impl CpnStateGraph {
     }
 
     fn fire_transition(
-        &self,
-        net: &mut Graph<ColorPetriNode, ColorPetriEdge>,
+        &mut self,
         mark: &HashSet<(NodeIndex, usize)>,
         transition: NodeIndex,
-    ) -> (
-        Box<Graph<ColorPetriNode, ColorPetriEdge>>,
-        HashSet<(NodeIndex, usize)>,
-    ) {
-        let mut new_net = net.clone(); // 克隆当前网，创建新图
-        self.set_current_mark(&mut new_net, mark);
+    ) -> HashSet<(NodeIndex, usize)> {
+        self.set_current_mark(mark);
         let mut new_state = HashSet::<(NodeIndex, usize)>::new();
         log::debug!("The transition to fire is: {}", transition.index());
 
-        for edge in new_net.edges_directed(transition, Direction::Incoming) {
-            match new_net.node_weight(edge.source()).unwrap() {
+        for edge in self
+            .initial_net
+            .edges_directed(transition, Direction::Incoming)
+        {
+            match self.initial_net.node_weight(edge.source()).unwrap() {
                 ColorPetriNode::ControlPlace { token_num, .. }
                 | ColorPetriNode::TempDataPlace { token_num, .. } => {
                     *token_num.write().unwrap() = 0;
@@ -309,8 +270,11 @@ impl CpnStateGraph {
             }
         }
 
-        for edge in new_net.edges_directed(transition, Direction::Outgoing) {
-            let place_node = new_net.node_weight(edge.target()).unwrap();
+        for edge in self
+            .initial_net
+            .edges_directed(transition, Direction::Outgoing)
+        {
+            let place_node = self.initial_net.node_weight(edge.target()).unwrap();
             match place_node {
                 ColorPetriNode::ControlPlace { token_num, .. }
                 | ColorPetriNode::TempDataPlace { token_num, .. } => {
@@ -322,8 +286,8 @@ impl CpnStateGraph {
             }
         }
 
-        for node in new_net.node_indices() {
-            match &new_net[node] {
+        for node in self.initial_net.node_indices() {
+            match &self.initial_net[node] {
                 ColorPetriNode::ControlPlace { token_num, .. }
                 | ColorPetriNode::TempDataPlace { token_num, .. } => {
                     if *token_num.read().unwrap() > 0 {
@@ -334,7 +298,7 @@ impl CpnStateGraph {
             }
         }
         log::debug!("Generate new state: {:?}", new_state);
-        (Box::new(new_net), new_state) // 返回新图和新状态
+        new_state
     }
 
     #[allow(dead_code)]

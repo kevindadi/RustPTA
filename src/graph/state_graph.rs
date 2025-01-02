@@ -32,7 +32,7 @@ impl StateEdge {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone)]
 pub struct StateNode {
     pub mark: Vec<(usize, usize)>,
     pub node_index: HashSet<NodeIndex>,
@@ -49,6 +49,8 @@ impl PartialEq for StateNode {
         self.mark == other.mark
     }
 }
+
+impl Eq for StateNode {}
 
 impl StateNode {
     pub fn new(mark: Vec<(usize, usize)>, node_index: HashSet<NodeIndex>) -> Self {

@@ -6,6 +6,7 @@ use crate::utils::format_name;
 use crate::utils::ApiEntry;
 use crate::utils::ApiSpec;
 use crate::Options;
+use anyhow::Result;
 use log::debug;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
@@ -22,6 +23,7 @@ use std::hash::Hash;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use thiserror::Error;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::mir_pn::BodyToPetriNet;
@@ -201,6 +203,21 @@ impl Hash for Marking {
             value.hash(state);
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum PetriNetError {
+    #[error("Invalid Petri net structure: Transition '{transition_name}' has a Transition {connection_type}")]
+    InvalidTransitionConnection {
+        transition_name: String,
+        connection_type: &'static str, // "predecessor" 或 "successor"
+    },
+
+    #[error("Invalid Petri net structure: Place '{place_name}' has a Place {connection_type}")]
+    InvalidPlaceConnection {
+        place_name: String,
+        connection_type: &'static str,
+    },
 }
 
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
@@ -1012,60 +1029,50 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     /// 返回:
     /// - Ok(()) 如果网络结构正确
     /// - Err(String) 包含错误描述的字符串
-    pub fn verify_structure(&self) -> Result<(), String> {
+    pub fn verify_structure(&self) -> Result<()> {
         for node_idx in self.net.node_indices() {
             match &self.net[node_idx] {
                 PetriNetNode::T(transition) => {
                     // 检查Transition的前驱
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
-                        match &self.net[pred] {
-                            PetriNetNode::T(_) => {
-                                return Err(format!(
-                                    "Invalid structure: Transition '{}' has a Transition predecessor",
-                                    transition.name
-                                ));
+                        if let PetriNetNode::T(_) = &self.net[pred] {
+                            return Err(PetriNetError::InvalidTransitionConnection {
+                                transition_name: transition.name.clone(),
+                                connection_type: "predecessor",
                             }
-                            PetriNetNode::P(_) => {} // 正确的情况
+                            .into());
                         }
                     }
 
                     // 检查Transition的后继
                     for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
-                        match &self.net[succ] {
-                            PetriNetNode::T(_) => {
-                                return Err(format!(
-                                    "Invalid structure: Transition '{}' has a Transition successor",
-                                    transition.name
-                                ));
+                        if let PetriNetNode::T(_) = &self.net[succ] {
+                            return Err(PetriNetError::InvalidTransitionConnection {
+                                transition_name: transition.name.clone(),
+                                connection_type: "successor",
                             }
-                            PetriNetNode::P(_) => {} // 正确的情况
+                            .into());
                         }
                     }
                 }
                 PetriNetNode::P(place) => {
-                    // 检查Place的前驱（如果有的话）
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
-                        match &self.net[pred] {
-                            PetriNetNode::P(_) => {
-                                return Err(format!(
-                                    "Invalid structure: Place '{}' has a Place predecessor",
-                                    place.name
-                                ));
+                        if let PetriNetNode::P(_) = &self.net[pred] {
+                            return Err(PetriNetError::InvalidPlaceConnection {
+                                place_name: place.name.clone(),
+                                connection_type: "predecessor",
                             }
-                            PetriNetNode::T(_) => {} // 正确的情况
+                            .into());
                         }
                     }
 
-                    // 检查Place的后继（如果有的话）
                     for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
-                        match &self.net[succ] {
-                            PetriNetNode::P(_) => {
-                                return Err(format!(
-                                    "Invalid structure: Place '{}' has a Place successor",
-                                    place.name
-                                ));
+                        if let PetriNetNode::P(_) = &self.net[succ] {
+                            return Err(PetriNetError::InvalidPlaceConnection {
+                                place_name: place.name.clone(),
+                                connection_type: "successor",
                             }
-                            PetriNetNode::T(_) => {} // 正确的情况
+                            .into());
                         }
                     }
                 }

@@ -512,7 +512,7 @@ impl<'cpn, 'translate, 'tcx> Visitor<'tcx> for BodyToColorPetriNet<'cpn, 'transl
                                         spawn_def_id = match self
                                             .alias
                                             .borrow_mut()
-                                            .alias(join_id.into(), spawn_local_id.into())
+                                            .alias_join(join_id.into(), spawn_local_id.into())
                                         {
                                             ApproximateAliasKind::Probably
                                             | ApproximateAliasKind::Possibly => {
@@ -530,24 +530,23 @@ impl<'cpn, 'translate, 'tcx> Visitor<'tcx> for BodyToColorPetriNet<'cpn, 'transl
                                                 call_transition,
                                                 1,
                                             );
-                                            match target {
-                                                Some(t) => {
-                                                    let target_place = self
-                                                        .get_or_insert_bb_entry_node(*t, &fn_name);
-                                                    self.add_edge(call_transition, target_place, 1);
-                                                }
-                                                _ => {}
-                                            }
                                         }
                                         _ => {
                                             log::error!("no spawn call in function {:?}", def_id);
-                                            continue;
                                         }
                                     }
                                 }
                                 _ => {
                                     panic!("no spawn call in function {:?}", def_id);
                                 }
+                            }
+                            match target {
+                                Some(t) => {
+                                    let target_place =
+                                        self.get_or_insert_bb_entry_node(*t, &fn_name);
+                                    self.add_edge(call_transition, target_place, 1);
+                                }
+                                _ => {}
                             }
                             continue;
                         }

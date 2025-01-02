@@ -24,6 +24,49 @@ use super::{
     mir_cpn::BodyToColorPetriNet,
 };
 
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CpnStructureError {
+    #[error("UnsafeTransition at {span} is missing required predecessors:\n- Has control place: {has_control}\n- Has data place: {has_data}")]
+    UnsafeTransitionMissingPredecessors {
+        span: String,
+        has_control: bool,
+        has_data: bool,
+    },
+
+    #[error("UnsafeTransition at {span} has invalid predecessor type: {found_type}")]
+    UnsafeTransitionInvalidPredecessor { span: String, found_type: String },
+
+    #[error("UnsafeTransition at {span} must have at least one control place successor")]
+    UnsafeTransitionMissingControlSuccessor { span: String },
+
+    #[error("UnsafeTransition at {span} has invalid successor type: {found_type}")]
+    UnsafeTransitionInvalidSuccessor { span: String, found_type: String },
+
+    #[error(
+        "Cfg transition '{name}' must only have ControlPlace predecessors, found: {found_type}"
+    )]
+    CfgInvalidPredecessor { name: String, found_type: String },
+
+    #[error("Cfg transition '{name}' must only have ControlPlace successors, found: {found_type}")]
+    CfgInvalidSuccessor { name: String, found_type: String },
+
+    #[error("{place_type} at {basic_block} has invalid predecessor type: {found_type}")]
+    PlaceInvalidPredecessor {
+        place_type: String,
+        basic_block: String,
+        found_type: String,
+    },
+
+    #[error("{place_type} at {basic_block} has invalid successor type: {found_type}")]
+    PlaceInvalidSuccessor {
+        place_type: String,
+        basic_block: String,
+        found_type: String,
+    },
+}
+
 /// 着色Petri网的基本结构
 pub struct ColorPetriNet<'analysis, 'tcx> {
     options: Options,
@@ -430,7 +473,7 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
     /// 2. UnsafeTransition的后继必须包含至少一个控制库所
     /// 3. Cfg变迁的前驱和后继只能是ControlPlace
     /// 4. 所有库所(DataPlace/TempDataPlace/ControlPlace)的前驱和后继只能是变迁
-    pub fn verify_structure(&self) -> Result<(), String> {
+    pub fn verify_structure(&self) -> anyhow::Result<()> {
         use petgraph::Direction;
 
         for node_idx in self.net.node_indices() {
@@ -443,74 +486,88 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         match &self.net[pred] {
                             ColorPetriNode::ControlPlace { .. } => has_control_pred = true,
-                            ColorPetriNode::DataPlace { .. } | ColorPetriNode::TempDataPlace { .. } => has_data_pred = true,
-                            _ => return Err(format!(
-                                "Invalid structure: UnsafeTransition at {} has invalid predecessor type",
-                                span
-                            )),
+                            ColorPetriNode::DataPlace { .. }
+                            | ColorPetriNode::TempDataPlace { .. } => has_data_pred = true,
+                            other => {
+                                return Err(
+                                    CpnStructureError::UnsafeTransitionInvalidPredecessor {
+                                        span: span.clone(),
+                                        found_type: format!("{:?}", other),
+                                    }
+                                    .into(),
+                                );
+                            }
                         }
                     }
 
                     if !has_control_pred || !has_data_pred {
-                        return Err(format!(
-                            "Invalid structure: UnsafeTransition at {} must have both control and data place predecessors",
-                            span
-                        ));
+                        return Err(CpnStructureError::UnsafeTransitionMissingPredecessors {
+                            span: span.clone(),
+                            has_control: has_control_pred,
+                            has_data: has_data_pred,
+                        }
+                        .into());
                     }
 
                     // 检查后继
                     let mut has_control_succ = false;
                     for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
                         match &self.net[succ] {
-                            ColorPetriNode::ControlPlace { .. } => has_control_succ = true,
-                            _ => return Err(format!(
-                                "Invalid structure: UnsafeTransition at {} has invalid successor type {}",
-                                span,
-                                succ.index()
-                            )),
+                            ColorPetriNode::ControlPlace { .. }
+                            | ColorPetriNode::TempDataPlace { .. }
+                            | ColorPetriNode::DataPlace { .. } => has_control_succ = true,
+                            other => {
+                                return Err(CpnStructureError::UnsafeTransitionInvalidSuccessor {
+                                    span: span.clone(),
+                                    found_type: format!("{:?}", other),
+                                }
+                                .into());
+                            }
                         }
                     }
 
                     if !has_control_succ {
-                        return Err(format!(
-                            "Invalid structure: UnsafeTransition at {} must have at least one control place successor",
-                            span
-                        ));
+                        return Err(CpnStructureError::UnsafeTransitionMissingControlSuccessor {
+                            span: span.clone(),
+                        }
+                        .into());
                     }
                 }
 
                 ColorPetriNode::Cfg { name } => {
-                    // 检查Cfg变迁的前驱和后继
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if !matches!(&self.net[pred], ColorPetriNode::ControlPlace { .. }) {
-                            return Err(format!(
-                                "Invalid structure: Cfg transition '{}' must only have ControlPlace predecessors",
-                                name
-                            ));
+                            return Err(CpnStructureError::CfgInvalidPredecessor {
+                                name: name.clone(),
+                                found_type: format!("{:?}", &self.net[pred]),
+                            }
+                            .into());
                         }
                     }
 
                     for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
                         if !matches!(&self.net[succ], ColorPetriNode::ControlPlace { .. }) {
-                            return Err(format!(
-                                "Invalid structure: Cfg transition '{}' must only have ControlPlace successors",
-                                name
-                            ));
+                            return Err(CpnStructureError::CfgInvalidSuccessor {
+                                name: name.clone(),
+                                found_type: format!("{:?}", &self.net[succ]),
+                            }
+                            .into());
                         }
                     }
                 }
                 ColorPetriNode::ControlPlace { basic_block, .. }
                 | ColorPetriNode::TempDataPlace { basic_block, .. } => {
-                    // 检查所有库所的前驱和后继
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if !matches!(
                             &self.net[pred],
                             ColorPetriNode::UnsafeTransition { .. } | ColorPetriNode::Cfg { .. }
                         ) {
-                            return Err(format!(
-                                "Invalid structure: Place at {} has invalid predecessor type",
-                                basic_block
-                            ));
+                            return Err(CpnStructureError::PlaceInvalidPredecessor {
+                                place_type: "ControlPlace".to_string(),
+                                basic_block: basic_block.clone(),
+                                found_type: format!("{:?}", &self.net[pred]),
+                            }
+                            .into());
                         }
                     }
 
@@ -519,10 +576,12 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                             &self.net[succ],
                             ColorPetriNode::UnsafeTransition { .. } | ColorPetriNode::Cfg { .. }
                         ) {
-                            return Err(format!(
-                                "Invalid structure: Place at {} has invalid successor type",
-                                basic_block
-                            ));
+                            return Err(CpnStructureError::PlaceInvalidSuccessor {
+                                place_type: "ControlPlace".to_string(),
+                                basic_block: basic_block.clone(),
+                                found_type: format!("{:?}", &self.net[succ]),
+                            }
+                            .into());
                         }
                     }
                 }

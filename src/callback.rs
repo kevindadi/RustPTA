@@ -196,23 +196,18 @@ impl PTACallbacks {
 
                 let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
                 state_graph.generate_states();
-                state_graph
-                    .race_info
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .for_each(|race_info| {
-                        log::info!(
-                            "Race {:?}:\n{}",
-                            serde_json::to_string(&json!({
-                                "unsafe_transitions": race_info.transitions,
-                            })),
-                            serde_json::to_string_pretty(&json!({
-                                "operations": race_info.span_str,
-                            }))
-                            .unwrap()
-                        )
-                    });
+                state_graph.race_info.iter().for_each(|race_info| {
+                    log::info!(
+                        "Race {:?}:\n{}",
+                        serde_json::to_string(&json!({
+                            "unsafe_transitions": race_info.transitions,
+                        })),
+                        serde_json::to_string_pretty(&json!({
+                            "operations": race_info.span_str,
+                        }))
+                        .unwrap()
+                    )
+                });
             }
             DetectorKind::AtomicityViolation => {
                 // 收集atomic变量和操作信息

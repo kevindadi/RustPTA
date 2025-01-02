@@ -668,18 +668,26 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             StatementKind::Assign(box (place, rvalue)) => {
                 self.process_assignment(place, rvalue);
             }
-            StatementKind::FakeRead(_)
-            | StatementKind::SetDiscriminant { .. }
-            | StatementKind::Deinit(_)
-            | StatementKind::StorageLive(_)
-            | StatementKind::StorageDead(_)
-            | StatementKind::Retag(_, _)
-            | StatementKind::AscribeUserType(_, _)
-            | StatementKind::Coverage(_)
-            | StatementKind::Nop
-            | StatementKind::PlaceMention(_)
+            // 用于借用检查,表示一个值被"读取"但实际上不产生任何代码
+            StatementKind::FakeRead(_) => {}
+            // 为枚举类型设置具体的变体索引
+            StatementKind::SetDiscriminant { .. } => {}
+            // 将一个位置标记为未初始化状态, 通常在变量离开作用域前使用
+            StatementKind::Deinit(_) => {}
+            // 标记局部变量的存储空间开始生效
+            StatementKind::StorageLive(_) => {}
+            // 标记局部变量的存储空间结束
+            StatementKind::StorageDead(_) => {}
+            // 用于 Stacked Borrows 内存模型, 为引用分配新的标签以跟踪借用
+            StatementKind::Retag(_, _) => {}
+            // 将用户定义的类型信息附加到值上,用于类型检查
+            StatementKind::AscribeUserType(_, _)
+            | StatementKind::Coverage(_) // 代码覆盖率分析
+            | StatementKind::Nop => {}  // 占位符,可能用于对齐
+            // 表示一个位置被提及但不产生实际操作 
+            StatementKind::PlaceMention(_) => {}
             | StatementKind::ConstEvalCounter
-            | StatementKind::Intrinsic(_)
+            | StatementKind::Intrinsic(_) // rustc 内置函数
             | StatementKind::BackwardIncompatibleDropHint { .. } => {}
         }
     }
@@ -1230,7 +1238,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             return Some(ApproximateAliasKind::Possibly);
         }
 
-        log::info!("node1: {:?}", node1);
         // 3. Check if `node1` and `node2` point to upvars of closures and the upvars alias in the def func.
         // 3.1 Get defsite upvars of `node1` then check if `node2` points to the upvar.
         let mut defsite_upvars1 = None;

@@ -36,6 +36,8 @@ once_cell = "1.13.1"
 itertools = "*"
 toml = "0.8.19"
 z3 = "0.12.1"
+thiserror = "*"
+anyhow = "*"
 
 [profile.dev]
 incremental = false
