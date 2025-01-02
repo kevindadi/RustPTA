@@ -486,9 +486,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     self.graph.add_load(*lhs, rhs);
                 }
                 // *a = b
-                (AccessPattern::Indirect(lhs), Some(AccessPattern::Direct(rhs))) => {
-                    self.graph.add_store(*lhs, rhs);
-                }
+                (AccessPattern::Indirect(lhs), Some(AccessPattern::Direct(rhs))) => {}
                 // *a = Constant
                 (AccessPattern::Indirect(lhs), Some(AccessPattern::Constant(rhs))) => {
                     self.graph.add_store_constant(*lhs, rhs);

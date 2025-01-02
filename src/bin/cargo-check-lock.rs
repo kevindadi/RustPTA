@@ -25,6 +25,7 @@ VISUALIZATION OPTIONS:
         --viz-petrinet            Generate Petri net visualization
         --viz-stategraph          Generate state graph visualization
         --viz-unsafe              Generate unsafe operations report
+        --viz-pointsto 
 
 EXAMPLES:
     cargo pn -m datarace -t my_crate
