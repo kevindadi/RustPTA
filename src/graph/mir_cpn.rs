@@ -512,7 +512,7 @@ impl<'cpn, 'translate, 'tcx> Visitor<'tcx> for BodyToColorPetriNet<'cpn, 'transl
                                         spawn_def_id = match self
                                             .alias
                                             .borrow_mut()
-                                            .alias_join(join_id.into(), spawn_local_id.into())
+                                            .alias(join_id.into(), spawn_local_id.into())
                                         {
                                             ApproximateAliasKind::Probably
                                             | ApproximateAliasKind::Possibly => {

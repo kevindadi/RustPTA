@@ -30,6 +30,7 @@ pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     pts: PointsToMap<'tcx>,
+    propagated_pts: PointsToMap<'tcx>,
     pub av: bool,
 }
 
@@ -41,6 +42,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
             body,
             tcx,
             pts: Default::default(),
+            propagated_pts: Default::default(),
             av,
         }
     }
@@ -105,6 +107,28 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                 }
             }
         }
+        self.propagate_points_to();
+    }
+
+    fn propagate_points_to(&mut self) {
+        self.propagated_pts = self.pts.clone();
+        let mut all_points_to = FxHashMap::default();
+
+        for (node, pts_set) in &self.pts {
+            let mut node_points_to = pts_set.clone();
+
+            // 查找所有指向当前节点的节点
+            for (other_node, other_pts) in &self.pts {
+                if other_pts.contains(node) {
+                    // 如果其他节点指向了当前节点，将其所有指向都加入当前节点
+                    node_points_to.extend(other_pts.iter().cloned());
+                }
+            }
+
+            all_points_to.insert(node.clone(), node_points_to);
+        }
+
+        self.propagated_pts = all_points_to;
     }
 
     /// pts(target) = pts(target) U pts(source)
@@ -123,6 +147,12 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
     pub fn finish(self) -> FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>> {
         self.pts
     }
+
+    pub fn get_propagated_pts(
+        &self,
+    ) -> FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>> {
+        self.propagated_pts.clone()
+    }
 }
 
 /// `ConstraintNode` 表示一个内存单元,在MIR中用 `Place` 表示
@@ -138,6 +168,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
 /// 为了能够传播 `Constant` 的指向信息,
 /// 我们引入 `ConstantDeref` 来表示 `Constant` 的指向节点,
 /// 即对于所有的Constant(c),都有 Constant(c)--|address|-->ConstantDeref(c)
+/// TODO: 是否有必要保留Alloc,网的建立似乎只需要May Alias,保证强相关关系似乎更好一点？
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstraintNode<'tcx> {
     Alloc(PlaceRef<'tcx>),
@@ -1004,44 +1035,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                     if local1 == local2 {
                         return ApproximateAliasKind::Probably;
                     }
-                    self.intraproc_points_to(instance1, node1, node2)
-                        .unwrap_or(ApproximateAliasKind::Unknown)
-                } else {
-                    self.interproc_alias(instance1, &node1, instance2, &node2)
-                        .unwrap_or(ApproximateAliasKind::Unknown)
-                }
-            }
-            _ => ApproximateAliasKind::Unknown,
-        }
-    }
-
-    pub fn alias_join(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
-        let AliasId {
-            instance_id: id1,
-            local: local1,
-        } = aid1;
-        let AliasId {
-            instance_id: id2,
-            local: local2,
-        } = aid2;
-
-        let instance1 = self
-            .callgraph
-            .index_to_instance(id1)
-            .map(CallGraphNode::instance);
-        let instance2 = self
-            .callgraph
-            .index_to_instance(id2)
-            .map(CallGraphNode::instance);
-
-        match (instance1, instance2) {
-            (Some(instance1), Some(instance2)) => {
-                let node1 = ConstraintNode::Place(Place::from(local1).as_ref());
-                let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
-                if instance1.def_id() == instance2.def_id() {
-                    if local1 == local2 {
-                        return ApproximateAliasKind::Probably;
-                    }
                     self.intraproc_alias(instance1, &node1, &node2)
                         .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
@@ -1091,6 +1084,44 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
+    pub fn alias_atomic(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
+        let AliasId {
+            instance_id: id1,
+            local: local1,
+        } = aid1;
+        let AliasId {
+            instance_id: id2,
+            local: local2,
+        } = aid2;
+
+        let instance1 = self
+            .callgraph
+            .index_to_instance(id1)
+            .map(CallGraphNode::instance);
+        let instance2 = self
+            .callgraph
+            .index_to_instance(id2)
+            .map(CallGraphNode::instance);
+
+        match (instance1, instance2) {
+            (Some(instance1), Some(instance2)) => {
+                let node1 = ConstraintNode::Place(Place::from(local1).as_ref());
+                let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
+                if instance1.def_id() == instance2.def_id() {
+                    if local1 == local2 {
+                        return ApproximateAliasKind::Probably;
+                    }
+                    self.atomic_intraproc_alias(instance1, &node1, &node2)
+                        .unwrap_or(ApproximateAliasKind::Unknown)
+                } else {
+                    self.interproc_alias(instance1, &node1, instance2, &node2)
+                        .unwrap_or(ApproximateAliasKind::Unknown)
+                }
+            }
+            _ => ApproximateAliasKind::Unknown,
+        }
+    }
+
     /// Get the points-to info from cache `pts`.
     /// If not exists, then perform points-to analysis
     /// and add the obtained points-to info to cache.
@@ -1108,6 +1139,24 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn get_or_insert_pts_propagate(
+        &mut self,
+        def_id: DefId,
+        body: &Body<'tcx>,
+    ) -> &PointsToMap<'tcx> {
+        // 1. 首先检查缓存中是否已经有这个函数的 points-to 分析结果
+        if self.pts.contains_key(&def_id) {
+            // 如果有，直接返回缓存的结果
+            self.pts.get(&def_id).unwrap()
+        } else {
+            // 2. 如果没有，执行新的 points-to 分析
+            let mut pointer_analysis = Andersen::new(body, self.tcx, self.av);
+            pointer_analysis.analyze();
+            let pts = pointer_analysis.get_propagated_pts();
+            self.pts.entry(def_id).or_insert(pts)
+        }
+    }
     /// 检查同一函数中p1和p2的别名关系
     /// 如果pts(p1)和pts(p2)的交集不为空，则它们可能存在别名关系，否则不太可能存在别名关系
     fn intraproc_alias(
@@ -1131,31 +1180,110 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     }
 
     /// Check if `pointer` points-to `pointee` in the same function.
-    fn intraproc_points_to(
+    fn atomic_intraproc_alias(
         &mut self,
         instance: &Instance<'tcx>,
-        pointer: ConstraintNode<'tcx>,
-        pointee: ConstraintNode<'tcx>,
+        pointer: &ConstraintNode<'tcx>,
+        pointee: &ConstraintNode<'tcx>,
     ) -> Option<ApproximateAliasKind> {
         let body = self.tcx.instance_mir(instance.def);
         let points_to_map = self.get_or_insert_pts(instance.def_id(), body);
-        let pointer_pts = points_to_map.get(&pointer)?;
-        // 1. if pts(pointer) contains pointee then probably alias
-        if pointer_pts.contains(&pointee) {
+        // if points_to_map
+        //     .get(pointer)?
+        //     .intersection(points_to_map.get(pointee)?)
+        //     .next()
+        //     .is_some()
+        // {
+        //     return Some(ApproximateAliasKind::Probably);
+        // }
+
+        fn get_local(node: &ConstraintNode<'_>) -> Option<Local> {
+            match node {
+                ConstraintNode::Place(place) => Some(place.local),
+                ConstraintNode::Alloc(place) => Some(place.local),
+                _ => None,
+            }
+        }
+
+        let mut pointee_set = FxHashSet::default();
+        let mut pointer_set = FxHashSet::default();
+
+        // 获取初始节点的 Local
+        if let Some(local) = get_local(pointee) {
+            pointee_set.insert(local);
+        }
+        if let Some(local) = get_local(pointer) {
+            pointer_set.insert(local);
+        }
+
+        // 收集所有相关的 Local
+        for (node, pts) in points_to_map {
+            if let Some(from_local) = get_local(node) {
+                for target in pts {
+                    if let Some(to_local) = get_local(target) {
+                        if pointee_set.contains(&to_local) {
+                            pointee_set.insert(from_local);
+                        }
+                        if pointer_set.contains(&to_local) {
+                            pointer_set.insert(from_local);
+                        }
+                    }
+                }
+            }
+        }
+
+        log::info!(
+            "pointer_set: {:?}\n pointee_set: {:?}",
+            pointer_set,
+            pointee_set
+        );
+
+        // 直接判断两个集合是否有交集
+        if !pointer_set.is_disjoint(&pointee_set) {
             return Some(ApproximateAliasKind::Probably);
         }
-        let pointee_pts = points_to_map.get(&pointee)?;
-        // 2. if exists p: pts(pointer) contains Place(p) and pts(pointee) contains Alloc(p) then possibly alias
-        if pointer_pts.iter().any(|n1| {
-            let p = match n1 {
-                ConstraintNode::Place(p) => *p,
-                _ => return false,
-            };
-            pointee_pts
-                .iter()
-                .any(|n2| matches!(n2, ConstraintNode::Alloc(p2) if *p2 == p))
-        }) {
-            Some(ApproximateAliasKind::Possibly)
+
+        // 递归检查两个节点是否存在别名关系
+        // eg. 判断 _2->{Alloc(_2)} and _16->{Alloc(_16),Alloc{_17},_1}的别名关系
+        // 其中存在节点_1->{Alloc(_2),Alloc{_1}},需要递归判断
+        // TODO: 在ConstraintGraph内部通过连接边判断或重新构建PTS
+        fn check_alias_recursive<'tcx>(
+            node1: &ConstraintNode<'tcx>,
+            node2: &ConstraintNode<'tcx>,
+            points_to_map: &PointsToMap<'tcx>,
+            depth: usize,
+        ) -> bool {
+            // 防止循环递归
+            if depth > 20 {
+                return false;
+            }
+
+            if let (Some(pts1), Some(pts2)) = (points_to_map.get(node1), points_to_map.get(node2)) {
+                // 1. 直接检查是否互相包含
+                if pts1.contains(node2) || pts2.contains(node1) {
+                    return true;
+                }
+
+                // 2. 检查 points-to 集合中的每个节点
+                for p1 in pts1 {
+                    // 检查 p1 是否与 node2 有别名关系
+                    if check_alias_recursive(p1, node2, points_to_map, depth + 1) {
+                        return true;
+                    }
+
+                    // 检查 p1 是否与 node2 的任何指向目标有别名关系
+                    for p2 in pts2 {
+                        if check_alias_recursive(p1, p2, points_to_map, depth + 1) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        if check_alias_recursive(pointer, pointee, points_to_map, 0) {
+            Some(ApproximateAliasKind::Probably)
         } else {
             Some(ApproximateAliasKind::Unlikely)
         }
@@ -1176,11 +1304,11 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         if !pts1.is_disjoint(pts2) {
             let allocs1: HashSet<_> = pts1
                 .iter()
-                .filter(|n| matches!(n, ConstraintNode::Alloc(_)))
+                .filter(|n| matches!(n, ConstraintNode::Alloc(_) | ConstraintNode::Place(_)))
                 .collect();
             let allocs2: HashSet<_> = pts2
                 .iter()
-                .filter(|n| matches!(n, ConstraintNode::Alloc(_)))
+                .filter(|n| matches!(n, ConstraintNode::Alloc(_) | ConstraintNode::Place(_)))
                 .collect();
 
             let common_allocs: HashSet<_> = allocs1.intersection(&allocs2).collect();

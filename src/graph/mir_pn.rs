@@ -472,7 +472,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     match self
                         .alias
                         .borrow_mut()
-                        .alias_join(join_id.into(), spawn_local_id.into())
+                        .alias(join_id.into(), spawn_local_id.into())
                     {
                         ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                             Some(*def_id)
@@ -547,6 +547,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         } else {
             // 记录闭包的隐式调用
+            // TODO: construct 网过程中不支持std,导致一些隐式调用无法连接到对应闭包,这里是一个例子
+            // eg. _7 = <std::ops::Range<i32> as Iterator>::next(copy _17) -> [return: bb5, unwind: bb26];
+            // let mut _17: &mut std::iter::Map<std::ops::Range<usize>, {closure@src/main.rs:4:30: 4:34}>;
             let name = self.tcx.def_path_str(callee_id);
             if name.contains("Iterator::next") {
                 log::info!("Found iterator next() call in {:?}", span);
@@ -688,7 +691,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             if !matches!(
                 self.alias
                     .borrow_mut()
-                    .alias(current_id.into(), atomic_e.0.clone().into()),
+                    .alias_atomic(current_id.into(), atomic_e.0.clone().into()),
                 ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably
             ) {
                 continue;
@@ -774,7 +777,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             if !matches!(
                 self.alias
                     .borrow_mut()
-                    .alias(current_id.into(), atomic_e.0.clone().into()),
+                    .alias_atomic(current_id.into(), atomic_e.0.clone().into()),
                 ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably
             ) {
                 continue;
