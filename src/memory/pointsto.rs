@@ -1216,7 +1216,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             pointer_set.insert(local);
         }
 
-        // 收集所有相关的 Local
         for (node, pts) in points_to_map {
             if let Some(from_local) = get_local(node) {
                 for target in pts {
@@ -1232,7 +1231,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             }
         }
 
-        log::info!(
+        log::debug!(
             "pointer_set: {:?}\n pointee_set: {:?}",
             pointer_set,
             pointee_set

@@ -464,7 +464,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         // 2. 获取spawn调用并查找匹配
 
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
-            log::info!("spawn_calls: {:?}", spawn_calls);
             let spawn_def_id = spawn_calls
                 .iter()
                 .find_map(|(def_id, local)| {
