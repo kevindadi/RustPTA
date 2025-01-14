@@ -18,8 +18,8 @@ fn main() {
         *lock_data += 1;
 
         atomic_clone.store(2, Ordering::Relaxed);
-        // let mut lock_data = lock_clone.lock().unwrap();
-        // *lock_data += 2;
+        let mut lock_data = lock_clone.lock().unwrap();
+        *lock_data += 2;
         unsafe {
             GLOBAL_DATA = 42;
         }

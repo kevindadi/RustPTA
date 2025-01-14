@@ -1114,7 +1114,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                     self.atomic_intraproc_alias(instance1, &node1, &node2)
                         .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
-                    self.interproc_alias(instance1, &node1, instance2, &node2)
+                    self.new_interproc_alias(instance1, &node1, instance2, &node2)
                         .unwrap_or(ApproximateAliasKind::Unknown)
                 }
             }
@@ -1375,6 +1375,95 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 };
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance2.def_id() {
+                        let alias_kind =
+                            self.intra_points_to(def_inst, node2.clone(), upvar.clone());
+                        if alias_kind > ApproximateAliasKind::Unlikely {
+                            return Some(alias_kind);
+                        }
+                    }
+                }
+                // Record defsite_upvars.
+                defsite_upvars1 = Some(defsite_upvars);
+                // The last fields of the paths are usually the same, thus only iterate once.
+                break;
+            }
+        }
+        // 3.2 Get defsite upvars of `node2` then check if `node1` points to the upvar.
+        let mut defsite_upvars2 = None;
+        if self.tcx.is_closure_like(instance2.def_id()) {
+            let pts_paths = points_to_paths_to_param(node2.clone(), body2, &points_to_map2);
+            for pts_path in pts_paths {
+                let defsite_upvars = match self.closure_defsite_upvars(instance2, pts_path) {
+                    Some(defsite_upvars) => defsite_upvars,
+                    None => continue,
+                };
+                for (def_inst, upvar) in defsite_upvars.iter() {
+                    if def_inst.def_id() == instance1.def_id() {
+                        let alias_kind =
+                            self.intra_points_to(def_inst, node1.clone(), upvar.clone());
+                        if alias_kind > ApproximateAliasKind::Unlikely {
+                            return Some(alias_kind);
+                        }
+                    }
+                }
+                // Record defsite_upvars.
+                defsite_upvars2 = Some(defsite_upvars);
+                // The last fields of the paths are usually the same, thus only iterate once.
+                break;
+            }
+        }
+        // 3.3 Check if upvars of `node1` and `node2` alias with each other.
+        if let (Some(defsite_upvars1), Some(defsite_upvars2)) = (defsite_upvars1, defsite_upvars2) {
+            for (instance1, node1) in defsite_upvars1 {
+                for (instance2, node2) in &defsite_upvars2 {
+                    if instance1.def_id() == instance2.def_id() {
+                        let alias_kind = self
+                            .intraproc_alias(instance1, &node1, node2)
+                            .unwrap_or(ApproximateAliasKind::Unknown);
+                        if alias_kind > ApproximateAliasKind::Unlikely {
+                            return Some(alias_kind);
+                        }
+                    }
+                }
+            }
+        }
+        Some(ApproximateAliasKind::Unlikely)
+    }
+
+    fn new_interproc_alias(
+        &mut self,
+        instance1: &Instance<'tcx>,
+        node1: &ConstraintNode<'tcx>,
+        instance2: &Instance<'tcx>,
+        node2: &ConstraintNode<'tcx>,
+    ) -> Option<ApproximateAliasKind> {
+        let body1 = self.tcx.instance_mir(instance1.def);
+        let body2 = self.tcx.instance_mir(instance2.def);
+        let points_to_map1 = self.get_or_insert_pts(instance1.def_id(), body1).clone();
+        let points_to_map2 = self.get_or_insert_pts(instance2.def_id(), body2).clone();
+        let pts1 = points_to_map1.get(node1)?;
+        let pts2 = points_to_map2.get(node2)?;
+        // 1. Check if `node1` and `node2` points to the same Constant.
+        if point_to_same_constant(pts1, pts2) {
+            return Some(ApproximateAliasKind::Probably);
+        }
+        // 2. Check if `node1` and `node2` points to func parameters with the same local's type and projection.
+        if point_to_same_type_param(pts1, pts2, body1, body2) {
+            return Some(ApproximateAliasKind::Possibly);
+        }
+
+        // 3. Check if `node1` and `node2` point to upvars of closures and the upvars alias in the def func.
+        // 3.1 Get defsite upvars of `node1` then check if `node2` points to the upvar.
+        let mut defsite_upvars1 = None;
+        if self.tcx.is_closure_like(instance1.def_id()) {
+            let pts_paths = points_to_paths_to_param(node1.clone(), body1, &points_to_map1);
+            for pts_path in pts_paths {
+                let defsite_upvars = match self.closure_defsite_upvars(instance1, pts_path) {
+                    Some(defsite_upvars) => defsite_upvars,
+                    None => continue,
+                };
+                for (def_inst, upvar) in defsite_upvars.iter() {
+                    if def_inst.def_id() == instance2.def_id() {
                         let alias_kind = self
                             .new_intraproc_points_to(def_inst, node2, upvar)
                             .unwrap_or(ApproximateAliasKind::Unknown);
@@ -1466,6 +1555,88 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     #[allow(dead_code)]
     pub fn points_to_map(&self, def_id: DefId) -> Option<&PointsToMap<'tcx>> {
         self.pts.get(&def_id)
+    }
+
+    pub fn points_to(&mut self, pointer: AliasId, pointee: AliasId) -> ApproximateAliasKind {
+        let AliasId {
+            instance_id: id1,
+            local: local1,
+        } = pointer;
+        let AliasId {
+            instance_id: id2,
+            local: local2,
+        } = pointee;
+
+        let instance1 = self
+            .callgraph
+            .index_to_instance(id1)
+            .map(CallGraphNode::instance);
+        let instance2 = self
+            .callgraph
+            .index_to_instance(id2)
+            .map(CallGraphNode::instance);
+
+        match (instance1, instance2) {
+            (Some(instance1), Some(instance2)) => {
+                let node1 = ConstraintNode::Place(Place::from(local1).as_ref());
+                let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
+                if instance1.def_id() == instance2.def_id() {
+                    self.intra_points_to(instance1, node1, node2)
+                } else {
+                    self.inter_points_to(instance1, node1, instance2, node2)
+                }
+            }
+            _ => ApproximateAliasKind::Unknown,
+        }
+    }
+
+    pub fn intra_points_to(
+        &mut self,
+        instance: &Instance<'tcx>,
+        pointer: ConstraintNode<'tcx>,
+        pointee: ConstraintNode<'tcx>,
+    ) -> ApproximateAliasKind {
+        let body = self.tcx.instance_mir(instance.def);
+        let points_to_map = self.get_or_insert_pts(instance.def_id(), body).clone();
+        let mut final_alias_kind = ApproximateAliasKind::Unknown;
+        let set = match points_to_map.get(&pointer) {
+            Some(set) => set,
+            None => return ApproximateAliasKind::Unlikely,
+        };
+        for local_pointee in set {
+            let alias_kind = self
+                .intraproc_alias(instance, local_pointee, &pointee)
+                .unwrap_or(ApproximateAliasKind::Unknown);
+            if alias_kind > final_alias_kind {
+                final_alias_kind = alias_kind;
+            }
+        }
+        final_alias_kind
+    }
+
+    pub fn inter_points_to(
+        &mut self,
+        instance1: &Instance<'tcx>,
+        pointer: ConstraintNode<'tcx>,
+        instance2: &Instance<'tcx>,
+        pointee: ConstraintNode<'tcx>,
+    ) -> ApproximateAliasKind {
+        let body1 = self.tcx.instance_mir(instance1.def);
+        let points_to_map = self.get_or_insert_pts(instance1.def_id(), body1).clone();
+        let mut final_alias_kind = ApproximateAliasKind::Unknown;
+        let set = match points_to_map.get(&pointer) {
+            Some(set) => set,
+            None => return ApproximateAliasKind::Unlikely,
+        };
+        for local_pointee in set {
+            let alias_kind = self
+                .interproc_alias(instance1, local_pointee, instance2, &pointee)
+                .unwrap_or(ApproximateAliasKind::Unknown);
+            if alias_kind > final_alias_kind {
+                final_alias_kind = alias_kind;
+            }
+        }
+        final_alias_kind
     }
 }
 

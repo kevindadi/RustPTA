@@ -18,8 +18,7 @@ use regex::Regex;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        visit::Visitor, BasicBlock, BasicBlockData, Const, ConstValue, MirSource, Operand,
-        StatementKind, SwitchTargets, TerminatorKind,
+        visit::Visitor, BasicBlock, BasicBlockData, Const, Operand, SwitchTargets, TerminatorKind,
     },
     ty,
 };

@@ -129,6 +129,7 @@ impl CpnStateGraph {
         );
         let initial_node = self.graph.add_node(initial_state.clone());
         state_index_map.insert(initial_state.clone(), initial_node);
+        log::info!("Initial state: {:?}", initial_state);
 
         while let Some(current_mark) = queue.pop_front() {
             let enabled_transitions = self.get_enabled_transitions(&current_mark);
@@ -164,7 +165,7 @@ impl CpnStateGraph {
                         StateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 } else {
-                    // log::info!("New state: {:?}", new_state_node);
+                    log::info!("New state: {:?}", new_state_node);
                     queue.push_back(new_state.clone());
                     let new_node = self.graph.add_node(new_state_node.clone());
                     state_index_map.insert(new_state_node, new_node);

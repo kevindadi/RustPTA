@@ -73,7 +73,7 @@ pub struct ColorPetriNet<'analysis, 'tcx> {
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: DiGraph<ColorPetriNode, ColorPetriEdge>,
     callgraph: &'analysis CallGraph<'tcx>,
-    alias: RefCell<AliasAnalysis<'analysis, 'tcx>>,
+    pub alias: RefCell<AliasAnalysis<'analysis, 'tcx>>,
     function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     // 当前标识
     marking: HashMap<NodeIndex, usize>,

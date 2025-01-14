@@ -1,0 +1,510 @@
+// WARNING: This output format is intended for human consumers only
+// and is subject to change without notice. Knock yourself out.
+fn check_conditional_variables_notify_all() -> () {
+    let mut _0: ();
+    let _1: std::sync::Arc<(std::sync::Mutex<()>, std::sync::Condvar)>;
+    let mut _2: (std::sync::Mutex<()>, std::sync::Condvar);
+    let mut _3: std::sync::Mutex<()>;
+    let mut _4: std::sync::Condvar;
+    let mut _6: &std::sync::Arc<(std::sync::Mutex<()>, std::sync::Condvar)>;
+    let mut _8: {closure@main.rs:11:32: 11:39};
+    let _10: &(std::sync::Mutex<()>, std::sync::Condvar);
+    let mut _11: &std::sync::Arc<(std::sync::Mutex<()>, std::sync::Condvar)>;
+    let _12: ();
+    let _13: ();
+    let mut _14: std::result::Result<(), std::boxed::Box<dyn std::any::Any + std::marker::Send>>;
+    let mut _15: std::thread::JoinHandle<()>;
+    let mut _16: bool;
+    scope 1 {
+        debug pair => _1;
+        let _5: std::sync::Arc<(std::sync::Mutex<()>, std::sync::Condvar)>;
+        scope 2 {
+            debug pair2 => _5;
+            let _7: std::thread::JoinHandle<()>;
+            scope 3 {
+                debug handle => _7;
+                let _9: &std::sync::Condvar;
+                scope 4 {
+                    debug cvar => _9;
+                }
+            }
+        }
+    }
+
+    bb0: {
+        _16 = const false;
+        _3 = Mutex::<()>::new(const ()) -> [return: bb1, unwind continue];
+    }
+
+    bb1: {
+        _4 = Condvar::new() -> [return: bb2, unwind continue];
+    }
+
+    bb2: {
+        _2 = (move _3, move _4);
+        _1 = Arc::<(Mutex<()>, Condvar)>::new(move _2) -> [return: bb3, unwind continue];
+    }
+
+    bb3: {
+        _6 = &_1;
+        _5 = <Arc<(Mutex<()>, Condvar)> as Clone>::clone(move _6) -> [return: bb4, unwind: bb11];
+    }
+
+    bb4: {
+        _8 = {closure@main.rs:11:32: 11:39} { pair2: move _5 };
+        _7 = spawn::<{closure@main.rs:11:32: 11:39}, ()>(move _8) -> [return: bb5, unwind: bb11];
+    }
+
+    bb5: {
+        _16 = const true;
+        _11 = &_1;
+        _10 = <Arc<(Mutex<()>, Condvar)> as Deref>::deref(move _11) -> [return: bb6, unwind: bb14];
+    }
+
+    bb6: {
+        _9 = &((*_10).1: std::sync::Condvar);
+        _12 = Condvar::notify_all(copy _9) -> [return: bb7, unwind: bb14];
+    }
+
+    bb7: {
+        _16 = const false;
+        _15 = move _7;
+        _14 = JoinHandle::<()>::join(move _15) -> [return: bb8, unwind: bb14];
+    }
+
+    bb8: {
+        _13 = Result::<(), Box<dyn Any + Send>>::unwrap(move _14) -> [return: bb9, unwind: bb14];
+    }
+
+    bb9: {
+        _16 = const false;
+        drop(_1) -> [return: bb10, unwind continue];
+    }
+
+    bb10: {
+        return;
+    }
+
+    bb11 (cleanup): {
+        drop(_1) -> [return: bb12, unwind terminate(cleanup)];
+    }
+
+    bb12 (cleanup): {
+        resume;
+    }
+
+    bb13 (cleanup): {
+        drop(_7) -> [return: bb11, unwind terminate(cleanup)];
+    }
+
+    bb14 (cleanup): {
+        switchInt(copy _16) -> [0: bb11, otherwise: bb13];
+    }
+}
+
+fn check_conditional_variables_notify_all::{closure#0}(_1: {closure@main.rs:11:32: 11:39}) -> () {
+    debug pair2 => (_1.0: std::sync::Arc<(std::sync::Mutex<()>, std::sync::Condvar)>);
+    let mut _0: ();
+    let _2: &std::sync::Mutex<()>;
+    let _3: &std::sync::Condvar;
+    let _4: &(std::sync::Mutex<()>, std::sync::Condvar);
+    let mut _5: &std::sync::Arc<(std::sync::Mutex<()>, std::sync::Condvar)>;
+    let mut _7: std::result::Result<std::sync::MutexGuard<'_, ()>, std::sync::PoisonError<std::sync::MutexGuard<'_, ()>>>;
+    let mut _9: std::result::Result<std::sync::MutexGuard<'_, ()>, std::sync::PoisonError<std::sync::MutexGuard<'_, ()>>>;
+    scope 1 {
+        debug lock => _2;
+        debug cvar => _3;
+        let _6: std::sync::MutexGuard<'_, ()>;
+        scope 2 {
+            debug guard => _6;
+            let _8: std::sync::MutexGuard<'_, ()>;
+            scope 3 {
+                debug _guard => _8;
+            }
+        }
+    }
+
+    bb0: {
+        _5 = &(_1.0: std::sync::Arc<(std::sync::Mutex<()>, std::sync::Condvar)>);
+        _4 = <Arc<(Mutex<()>, Condvar)> as Deref>::deref(move _5) -> [return: bb1, unwind: bb8];
+    }
+
+    bb1: {
+        _2 = &((*_4).0: std::sync::Mutex<()>);
+        _3 = &((*_4).1: std::sync::Condvar);
+        _7 = Mutex::<()>::lock(copy _2) -> [return: bb2, unwind: bb8];
+    }
+
+    bb2: {
+        _6 = Result::<MutexGuard<'_, ()>, PoisonError<MutexGuard<'_, ()>>>::unwrap(move _7) -> [return: bb3, unwind: bb8];
+    }
+
+    bb3: {
+        _9 = Condvar::wait::<()>(copy _3, move _6) -> [return: bb4, unwind: bb8];
+    }
+
+    bb4: {
+        _8 = Result::<MutexGuard<'_, ()>, PoisonError<MutexGuard<'_, ()>>>::unwrap(move _9) -> [return: bb5, unwind: bb8];
+    }
+
+    bb5: {
+        drop(_8) -> [return: bb6, unwind: bb8];
+    }
+
+    bb6: {
+        drop(_1) -> [return: bb7, unwind continue];
+    }
+
+    bb7: {
+        return;
+    }
+
+    bb8 (cleanup): {
+        drop(_1) -> [return: bb9, unwind terminate(cleanup)];
+    }
+
+    bb9 (cleanup): {
+        resume;
+    }
+}
+
+fn check_rwlock_unlock_bug1() -> () {
+    let mut _0: ();
+    let _1: std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _2: std::sync::RwLock<i32>;
+    let mut _4: std::result::Result<std::sync::RwLockReadGuard<'_, i32>, std::sync::PoisonError<std::sync::RwLockReadGuard<'_, i32>>>;
+    let _5: &std::sync::RwLock<i32>;
+    let mut _6: &std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _8: std::result::Result<std::sync::RwLockReadGuard<'_, i32>, std::sync::PoisonError<std::sync::RwLockReadGuard<'_, i32>>>;
+    let _9: &std::sync::RwLock<i32>;
+    let mut _10: &std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _12: &std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _14: {closure@main.rs:31:27: 31:34};
+    let _15: ();
+    let mut _16: std::result::Result<(), std::boxed::Box<dyn std::any::Any + std::marker::Send>>;
+    scope 1 {
+        debug l => _1;
+        let _3: std::sync::RwLockReadGuard<'_, i32>;
+        scope 2 {
+            debug r1 => _3;
+            let _7: std::sync::RwLockReadGuard<'_, i32>;
+            scope 3 {
+                debug r2 => _7;
+                let _11: std::sync::Arc<std::sync::RwLock<i32>>;
+                scope 4 {
+                    debug l2 => _11;
+                    let _13: std::thread::JoinHandle<()>;
+                    scope 5 {
+                        debug t => _13;
+                    }
+                }
+            }
+        }
+    }
+
+    bb0: {
+        _2 = RwLock::<i32>::new(const 0_i32) -> [return: bb1, unwind continue];
+    }
+
+    bb1: {
+        _1 = Arc::<RwLock<i32>>::new(move _2) -> [return: bb2, unwind continue];
+    }
+
+    bb2: {
+        _6 = &_1;
+        _5 = <Arc<RwLock<i32>> as Deref>::deref(move _6) -> [return: bb3, unwind: bb18];
+    }
+
+    bb3: {
+        _4 = RwLock::<i32>::read(copy _5) -> [return: bb4, unwind: bb18];
+    }
+
+    bb4: {
+        _3 = Result::<RwLockReadGuard<'_, i32>, PoisonError<RwLockReadGuard<'_, i32>>>::unwrap(move _4) -> [return: bb5, unwind: bb18];
+    }
+
+    bb5: {
+        _10 = &_1;
+        _9 = <Arc<RwLock<i32>> as Deref>::deref(move _10) -> [return: bb6, unwind: bb17];
+    }
+
+    bb6: {
+        _8 = RwLock::<i32>::read(copy _9) -> [return: bb7, unwind: bb17];
+    }
+
+    bb7: {
+        _7 = Result::<RwLockReadGuard<'_, i32>, PoisonError<RwLockReadGuard<'_, i32>>>::unwrap(move _8) -> [return: bb8, unwind: bb17];
+    }
+
+    bb8: {
+        _12 = &_1;
+        _11 = <Arc<RwLock<i32>> as Clone>::clone(move _12) -> [return: bb9, unwind: bb16];
+    }
+
+    bb9: {
+        _14 = {closure@main.rs:31:27: 31:34} { l2: move _11 };
+        _13 = spawn::<{closure@main.rs:31:27: 31:34}, ()>(move _14) -> [return: bb10, unwind: bb16];
+    }
+
+    bb10: {
+        _16 = JoinHandle::<()>::join(move _13) -> [return: bb11, unwind: bb16];
+    }
+
+    bb11: {
+        _15 = Result::<(), Box<dyn Any + Send>>::unwrap(move _16) -> [return: bb12, unwind: bb16];
+    }
+
+    bb12: {
+        drop(_7) -> [return: bb13, unwind: bb17];
+    }
+
+    bb13: {
+        drop(_3) -> [return: bb14, unwind: bb18];
+    }
+
+    bb14: {
+        drop(_1) -> [return: bb15, unwind continue];
+    }
+
+    bb15: {
+        return;
+    }
+
+    bb16 (cleanup): {
+        drop(_7) -> [return: bb17, unwind terminate(cleanup)];
+    }
+
+    bb17 (cleanup): {
+        drop(_3) -> [return: bb18, unwind terminate(cleanup)];
+    }
+
+    bb18 (cleanup): {
+        drop(_1) -> [return: bb19, unwind terminate(cleanup)];
+    }
+
+    bb19 (cleanup): {
+        resume;
+    }
+}
+
+fn check_rwlock_unlock_bug1::{closure#0}(_1: {closure@main.rs:31:27: 31:34}) -> () {
+    debug l2 => (_1.0: std::sync::Arc<std::sync::RwLock<i32>>);
+    let mut _0: ();
+    let mut _2: std::sync::RwLockWriteGuard<'_, i32>;
+    let mut _3: std::result::Result<std::sync::RwLockWriteGuard<'_, i32>, std::sync::PoisonError<std::sync::RwLockWriteGuard<'_, i32>>>;
+    let _4: &std::sync::RwLock<i32>;
+    let mut _5: &std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _6: &mut i32;
+    let mut _7: &mut std::sync::RwLockWriteGuard<'_, i32>;
+    let mut _8: (i32, bool);
+    scope 1 {
+        debug w => _2;
+    }
+
+    bb0: {
+        _5 = &(_1.0: std::sync::Arc<std::sync::RwLock<i32>>);
+        _4 = <Arc<RwLock<i32>> as Deref>::deref(move _5) -> [return: bb1, unwind: bb9];
+    }
+
+    bb1: {
+        _3 = RwLock::<i32>::write(copy _4) -> [return: bb2, unwind: bb9];
+    }
+
+    bb2: {
+        _2 = Result::<RwLockWriteGuard<'_, i32>, PoisonError<RwLockWriteGuard<'_, i32>>>::unwrap(move _3) -> [return: bb3, unwind: bb9];
+    }
+
+    bb3: {
+        _7 = &mut _2;
+        _6 = <RwLockWriteGuard<'_, i32> as DerefMut>::deref_mut(move _7) -> [return: bb4, unwind: bb8];
+    }
+
+    bb4: {
+        _8 = AddWithOverflow(copy (*_6), const 1_i32);
+        assert(!move (_8.1: bool), "attempt to compute `{} + {}`, which would overflow", copy (*_6), const 1_i32) -> [success: bb5, unwind: bb8];
+    }
+
+    bb5: {
+        (*_6) = move (_8.0: i32);
+        drop(_2) -> [return: bb6, unwind: bb9];
+    }
+
+    bb6: {
+        drop(_1) -> [return: bb7, unwind continue];
+    }
+
+    bb7: {
+        return;
+    }
+
+    bb8 (cleanup): {
+        drop(_2) -> [return: bb9, unwind terminate(cleanup)];
+    }
+
+    bb9 (cleanup): {
+        drop(_1) -> [return: bb10, unwind terminate(cleanup)];
+    }
+
+    bb10 (cleanup): {
+        resume;
+    }
+}
+
+fn check_rwlock_unlock_bug2() -> () {
+    let mut _0: ();
+    let _1: std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _2: std::sync::RwLock<i32>;
+    let mut _4: std::result::Result<std::sync::RwLockReadGuard<'_, i32>, std::sync::PoisonError<std::sync::RwLockReadGuard<'_, i32>>>;
+    let _5: &std::sync::RwLock<i32>;
+    let mut _6: &std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _8: &std::sync::Arc<std::sync::RwLock<i32>>;
+    let mut _10: {closure@main.rs:48:27: 48:34};
+    let _11: ();
+    let mut _12: std::result::Result<(), std::boxed::Box<dyn std::any::Any + std::marker::Send>>;
+    scope 1 {
+        debug l => _1;
+        let _3: std::sync::RwLockReadGuard<'_, i32>;
+        scope 2 {
+            debug r => _3;
+            let _7: std::sync::Arc<std::sync::RwLock<i32>>;
+            scope 3 {
+                debug l2 => _7;
+                let _9: std::thread::JoinHandle<()>;
+                scope 4 {
+                    debug h => _9;
+                }
+            }
+        }
+    }
+
+    bb0: {
+        _2 = RwLock::<i32>::new(const 0_i32) -> [return: bb1, unwind continue];
+    }
+
+    bb1: {
+        _1 = Arc::<RwLock<i32>>::new(move _2) -> [return: bb2, unwind continue];
+    }
+
+    bb2: {
+        _6 = &_1;
+        _5 = <Arc<RwLock<i32>> as Deref>::deref(move _6) -> [return: bb3, unwind: bb13];
+    }
+
+    bb3: {
+        _4 = RwLock::<i32>::read(copy _5) -> [return: bb4, unwind: bb13];
+    }
+
+    bb4: {
+        _3 = Result::<RwLockReadGuard<'_, i32>, PoisonError<RwLockReadGuard<'_, i32>>>::unwrap(move _4) -> [return: bb5, unwind: bb13];
+    }
+
+    bb5: {
+        _8 = &_1;
+        _7 = <Arc<RwLock<i32>> as Clone>::clone(move _8) -> [return: bb6, unwind: bb12];
+    }
+
+    bb6: {
+        _10 = {closure@main.rs:48:27: 48:34} { l2: move _7 };
+        _9 = spawn::<{closure@main.rs:48:27: 48:34}, ()>(move _10) -> [return: bb7, unwind: bb12];
+    }
+
+    bb7: {
+        _12 = JoinHandle::<()>::join(move _9) -> [return: bb8, unwind: bb12];
+    }
+
+    bb8: {
+        _11 = Result::<(), Box<dyn Any + Send>>::unwrap(move _12) -> [return: bb9, unwind: bb12];
+    }
+
+    bb9: {
+        drop(_3) -> [return: bb10, unwind: bb13];
+    }
+
+    bb10: {
+        drop(_1) -> [return: bb11, unwind continue];
+    }
+
+    bb11: {
+        return;
+    }
+
+    bb12 (cleanup): {
+        drop(_3) -> [return: bb13, unwind terminate(cleanup)];
+    }
+
+    bb13 (cleanup): {
+        drop(_1) -> [return: bb14, unwind terminate(cleanup)];
+    }
+
+    bb14 (cleanup): {
+        resume;
+    }
+}
+
+fn check_rwlock_unlock_bug2::{closure#0}(_1: {closure@main.rs:48:27: 48:34}) -> () {
+    debug l2 => (_1.0: std::sync::Arc<std::sync::RwLock<i32>>);
+    let mut _0: ();
+    let _2: std::sync::RwLockWriteGuard<'_, i32>;
+    let mut _3: std::result::Result<std::sync::RwLockWriteGuard<'_, i32>, std::sync::PoisonError<std::sync::RwLockWriteGuard<'_, i32>>>;
+    let _4: &std::sync::RwLock<i32>;
+    let mut _5: &std::sync::Arc<std::sync::RwLock<i32>>;
+    scope 1 {
+        debug _w => _2;
+    }
+
+    bb0: {
+        _5 = &(_1.0: std::sync::Arc<std::sync::RwLock<i32>>);
+        _4 = <Arc<RwLock<i32>> as Deref>::deref(move _5) -> [return: bb1, unwind: bb6];
+    }
+
+    bb1: {
+        _3 = RwLock::<i32>::write(copy _4) -> [return: bb2, unwind: bb6];
+    }
+
+    bb2: {
+        _2 = Result::<RwLockWriteGuard<'_, i32>, PoisonError<RwLockWriteGuard<'_, i32>>>::unwrap(move _3) -> [return: bb3, unwind: bb6];
+    }
+
+    bb3: {
+        drop(_2) -> [return: bb4, unwind: bb6];
+    }
+
+    bb4: {
+        drop(_1) -> [return: bb5, unwind continue];
+    }
+
+    bb5: {
+        return;
+    }
+
+    bb6 (cleanup): {
+        drop(_1) -> [return: bb7, unwind terminate(cleanup)];
+    }
+
+    bb7 (cleanup): {
+        resume;
+    }
+}
+
+fn main() -> () {
+    let mut _0: ();
+    let _1: ();
+    let _2: ();
+    let _3: ();
+
+    bb0: {
+        _1 = check_conditional_variables_notify_all() -> [return: bb1, unwind continue];
+    }
+
+    bb1: {
+        _2 = check_rwlock_unlock_bug1() -> [return: bb2, unwind continue];
+    }
+
+    bb2: {
+        _3 = check_rwlock_unlock_bug2() -> [return: bb3, unwind continue];
+    }
+
+    bb3: {
+        return;
+    }
+}

@@ -13,7 +13,6 @@ use crate::graph::cpn::ColorPetriNet;
 use crate::graph::cpn_state_graph::CpnStateGraph;
 use crate::graph::pn::PetriNet;
 use crate::graph::state_graph::StateGraph;
-use crate::graph::unfolding_net::UnfoldingNet;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::{AnalysisTool, Options, OwnCrateType};
 use crate::utils::{format_name, parse_api_spec, ApiSpec};
@@ -196,7 +195,7 @@ impl PTACallbacks {
                     ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data, false);
                 cpn.construct();
                 cpn.cpn_to_dot("cpn.dot").unwrap();
-
+                log::info!("generate states reachable graph ");
                 let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
                 state_graph.generate_states();
                 state_graph.race_info.iter().for_each(|race_info| {
@@ -211,6 +210,9 @@ impl PTACallbacks {
                         .unwrap()
                     )
                 });
+                if self.options.dump_options.dump_points_to {
+                    cpn.alias.borrow_mut().print_all_points_to_relations();
+                }
             }
             DetectorKind::AtomicityViolation => {
                 // 收集atomic变量和操作信息

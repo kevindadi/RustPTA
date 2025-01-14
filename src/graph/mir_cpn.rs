@@ -313,7 +313,7 @@ impl<'cpn, 'translate, 'tcx> BodyToColorPetriNet<'cpn, 'translate, 'tcx> {
             match self
                 .alias
                 .borrow_mut()
-                .alias(place_id.into(), *unsafe_place)
+                .alias_atomic(place_id.into(), *unsafe_place)
             {
                 ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                     let unsafe_place_node = self.unsafe_places.get(unsafe_place).unwrap();
