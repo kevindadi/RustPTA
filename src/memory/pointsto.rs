@@ -740,10 +740,18 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             let func_ty = func.ty(self.body, self.tcx);
             if let TyKind::FnDef(def_id, _) | TyKind::Closure(def_id, _) = func_ty.kind() {
                 // 如果是spawn不执行assign
-                if self.tcx.def_path_str(def_id).contains("::spawn") {
+                if self.tcx.def_path_str(def_id).contains("thread::spawn") {
                     return;
                 }
+
+                // if self.tcx.def_path_str(def_id).contains("rayon::join") {
+                //     for arg in args {
+                //         self.process_call_arg_dest(arg.as_ref(), destination.as_ref());
+                //     }
+                //     return;
+                // }
             }
+
             match (
                 args.iter()
                     .map(|x| x.node.clone())
@@ -783,6 +791,7 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                         }
                     }
                 }
+
                 _ => {}
             }
         }
@@ -972,11 +981,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                             .map(|pointee| match pointee {
                                 ConstraintNode::Alloc(p) => format!("Alloc({:?})", p),
                                 ConstraintNode::Place(p) => {
-                                    if p.projection.is_empty() {
-                                        format!("_{}", p.local.as_u32())
-                                    } else {
-                                        format!("_{}{:?}", p.local.as_u32(), p.projection)
-                                    }
+                                    format!("_{:?}", p)
                                 }
                                 ConstraintNode::Constant(c) => format!("Const({:?})", c),
                                 ConstraintNode::ConstantDeref(c) => format!("ConstDeref({:?})", c),
@@ -1167,16 +1172,41 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     ) -> Option<ApproximateAliasKind> {
         let body = self.tcx.instance_mir(instance.def);
         let points_to_map = self.get_or_insert_pts(instance.def_id(), body);
-        if points_to_map
-            .get(node1)?
-            .intersection(points_to_map.get(node2)?)
-            .next()
-            .is_some()
-        {
-            Some(ApproximateAliasKind::Probably)
-        } else {
-            Some(ApproximateAliasKind::Unlikely)
+
+        // if points_to_map
+        //     .get(node1)?
+        //     .intersection(points_to_map.get(node2).unwrap())
+        //     .next()
+        //     .is_some()
+        // {
+        //     Some(ApproximateAliasKind::Probably)
+        // } else {
+        //     Some(ApproximateAliasKind::Unlikely)
+        // }
+
+        let pts1 = points_to_map.get(node1)?;
+        let pts2 = points_to_map.get(node2)?;
+
+        fn get_place_ref<'tcx>(node: &ConstraintNode<'tcx>) -> Option<PlaceRef<'tcx>> {
+            match node {
+                ConstraintNode::Place(place) => Some(*place),
+                ConstraintNode::Alloc(place) => Some(*place),
+                _ => None,
+            }
         }
+
+        for n1 in pts1 {
+            for n2 in pts2 {
+                match (get_place_ref(n1), get_place_ref(n2)) {
+                    (Some(p1), Some(p2)) if p1 == p2 => {
+                        return Some(ApproximateAliasKind::Probably);
+                    }
+                    _ => continue,
+                }
+            }
+        }
+
+        Some(ApproximateAliasKind::Unlikely)
     }
 
     /// Check if `pointer` points-to `pointee` in the same function.
@@ -1598,6 +1628,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     ) -> ApproximateAliasKind {
         let body = self.tcx.instance_mir(instance.def);
         let points_to_map = self.get_or_insert_pts(instance.def_id(), body).clone();
+
         let mut final_alias_kind = ApproximateAliasKind::Unknown;
         let set = match points_to_map.get(&pointer) {
             Some(set) => set,
@@ -1623,6 +1654,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     ) -> ApproximateAliasKind {
         let body1 = self.tcx.instance_mir(instance1.def);
         let points_to_map = self.get_or_insert_pts(instance1.def_id(), body1).clone();
+
         let mut final_alias_kind = ApproximateAliasKind::Unknown;
         let set = match points_to_map.get(&pointer) {
             Some(set) => set,

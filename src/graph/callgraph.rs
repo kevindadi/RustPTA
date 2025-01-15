@@ -29,6 +29,7 @@ pub enum CallSiteLocation {
         location: Location,
         destination: Local, // spawn 返回的 JoinHandle 存储位置
     },
+    RayonJoin,
 }
 
 impl CallSiteLocation {
@@ -288,7 +289,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
 
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
                 let fn_path = self.tcx.def_path_str(def_id);
-                if fn_path.contains("::spawn") {
+                if fn_path.contains("thread::spawn") {
                     // 获取第一个参数（闭包）
                     if let Some(closure_arg) = args.first() {
                         let closure_ty = match closure_arg.node {
@@ -318,6 +319,30 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                             }
                         }
                     }
+                }
+
+                if fn_path.contains("rayon_core::join") {
+                    for arg in args {
+                        if let Operand::Move(place) | Operand::Copy(place) = arg.node {
+                            let place_ty = place.ty(self.body, self.tcx).ty;
+                            if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                                place_ty.kind()
+                            {
+                                if let Some(callee) = Instance::try_resolve(
+                                    self.tcx,
+                                    typing_env,
+                                    *closure_def_id,
+                                    substs,
+                                )
+                                .ok()
+                                .flatten()
+                                {
+                                    self.callsites.push((callee, CallSiteLocation::RayonJoin));
+                                }
+                            }
+                        }
+                    }
+                    return;
                 }
 
                 // 处理普通函数调用

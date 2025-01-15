@@ -49,6 +49,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     bb_node_start_end: HashMap<BasicBlock, NodeIndex>,          // 基本块起始节点映射
     bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,           // 基本块节点列表
     condvar_id: &'translate HashMap<CondVarId, NodeIndex>,      // 条件变量ID映射
+    thread_join_re: Regex,
     atomic_load_re: Regex,
     atomic_store_re: Regex,
     atomic_places: &'translate HashMap<AliasId, NodeIndex>,
@@ -92,6 +93,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             // thread_id_handler,
             // handler_id,
             condvar_id,
+            thread_join_re: Regex::new(r"std::thread[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
             atomic_load_re: Regex::new(r"atomic[:a-zA-Z0-9]*::load").unwrap(),
             atomic_store_re: Regex::new(r"atomic[:a-zA-Z0-9]*::store").unwrap(),
             atomic_places,
@@ -347,15 +349,73 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
         bb_end: NodeIndex,
+        bb_idx: &BasicBlock,
+        span: &str,
     ) -> bool {
+        log::debug!("handle_thread_call: {:?}", callee_func_name);
         if callee_func_name.contains("thread::spawn") {
             self.handle_spawn(callee_func_name, args, target, bb_end);
             true
-        } else if callee_func_name.contains("::join") {
+        } else if self.thread_join_re.is_match(callee_func_name) {
             self.handle_join(callee_func_name, args, target, bb_end);
+            true
+        } else if callee_func_name.contains("rayon_core::join") {
+            self.handle_rayon_join(callee_func_name, bb_idx, args, target, bb_end, span);
             true
         } else {
             false
+        }
+    }
+
+    fn handle_rayon_join(
+        &mut self,
+        callee_func_name: &str,
+        bb_idx: &BasicBlock,
+        args: &Box<[Spanned<Operand<'tcx>>]>,
+        target: &Option<BasicBlock>,
+        bb_end: NodeIndex,
+        span: &str,
+    ) {
+        log::info!("handle_rayon_join: {:?}", callee_func_name);
+        let bb_wait_name = format!("{}_{}_{}", callee_func_name, bb_idx.index(), "wait_closure");
+        let bb_wait_place =
+            Place::new_with_span(bb_wait_name, 0, PlaceType::BasicBlock, span.to_string());
+        let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
+
+        let bb_join_name = format!("{}_{}_{}", callee_func_name, bb_idx.index(), "join");
+        let bb_join_transition = Transition::new(
+            bb_join_name,
+            ControlType::Call(CallType::Join(callee_func_name.to_string())),
+        );
+        let bb_join = self.net.add_node(PetriNetNode::T(bb_join_transition));
+
+        self.net
+            .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1usize });
+        self.net
+            .add_edge(bb_wait, bb_join, PetriNetEdge { label: 1usize });
+
+        self.connect_to_target(bb_join, target);
+        // eg. _7 = rayon::join::<{closure@src/main.rs:12:9: 12:11}, {closure@src/main.rs:17:9: 17:11}, (), ()>(move _8, move _10)
+        // 遍历参数找到对应的闭包
+        for arg in args {
+            if let Operand::Move(place) | Operand::Copy(place) = &arg.node {
+                let place_ty = place.ty(self.body, self.tcx).ty;
+                if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                    place_ty.kind()
+                {
+                    self.net.add_edge(
+                        bb_end,
+                        self.function_counter.get(&closure_def_id).unwrap().0,
+                        PetriNetEdge { label: 1usize },
+                    );
+
+                    self.net.add_edge(
+                        self.function_counter.get(&closure_def_id).unwrap().1,
+                        bb_join,
+                        PetriNetEdge { label: 1usize },
+                    );
+                }
+            }
         }
     }
 
@@ -548,93 +608,83 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             // TODO: construct 网过程中不支持std,导致一些隐式调用无法连接到对应闭包,这里是一个例子
             // eg. _7 = <std::ops::Range<i32> as Iterator>::next(copy _17) -> [return: bb5, unwind: bb26];
             // let mut _17: &mut std::iter::Map<std::ops::Range<usize>, {closure@src/main.rs:4:30: 4:34}>;
+
+            // Rayon example
+            // _12 = {closure@src/main.rs:16:38: 16:41} { lock_clone: move _13 };
+            // _9 = <rayon::range::Iter<i32> as rayon::iter::ParallelIterator>::for_each::<{closure@src/main.rs:16:38: 16:41}>(move _10, move _12) -> [return: bb8, unwind: bb12];
             let name = self.tcx.def_path_str(callee_id);
-            if name.contains("Iterator::next") {
-                log::info!("Found iterator next() call in {:?}", span);
-                // 从迭代器类型中提取闭包信息
-                for arg in args {
-                    if let Operand::Copy(place) = &arg.node {
-                        let place_ty = place.ty(self.body, self.tcx).ty;
-                        match place_ty.kind() {
-                            ty::Ref(_, inner_ty, _) => match inner_ty.kind() {
-                                ty::Adt(adt_def, args) => {
-                                    if let Some(closure_def_id) =
-                                        adt_def.all_fields().find_map(|field| {
-                                            if let ty::Closure(closure_def_id, _)
-                                            | ty::FnDef(closure_def_id, _) =
-                                                field.ty(self.tcx, args).kind()
-                                            {
-                                                Some(closure_def_id)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                    {
-                                        if let Some((callee_start, callee_end)) =
-                                            self.function_counter.get(&closure_def_id)
-                                        {
-                                            let bb_wait_name =
-                                                format!("{}_{}_{}", name, bb_idx.index(), "wait");
-                                            let bb_wait_place = Place::new_with_span(
-                                                bb_wait_name,
-                                                0,
-                                                PlaceType::BasicBlock,
-                                                span.to_string(),
-                                            );
-                                            let bb_wait =
-                                                self.net.add_node(PetriNetNode::P(bb_wait_place));
 
-                                            let bb_ret_name =
-                                                format!("{}_{}_{}", name, bb_idx.index(), "return");
-                                            let bb_ret_transition = Transition::new(
-                                                bb_ret_name,
-                                                ControlType::Call(CallType::Function),
-                                            );
-                                            let bb_ret = self
-                                                .net
-                                                .add_node(PetriNetNode::T(bb_ret_transition));
+            for arg in args {
+                if let Operand::Copy(place) | Operand::Move(place) = &arg.node {
+                    let place_ty = place.ty(self.body, self.tcx).ty;
+                    match place_ty.kind() {
+                        ty::FnDef(closure_def_id, _) | ty::Closure(closure_def_id, _) => {
+                            if let Some((callee_start, callee_end)) =
+                                self.function_counter.get(&closure_def_id)
+                            {
+                                let bb_wait_name =
+                                    format!("{}_{}_{}", name, bb_idx.index(), "wait");
+                                let bb_wait_place = Place::new_with_span(
+                                    bb_wait_name,
+                                    0,
+                                    PlaceType::BasicBlock,
+                                    span.to_string(),
+                                );
+                                let bb_wait = self.net.add_node(PetriNetNode::P(bb_wait_place));
 
-                                            self.net.add_edge(
-                                                bb_end,
-                                                bb_wait,
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                            self.net.add_edge(
-                                                bb_wait,
-                                                bb_ret,
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                            self.net.add_edge(
-                                                bb_end,
-                                                *callee_start,
-                                                PetriNetEdge { label: 1usize },
-                                            );
-                                            match target {
-                                                Some(return_block) => {
-                                                    self.net.add_edge(
-                                                        *callee_end,
-                                                        bb_ret,
-                                                        PetriNetEdge { label: 1usize },
-                                                    );
-                                                    self.net.add_edge(
-                                                        bb_ret,
-                                                        *self
-                                                            .bb_node_start_end
-                                                            .get(return_block)
-                                                            .unwrap(),
-                                                        PetriNetEdge { label: 1usize },
-                                                    );
-                                                }
-                                                _ => {}
-                                            }
-                                            return;
-                                        }
+                                let bb_ret_name =
+                                    format!("{}_{}_{}", name, bb_idx.index(), "return");
+                                let bb_ret_transition = Transition::new(
+                                    bb_ret_name,
+                                    ControlType::Call(CallType::Function),
+                                );
+                                let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
+
+                                self.net
+                                    .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1usize });
+                                self.net
+                                    .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1usize });
+                                self.net.add_edge(
+                                    bb_end,
+                                    *callee_start,
+                                    PetriNetEdge { label: 1usize },
+                                );
+                                match target {
+                                    Some(return_block) => {
+                                        self.net.add_edge(
+                                            *callee_end,
+                                            bb_ret,
+                                            PetriNetEdge { label: 1usize },
+                                        );
+                                        self.net.add_edge(
+                                            bb_ret,
+                                            *self.bb_node_start_end.get(return_block).unwrap(),
+                                            PetriNetEdge { label: 1usize },
+                                        );
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
-                            },
-                            _ => {}
+                                return;
+                            }
                         }
+                        // ty::Ref(_, inner_ty, _) => match inner_ty.kind() {
+                        //     ty::Adt(adt_def, args) => {
+                        //         if let Some(closure_def_id) =
+                        //             adt_def.all_fields().find_map(|field| {
+                        //                 if let ty::Closure(closure_def_id, _)
+                        //                 | ty::FnDef(closure_def_id, _) =
+                        //                     field.ty(self.tcx, args).kind()
+                        //                 {
+                        //                     Some(closure_def_id)
+                        //                 } else {
+                        //                     None
+                        //                 }
+                        //             })
+                        //         {}
+                        //     }
+                        //     _ => {}
+                        // },
+                        _ => {}
                     }
                 }
             }
@@ -1074,7 +1124,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
 
         // 2. 处理线程相关调用
-        if self.handle_thread_call(&callee_func_name, args, target, bb_end) {
+        if self.handle_thread_call(&callee_func_name, args, target, bb_end, &bb_idx, span) {
             log::debug!("callee_func_name with thread: {:?}", callee_func_name);
             return;
         }
