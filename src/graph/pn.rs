@@ -591,7 +591,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
         let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect::<Vec<LockGuardId>>();
-        debug!("{:?}", lockid_vec);
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
                 match self
@@ -602,8 +601,19 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
                         adj_list.entry(i).or_insert_with(Vec::new).push(j);
                         adj_list.entry(j).or_insert_with(Vec::new).push(i);
+                        log::debug!(
+                            "lockid_vec[i]: {:?} and lockid_vec[j]: {:?} alias probably",
+                            lockid_vec[i],
+                            lockid_vec[j]
+                        );
                     }
-                    _ => {}
+                    _ => {
+                        log::debug!(
+                            "lockid_vec[i]: {:?} and lockid_vec[j]: {:?} alias unknown",
+                            lockid_vec[i],
+                            lockid_vec[j]
+                        );
+                    }
                 }
             }
         }

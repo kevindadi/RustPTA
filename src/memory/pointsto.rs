@@ -125,7 +125,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                 }
             }
         }
-        log::info!("field_parent_map: {:?}", field_parent_map);
+
         for (field_node, parent_node) in field_parent_map {
             if let Some(parent_pts) = self.pts.get(&parent_node) {
                 updated_pts
@@ -134,7 +134,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                     .extend(parent_pts.iter().cloned());
             }
         }
-        log::info!("updated_pts: {:?}", updated_pts);
+
         self.propagated_pts = updated_pts;
     }
 
@@ -765,7 +765,7 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                         if ownership::is_arc_or_rc_clone(*def_id, substs, self.tcx)
                             || ownership::is_ptr_read(*def_id, self.tcx)
                         {
-                            //log::info!("alias copy {:?} {:?}", arg, dest);
+                            // log::info!("alias copy {:?} {:?}", arg, dest);
                             return self.process_alias_copy(arg.as_ref(), dest.as_ref());
                         }
                     }
@@ -1037,6 +1037,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             (Some(instance1), Some(instance2)) => {
                 let node1 = ConstraintNode::Place(Place::from(local1).as_ref());
                 let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
+
                 if instance1.def_id() == instance2.def_id() {
                     if local1 == local2 {
                         return ApproximateAliasKind::Probably;
@@ -1611,11 +1612,25 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         pointer: ConstraintNode<'tcx>,
         pointee: ConstraintNode<'tcx>,
     ) -> ApproximateAliasKind {
+        fn get_parent_node<'tcx>(node: &ConstraintNode<'tcx>) -> Option<ConstraintNode<'tcx>> {
+            match node {
+                ConstraintNode::Place(place) | ConstraintNode::Alloc(place) => {
+                    if !place.projection.is_empty() {
+                        Some(ConstraintNode::Place(PlaceRef {
+                            local: place.local,
+                            projection: &[], // 空 projection 表示父节点
+                        }))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+
         let body = self.tcx.instance_mir(instance.def);
-        let points_to_map = self
-            .get_or_insert_propagated_pts(instance.def_id(), body)
-            .clone();
-        // let points_to_map = self.get_or_insert_pts(instance.def_id(), body).clone();
+        let points_to_map = self.get_or_insert_pts(instance.def_id(), body).clone();
+        // let points_to_map = self.get_or_insert_propagated_pts(instance.def_id(), body).clone();
         let mut final_alias_kind = ApproximateAliasKind::Unknown;
         let set = match points_to_map.get(&pointer) {
             Some(set) => set,
@@ -1625,10 +1640,31 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             let alias_kind = self
                 .intraproc_alias(instance, local_pointee, &pointee)
                 .unwrap_or(ApproximateAliasKind::Unknown);
+
             if alias_kind > final_alias_kind {
                 final_alias_kind = alias_kind;
             }
+
+            if let Some(parent_pointer) = get_parent_node(&local_pointee) {
+                // 匹配Wrap Condvar的Arc指向关系
+                log::debug!(
+                    "child pointer: {:?} and parent pointer: {:?}",
+                    local_pointee,
+                    parent_pointer
+                );
+                if let Some(set) = points_to_map.get(&parent_pointer) {
+                    for local_pointee in set {
+                        let alias_kind = self
+                            .intraproc_alias(instance, local_pointee, &pointee)
+                            .unwrap_or(ApproximateAliasKind::Unknown);
+                        if alias_kind > final_alias_kind {
+                            final_alias_kind = alias_kind;
+                        }
+                    }
+                }
+            }
         }
+
         final_alias_kind
     }
 
