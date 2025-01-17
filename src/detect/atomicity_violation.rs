@@ -107,26 +107,27 @@ impl<'a> AtomicityViolationDetector<'a> {
             let stores = stores.clone();
             let graph = Arc::clone(graph);
             let initial_net = Arc::clone(initial_net);
-
-            let handle = thread::spawn(move || {
-                let graph = graph.read().unwrap();
-                for state in graph.node_indices() {
-                    for edge in graph.edges_directed(state, Direction::Outgoing) {
-                        if edge.weight().transition == load_trans {
-                            if let Some(violation) = Self::check_state_for_violation(
-                                &graph,
-                                &initial_net.read().unwrap(),
-                                state,
-                                &load_op,
-                                &stores,
-                            ) {
-                                all_violations.lock().unwrap().push(violation);
+            unsafe {
+                let handle = thread::spawn(move || {
+                    let graph = graph.read().unwrap();
+                    for state in graph.node_indices() {
+                        for edge in graph.edges_directed(state, Direction::Outgoing) {
+                            if edge.weight().transition == load_trans {
+                                if let Some(violation) = Self::check_state_for_violation(
+                                    &graph,
+                                    &initial_net.read().unwrap(),
+                                    state,
+                                    &load_op,
+                                    &stores,
+                                ) {
+                                    all_violations.lock().unwrap().push(violation);
+                                }
                             }
                         }
                     }
-                }
-            });
-            handles.push(handle);
+                });
+                handles.push(handle);
+            }
         }
 
         for handle in handles {
@@ -137,7 +138,7 @@ impl<'a> AtomicityViolationDetector<'a> {
             .unwrap()
             .into_inner()
             .unwrap();
-        let mut pattern_map: HashMap<ViolationPattern, Vec<Vec<(usize, usize)>>> = HashMap::new();
+        let mut pattern_map: HashMap<ViolationPattern, Vec<Vec<(usize, u8)>>> = HashMap::new();
 
         for violation in violations {
             let pattern = ViolationPattern {

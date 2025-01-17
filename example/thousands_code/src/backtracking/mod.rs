@@ -1,0 +1,21 @@
+pub mod all_combination_of_size_k;
+pub mod graph_coloring;
+pub mod hamiltonian_cycle;
+pub mod knight_tour;
+pub mod n_queens;
+pub mod parentheses_generator;
+pub mod permutations;
+pub mod rat_in_maze;
+pub mod subset_sum;
+pub mod sudoku;
+
+pub use all_combination_of_size_k::generate_all_combinations;
+pub use graph_coloring::generate_colorings;
+pub use hamiltonian_cycle::find_hamiltonian_cycle;
+pub use knight_tour::find_knight_tour;
+pub use n_queens::n_queens_solver;
+pub use parentheses_generator::generate_parentheses;
+pub use permutations::permute;
+pub use rat_in_maze::find_path_in_maze;
+pub use subset_sum::has_subset_with_sum;
+pub use sudoku::sudoku_solver;

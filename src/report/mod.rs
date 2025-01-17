@@ -5,7 +5,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadlockState {
     pub state_id: String,
-    pub marking: Vec<(String, usize)>, // (place_name, tokens)
+    pub marking: Vec<(String, u8)>, // (place_name, tokens)
     pub description: String,
 }
 
@@ -124,7 +124,7 @@ pub struct AtomicOperation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AtomicViolation {
     pub pattern: ViolationPattern,
-    pub states: Vec<(usize, usize)>,
+    pub states: Vec<(usize, u8)>,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]

@@ -289,9 +289,38 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
 
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
                 let fn_path = self.tcx.def_path_str(def_id);
-                if fn_path.contains("thread::spawn") {
+                if fn_path.contains("spawn") {
                     // 获取第一个参数（闭包）
                     if let Some(closure_arg) = args.first() {
+                        let closure_ty = match closure_arg.node {
+                            Operand::Move(place) | Operand::Copy(place) => {
+                                place.ty(self.body, self.tcx).ty
+                            }
+                            Operand::Constant(ref const_op) => const_op.ty(),
+                        };
+
+                        if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
+                            closure_ty.kind()
+                        {
+                            if let Some(callee) =
+                                Instance::try_resolve(self.tcx, typing_env, *closure_def_id, substs)
+                                    .ok()
+                                    .flatten()
+                            {
+                                self.callsites.push((
+                                    callee,
+                                    CallSiteLocation::Spawn {
+                                        location,
+                                        destination: destination.local,
+                                    },
+                                ));
+
+                                return;
+                            }
+                        }
+                    }
+
+                    if let Some(closure_arg) = args.get(1) {
                         let closure_ty = match closure_arg.node {
                             Operand::Move(place) | Operand::Copy(place) => {
                                 place.ty(self.body, self.tcx).ty

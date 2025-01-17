@@ -34,7 +34,7 @@ impl StateEdge {
 
 #[derive(Debug, Clone)]
 pub struct StateNode {
-    pub mark: Vec<(usize, usize)>,
+    pub mark: Vec<(usize, u8)>,
     pub node_index: HashSet<NodeIndex>,
 }
 
@@ -53,21 +53,21 @@ impl PartialEq for StateNode {
 impl Eq for StateNode {}
 
 impl StateNode {
-    pub fn new(mark: Vec<(usize, usize)>, node_index: HashSet<NodeIndex>) -> Self {
+    pub fn new(mark: Vec<(usize, u8)>, node_index: HashSet<NodeIndex>) -> Self {
         Self { mark, node_index }
     }
 }
 
 // 规范化状态表示
-pub fn normalize_state(mark: &HashSet<(NodeIndex, usize)>) -> Vec<(usize, usize)> {
-    let mut state: Vec<(usize, usize)> = mark.iter().map(|(n, t)| (n.index(), *t)).collect();
+pub fn normalize_state(mark: &HashSet<(NodeIndex, u8)>) -> Vec<(usize, u8)> {
+    let mut state: Vec<(usize, u8)> = mark.iter().map(|(n, t)| (n.index(), *t)).collect();
     state.sort();
     state
 }
 
 pub fn insert_with_comparison(
-    set: &mut HashSet<Vec<(usize, usize)>>,
-    value: &Vec<(usize, usize)>,
+    set: &mut HashSet<Vec<(usize, u8)>>,
+    value: &Vec<(usize, u8)>,
 ) -> bool {
     for existing_value in set.iter() {
         if existing_value == value {
@@ -89,22 +89,22 @@ pub struct DeadlockInfo {
 pub struct StateGraph {
     pub graph: Graph<StateNode, StateEdge>,
     pub initial_net: Box<Graph<PetriNetNode, PetriNetEdge>>,
-    pub initial_mark: HashSet<(NodeIndex, usize)>,
-    pub deadlock_marks: HashSet<Vec<(usize, usize)>>,
-    pub apis_deadlock_marks: HashMap<String, HashSet<Vec<(usize, usize)>>>,
+    pub initial_mark: HashSet<(NodeIndex, u8)>,
+    pub deadlock_marks: HashSet<Vec<(usize, u8)>>,
+    pub apis_deadlock_marks: HashMap<String, HashSet<Vec<(usize, u8)>>>,
     pub apis_graph: HashMap<String, Box<Graph<StateNode, StateEdge>>>,
     pub function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub options: Options,
-    pub terminal_states: Vec<(usize, usize)>,
+    pub terminal_states: Vec<(usize, u8)>,
 }
 
 impl StateGraph {
     pub fn new(
         initial_net: Graph<PetriNetNode, PetriNetEdge>,
-        initial_mark: HashSet<(NodeIndex, usize)>,
+        initial_mark: HashSet<(NodeIndex, u8)>,
         function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
         options: Options,
-        terminal_states: Vec<(usize, usize)>,
+        terminal_states: Vec<(usize, u8)>,
     ) -> Self {
         Self {
             graph: Graph::<StateNode, StateEdge>::new(),
@@ -218,10 +218,10 @@ impl StateGraph {
     pub fn generate_states_with_api(
         &mut self,
         api_name: String,
-        api_initial_mark: HashSet<(NodeIndex, usize)>,
+        api_initial_mark: HashSet<(NodeIndex, u8)>,
     ) {
         let mut queue = VecDeque::new();
-        let mut state_index_map = HashMap::<Vec<(usize, usize)>, NodeIndex>::new();
+        let mut state_index_map = HashMap::<Vec<(usize, u8)>, NodeIndex>::new();
         let mut visited_states = HashSet::new();
 
         // 初始化状态队列
@@ -322,7 +322,7 @@ impl StateGraph {
     pub fn get_enabled_transitions(
         &self,
         net: &mut Graph<PetriNetNode, PetriNetEdge>,
-        mark: &HashSet<(NodeIndex, usize)>,
+        mark: &HashSet<(NodeIndex, u8)>,
     ) -> Vec<NodeIndex> {
         let mut sched_transiton = Vec::<NodeIndex>::new();
 
@@ -341,6 +341,10 @@ impl StateGraph {
                                     enabled = false;
                                     break;
                                 }
+                                // if *place.tokens.borrow() < edge.weight().label {
+                                //     enabled = false;
+                                //     break;
+                                // }
                             }
                             _ => {
                                 log::error!("The predecessor set of transition is not place");
@@ -464,15 +468,12 @@ impl StateGraph {
     }
 }
 
-#[inline]
-fn set_current_mark(
-    net: &mut Graph<PetriNetNode, PetriNetEdge>,
-    mark: &HashSet<(NodeIndex, usize)>,
-) {
+fn set_current_mark(net: &mut Graph<PetriNetNode, PetriNetEdge>, mark: &HashSet<(NodeIndex, u8)>) {
     // 首先将所有库所的 token 清零
     for node_index in net.node_indices() {
         if let Some(PetriNetNode::P(place)) = net.node_weight(node_index) {
-            *place.tokens.write().unwrap() = 0;
+            *place.tokens.write().unwrap() = 0u8;
+            // *place.tokens.borrow_mut() = 0;
         }
     }
 
@@ -482,11 +483,14 @@ fn set_current_mark(
             // let tokens = *place.tokens.write().unwrap();
             {
                 *place.tokens.write().unwrap() = *token_count;
+                // *place.tokens.borrow_mut() = *token_count;
             }
             assert!(
                 *place.tokens.read().unwrap() <= place.capacity,
+                // *place.tokens.borrow() <= place.capacity,
                 "Token count ({}) exceeds capacity ({}) at node index {}, and token_count is {} ",
                 *place.tokens.read().unwrap(),
+                // *place.tokens.borrow(),
                 place.capacity,
                 node_index.index(),
                 token_count
@@ -503,15 +507,15 @@ fn set_current_mark(
 /// 5. 生成并返回新的状态
 pub fn fire_transition(
     net: &mut Graph<PetriNetNode, PetriNetEdge>,
-    mark: &HashSet<(NodeIndex, usize)>,
+    mark: &HashSet<(NodeIndex, u8)>,
     transition: NodeIndex,
 ) -> (
     Box<Graph<PetriNetNode, PetriNetEdge>>,
-    HashSet<(NodeIndex, usize)>,
+    HashSet<(NodeIndex, u8)>,
 ) {
     let mut new_net = net.clone(); // 克隆当前网，创建新图
     set_current_mark(&mut new_net, mark);
-    let mut new_state = HashSet::<(NodeIndex, usize)>::new();
+    let mut new_state = HashSet::<(NodeIndex, u8)>::new();
     log::debug!("The transition to fire is: {}", transition.index());
 
     // 从输入库所中减去token
@@ -519,8 +523,11 @@ pub fn fire_transition(
     for edge in new_net.edges_directed(transition, Direction::Incoming) {
         match new_net.node_weight(edge.source()).unwrap() {
             PetriNetNode::P(place) => {
-                let mut tokens = place.tokens.write().unwrap();
-                *tokens -= edge.weight().label;
+                let label = edge.weight().label;
+                {
+                    assert!(*place.tokens.read().unwrap() >= label, "{}", place.name);
+                }
+                *place.tokens.write().unwrap() -= label;
             }
             PetriNetNode::T(_) => {
                 log::error!("{}", "this error!");
@@ -535,6 +542,7 @@ pub fn fire_transition(
         match place_node {
             PetriNetNode::P(place) => {
                 let mut tokens = place.tokens.write().unwrap();
+                // let mut tokens = place.tokens.borrow_mut();
                 *tokens += edge.weight().label;
                 if *tokens > place.capacity {
                     *tokens = place.capacity;

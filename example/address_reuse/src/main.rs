@@ -17,10 +17,10 @@ fn addr() -> usize {
 }
 
 fn thread1() {
+    let alloc = addr();
     unsafe {
         VAL.get().write(42);
     }
-    let alloc = addr();
     ADDR.store(alloc, Relaxed);
 }
 
@@ -35,8 +35,11 @@ fn thread2() -> bool {
             // If the new allocation is at the same address as the old one, there must be a
             // happens-before relationship between them. Therefore, we can read VAL without racing
             // and must observe the write above.
-            let val = unsafe { VAL.get().read() };
-            assert_eq!(val, 42);
+            let val = unsafe {
+                // VAL.get().write(24);
+                VAL.get().read()
+            };
+            assert_eq!(val, 24);
             return true;
         }
     }

@@ -53,7 +53,7 @@ impl<'a> DeadlockDetector<'a> {
     }
 
     /// 基于状态可达性的死锁检测
-    fn detect_reachability_deadlock(&self) -> HashSet<Vec<(usize, usize)>> {
+    fn detect_reachability_deadlock(&self) -> HashSet<Vec<(usize, u8)>> {
         let mut deadlocks = HashSet::new();
 
         // 1. 检测终止状态死锁
@@ -80,15 +80,18 @@ impl<'a> DeadlockDetector<'a> {
             }
         }
 
-        // 2. 检测环路死锁
-        let cycle_deadlocks = self.detect_cycle_deadlocks();
-        deadlocks.extend(cycle_deadlocks);
+        if deadlocks.is_empty() {
+            log::info!("no deadlock detected by reachability");
+            // 2. 检测环路死锁
+            let cycle_deadlocks = self.detect_cycle_deadlocks();
+            deadlocks.extend(cycle_deadlocks);
+        }
 
         deadlocks
     }
 
     /// 检测环路死锁
-    fn detect_cycle_deadlocks(&self) -> HashSet<Vec<(usize, usize)>> {
+    fn detect_cycle_deadlocks(&self) -> HashSet<Vec<(usize, u8)>> {
         let mut deadlocks = HashSet::new();
         let mut visited = HashSet::new();
         let mut stack = HashSet::new();
@@ -124,7 +127,7 @@ impl<'a> DeadlockDetector<'a> {
         current: NodeIndex,
         visited: &mut HashSet<NodeIndex>,
         stack: &mut HashSet<NodeIndex>,
-        cycle_groups: &mut HashMap<Vec<NodeIndex>, HashSet<Vec<(usize, usize)>>>,
+        cycle_groups: &mut HashMap<Vec<NodeIndex>, HashSet<Vec<(usize, u8)>>>,
         current_path: &Vec<NodeIndex>,
     ) {
         visited.insert(current);
@@ -380,8 +383,8 @@ impl<'a> DeadlockDetector<'a> {
         false
     }
 
-    fn format_deadlock_state(&self, mark: &[(usize, usize)]) -> DeadlockState {
-        let marking: Vec<(String, usize)> = mark
+    fn format_deadlock_state(&self, mark: &[(usize, u8)]) -> DeadlockState {
+        let marking: Vec<(String, u8)> = mark
             .iter()
             .filter_map(|(idx, tokens)| {
                 if let Some(PetriNetNode::P(place)) =
@@ -402,7 +405,7 @@ impl<'a> DeadlockDetector<'a> {
     }
 
     /// 创建到达死锁状态的路径
-    fn create_deadlock_trace(&self, deadlock_state: &[(usize, usize)]) -> DeadlockTrace {
+    fn create_deadlock_trace(&self, deadlock_state: &[(usize, u8)]) -> DeadlockTrace {
         // TODO: 实现路径重建逻辑
         DeadlockTrace {
             steps: vec!["Path reconstruction not implemented yet".to_string()],

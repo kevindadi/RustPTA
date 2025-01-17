@@ -19,14 +19,13 @@ fn incorrect_use_condvar() {
             started = cvar.wait(started).unwrap();
         }
     });
-    let th2 = thread::spawn(move || {
-        let i2 = mu2.lock().unwrap();
-        let (lock, cvar) = &*pair2;
 
-        let mut started = lock.lock().unwrap();
-        *started = true;
-        cvar.notify_one();
-    });
+    let i2 = mu2.lock().unwrap();
+    let (lock, cvar) = &*pair2;
+
+    let mut started = lock.lock().unwrap();
+    *started = true;
+    cvar.notify_one();
+
     th1.join().unwrap();
-    th2.join().unwrap();
 }

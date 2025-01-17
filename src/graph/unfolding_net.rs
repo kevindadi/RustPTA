@@ -8,15 +8,15 @@ use super::pn::{PetriNetEdge, PetriNetNode};
 
 #[derive(Debug)]
 struct UnfoldingEvent {
-    conditions: HashSet<NodeIndex>,     // 库所实例
-    transitions: HashSet<NodeIndex>,    // 变迁实例
-    marks: HashSet<(NodeIndex, usize)>, // 当前标记
+    conditions: HashSet<NodeIndex>,  // 库所实例
+    transitions: HashSet<NodeIndex>, // 变迁实例
+    marks: HashSet<(NodeIndex, u8)>, // 当前标记
 }
 
 #[derive(Debug, Clone)]
 pub struct UnfoldingNet {
     pub initial_net: Graph<PetriNetNode, PetriNetEdge>,
-    pub initial_mark: HashSet<(NodeIndex, usize)>,
+    pub initial_mark: HashSet<(NodeIndex, u8)>,
 
     function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     options: Options,
@@ -25,7 +25,7 @@ pub struct UnfoldingNet {
 impl UnfoldingNet {
     pub fn new(
         graph: Graph<PetriNetNode, PetriNetEdge>,
-        mark: HashSet<(NodeIndex, usize)>,
+        mark: HashSet<(NodeIndex, u8)>,
         function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
         options: Options,
     ) -> Self {
@@ -33,6 +33,7 @@ impl UnfoldingNet {
             initial_net: graph,
             initial_mark: mark,
             function_counter,
+
             options,
         }
     }
@@ -47,7 +48,7 @@ impl UnfoldingNet {
         self.unfold_net(&mut unfolding)
     }
 
-    fn unflod_enabled_transitions(&self, mark: &HashSet<(NodeIndex, usize)>) -> Vec<NodeIndex> {
+    fn unflod_enabled_transitions(&self, mark: &HashSet<(NodeIndex, u8)>) -> Vec<NodeIndex> {
         self.set_petrinet_mark(mark);
         let mut sched_transiton = Vec::<NodeIndex>::new();
         // 检查变迁使能的逻辑
@@ -84,11 +85,11 @@ impl UnfoldingNet {
 
     fn unfold_fire_transition(
         &self,
-        mark: &HashSet<(NodeIndex, usize)>,
+        mark: &HashSet<(NodeIndex, u8)>,
         transition: NodeIndex,
-    ) -> HashSet<(NodeIndex, usize)> {
+    ) -> HashSet<(NodeIndex, u8)> {
         self.set_petrinet_mark(mark);
-        let mut new_state = HashSet::<(NodeIndex, usize)>::new();
+        let mut new_state = HashSet::<(NodeIndex, u8)>::new();
         log::debug!("The transition to fire is: {}", transition.index());
 
         // 从输入库所中减去token
@@ -148,7 +149,7 @@ impl UnfoldingNet {
         new_state
     }
 
-    fn set_petrinet_mark(&self, mark: &HashSet<(NodeIndex, usize)>) {
+    fn set_petrinet_mark(&self, mark: &HashSet<(NodeIndex, u8)>) {
         // 首先将所有库所的 token 清零
         for node_index in self.initial_net.node_indices() {
             if let Some(PetriNetNode::P(place)) = self.initial_net.node_weight(node_index) {
@@ -214,7 +215,7 @@ impl UnfoldingNet {
         None // 没有发现死锁
     }
 
-    fn is_final_marking(&self, marks: &HashSet<(NodeIndex, usize)>) -> bool {
+    fn is_final_marking(&self, marks: &HashSet<(NodeIndex, u8)>) -> bool {
         // 检查是否是最终标记（所有终止库所都有token）
         for (node, _) in marks.iter() {
             if let PetriNetNode::P(ref place) = self.initial_net[*node] {
@@ -252,7 +253,7 @@ impl UnfoldingNet {
         !t1_inputs.is_disjoint(&t2_inputs)
     }
 
-    fn marks_to_key(&self, marks: &HashSet<(NodeIndex, usize)>) -> String {
+    fn marks_to_key(&self, marks: &HashSet<(NodeIndex, u8)>) -> String {
         // 将标记转换为唯一的字符串标识
         let mut items: Vec<_> = marks.iter().collect();
         items.sort_by_key(|&(idx, _)| idx.index());
@@ -263,7 +264,7 @@ impl UnfoldingNet {
             .join(",")
     }
 
-    fn reconstruct_path(&self, deadlock_marks: &HashSet<(NodeIndex, usize)>) -> Vec<NodeIndex> {
+    fn reconstruct_path(&self, deadlock_marks: &HashSet<(NodeIndex, u8)>) -> Vec<NodeIndex> {
         // 构建导致死锁的路径
         let mut path = Vec::new();
         let mut current = deadlock_marks.clone();

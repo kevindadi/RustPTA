@@ -179,7 +179,7 @@ impl PTACallbacks {
                     UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
                 let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
                 unsafe_info.iter().for_each(|(def_id, info)| {
-                    log::info!(
+                    log::debug!(
                         "{}:\n{}",
                         format_name(*def_id),
                         serde_json::to_string_pretty(&json!({
@@ -190,7 +190,7 @@ impl PTACallbacks {
                         .unwrap()
                     )
                 });
-                log::info!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
+                log::debug!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
                 let mut cpn =
                     ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data, false);
                 cpn.construct();

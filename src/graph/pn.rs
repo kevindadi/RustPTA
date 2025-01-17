@@ -29,7 +29,6 @@ use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::mir_pn::BodyToPetriNet;
 use crate::concurrency::candvar::CondVarCollector;
 use crate::concurrency::candvar::CondVarId;
-use crate::concurrency::candvar::CondVarInfo;
 use crate::{
     concurrency::locks::{LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy},
     memory::pointsto::{AliasAnalysis, ApproximateAliasKind},
@@ -44,8 +43,9 @@ pub enum Shape {
 #[derive(Debug, Clone)]
 pub struct Place {
     pub name: String,
-    pub tokens: Arc<RwLock<usize>>,
-    pub capacity: usize,
+    // pub tokens: RefCell<usize>,
+    pub tokens: Arc<RwLock<u8>>,
+    pub capacity: u8,
     pub span: String,
     pub place_type: PlaceType,
 }
@@ -61,7 +61,7 @@ pub enum PlaceType {
 }
 
 impl Place {
-    pub fn new(name: String, token: usize, place_type: PlaceType) -> Self {
+    pub fn new(name: String, token: u8, place_type: PlaceType) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(token)),
@@ -71,11 +71,11 @@ impl Place {
         }
     }
 
-    pub fn new_with_span(name: String, token: usize, place_type: PlaceType, span: String) -> Self {
+    pub fn new_with_span(name: String, token: u8, place_type: PlaceType, span: String) -> Self {
         Self {
             name,
             tokens: Arc::new(RwLock::new(token)),
-            capacity: 1usize,
+            capacity: 1u8,
             span,
             place_type,
         }
@@ -85,7 +85,7 @@ impl Place {
         Self {
             name,
             tokens: Arc::new(RwLock::new(0)),
-            capacity: 1usize,
+            capacity: 1u8,
             span: String::new(),
             place_type,
         }
@@ -183,7 +183,7 @@ impl std::fmt::Display for PetriNetNode {
 
 #[derive(Debug, Clone)]
 pub struct PetriNetEdge {
-    pub label: usize,
+    pub label: u8,
 }
 
 impl std::fmt::Display for PetriNetEdge {
@@ -236,7 +236,7 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     condvars: HashMap<CondVarId, NodeIndex>,
     pub entry_node: NodeIndex,
     pub api_spec: ApiSpec,
-    pub api_marks: HashMap<String, HashSet<(NodeIndex, usize)>>,
+    pub api_marks: HashMap<String, HashSet<(NodeIndex, u8)>>,
     atomic_places: HashMap<AliasId, NodeIndex>,
     atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
     pub exit_node: NodeIndex,
@@ -266,7 +266,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             condvars: HashMap::<CondVarId, NodeIndex>::new(),
             entry_node: NodeIndex::new(0),
             api_spec,
-            api_marks: HashMap::<String, HashSet<(NodeIndex, usize)>>::new(),
+            api_marks: HashMap::<String, HashSet<(NodeIndex, u8)>>::new(),
             atomic_places: HashMap::<AliasId, NodeIndex>::new(),
             atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
             exit_node: NodeIndex::new(0),
@@ -758,9 +758,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
                     // 添加新边
                     self.net
-                        .add_edge(p1, new_trans_idx, PetriNetEdge { label: 1 });
+                        .add_edge(p1, new_trans_idx, PetriNetEdge { label: 1u8 });
                     self.net
-                        .add_edge(new_trans_idx, p2, PetriNetEdge { label: 1 });
+                        .add_edge(new_trans_idx, p2, PetriNetEdge { label: 1u8 });
 
                     // 将路径上的节点信息合并成一行输出
                     let path_info = chain[1..chain.len()]
@@ -921,8 +921,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     fn collect_condvar(&mut self) {
-        let mut condvars: FxHashMap<NodeIndex, HashMap<CondVarId, CondVarInfo>> =
-            FxHashMap::default();
+        let mut condvars: FxHashMap<NodeIndex, HashMap<CondVarId, String>> = FxHashMap::default();
         for (instance_id, node) in self.callgraph.graph.node_references() {
             let instance = match node {
                 CallGraphNode::WithBody(instance) => instance,
@@ -946,22 +945,24 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         if !condvars.is_empty() {
             for condvar_map in condvars.into_values() {
                 for condvar in condvar_map.into_iter() {
-                    let condvar_name = format!("condvar:{:?}", condvar.1.span);
+                    let condvar_name = format!("Condvar:{}", condvar.1);
                     let condvar_p = Place::new(condvar_name, 1, PlaceType::CondVar);
                     let condvar_node = self.net.add_node(PetriNetNode::P(condvar_p));
                     self.condvars.insert(condvar.0.clone(), condvar_node);
                 }
             }
+        } else {
+            log::debug!("no condvars found");
         }
     }
 
-    pub fn get_current_mark(&self) -> HashSet<(NodeIndex, usize)> {
-        let mut current_mark = HashSet::<(NodeIndex, usize)>::new();
+    pub fn get_current_mark(&self) -> HashSet<(NodeIndex, u8)> {
+        let mut current_mark = HashSet::<(NodeIndex, u8)>::new();
         for node in self.net.node_indices() {
             match &self.net[node] {
                 PetriNetNode::P(place) => {
                     if *place.tokens.read().unwrap() > 0 {
-                        current_mark.insert((node.clone(), *place.tokens.read().unwrap() as usize));
+                        current_mark.insert((node.clone(), *place.tokens.read().unwrap() as u8));
                     }
                 }
                 PetriNetNode::T(_) => {
@@ -1083,7 +1084,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         Ok(())
     }
 
-    pub fn get_terminal_states(&self) -> Vec<(usize, usize)> {
+    pub fn get_terminal_states(&self) -> Vec<(usize, u8)> {
         let mut terminal_states = Vec::new();
         terminal_states.push((self.exit_node.index(), 1));
         for node_idx in self.net.node_indices() {

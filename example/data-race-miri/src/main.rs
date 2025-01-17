@@ -162,7 +162,7 @@ fn test_read_read_race1() {
         });
         s.spawn(|| {
             thread::yield_now();
-
+            std::thread::sleep(std::time::Duration::from_secs(1));
             a.load(Ordering::SeqCst);
         });
     });

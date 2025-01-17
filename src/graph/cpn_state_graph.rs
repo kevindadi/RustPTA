@@ -11,7 +11,7 @@ use std::hash::Hasher;
 use crate::memory::pointsto::AliasId;
 
 use super::cpn::{ColorPetriEdge, ColorPetriNode, DataOpType};
-use super::state_graph::{insert_with_comparison, normalize_state, StateEdge, StateNode};
+use super::state_graph::insert_with_comparison;
 
 use std::sync::{Arc, Mutex};
 
@@ -87,9 +87,58 @@ impl RaceDataInfo {
     }
 }
 
+pub fn normalize_state_usize(mark: &HashSet<(NodeIndex, usize)>) -> Vec<(usize, usize)> {
+    let mut state: Vec<(usize, usize)> = mark.iter().map(|(n, t)| (n.index(), *t)).collect();
+    state.sort();
+    state
+}
+
+#[derive(Debug, Clone)]
+pub struct CpnStateNode {
+    pub mark: Vec<(usize, usize)>,
+    pub node_index: HashSet<NodeIndex>,
+}
+
+impl Hash for CpnStateNode {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.mark.hash(state)
+    }
+}
+
+impl PartialEq for CpnStateNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.mark == other.mark
+    }
+}
+
+impl Eq for CpnStateNode {}
+
+impl CpnStateNode {
+    pub fn new(mark: Vec<(usize, usize)>, node_index: HashSet<NodeIndex>) -> Self {
+        Self { mark, node_index }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CpnStateEdge {
+    pub label: String,
+    pub transition: NodeIndex,
+    pub weight: u32,
+}
+
+impl CpnStateEdge {
+    pub fn new(label: String, transition: NodeIndex, weight: u32) -> Self {
+        Self {
+            label,
+            transition,
+            weight,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CpnStateGraph {
-    pub graph: Graph<StateNode, StateEdge>,
+    pub graph: Graph<CpnStateNode, CpnStateEdge>,
     pub initial_net: Box<Graph<ColorPetriNode, ColorPetriEdge>>,
     pub initial_mark: HashSet<(NodeIndex, usize)>,
     pub race_info: HashSet<RaceInfo>,
@@ -101,7 +150,7 @@ impl CpnStateGraph {
         initial_mark: HashSet<(NodeIndex, usize)>,
     ) -> Self {
         Self {
-            graph: Graph::<StateNode, StateEdge>::new(),
+            graph: Graph::<CpnStateNode, CpnStateEdge>::new(),
             initial_net: Box::new(initial_net),
             initial_mark,
             race_info: HashSet::new(),
@@ -114,13 +163,13 @@ impl CpnStateGraph {
 
     pub fn generate_states(&mut self) {
         let mut queue = VecDeque::new();
-        let mut state_index_map = HashMap::<StateNode, NodeIndex>::new();
+        let mut state_index_map = HashMap::<CpnStateNode, NodeIndex>::new();
         let mut visited_states = HashSet::new();
 
         queue.push_back(self.initial_mark.clone());
 
-        let initial_state = StateNode::new(
-            normalize_state(&self.initial_mark),
+        let initial_state = CpnStateNode::new(
+            normalize_state_usize(&self.initial_mark),
             self.initial_mark
                 .clone()
                 .into_iter()
@@ -129,7 +178,7 @@ impl CpnStateGraph {
         );
         let initial_node = self.graph.add_node(initial_state.clone());
         state_index_map.insert(initial_state.clone(), initial_node);
-        log::info!("Initial state: {:?}", initial_state);
+        log::debug!("Initial state: {:?}", initial_state);
 
         while let Some(current_mark) = queue.pop_front() {
             let enabled_transitions = self.get_enabled_transitions(&current_mark);
@@ -140,20 +189,20 @@ impl CpnStateGraph {
             }
 
             let mark_node_index = current_mark.clone().into_iter().map(|(n, _)| n).collect();
-            let current_state = normalize_state(&current_mark);
+            let current_state = normalize_state_usize(&current_mark);
             if !visited_states.insert(current_state.clone()) {
                 continue; // 跳过已访问的状态
             }
             let current_node = self
                 .graph
-                .add_node(StateNode::new(current_state.clone(), mark_node_index));
+                .add_node(CpnStateNode::new(current_state.clone(), mark_node_index));
 
             // log::info!("Current state: {:?}", current_state);
 
             for transition in enabled_transitions {
                 let new_state = self.fire_transition(&current_mark, transition);
-                let new_normalize_state = normalize_state(&new_state);
-                let new_state_node = StateNode::new(
+                let new_normalize_state = normalize_state_usize(&new_state);
+                let new_state_node = CpnStateNode::new(
                     new_normalize_state.clone(),
                     new_state.iter().map(|x| x.0).collect(),
                 );
@@ -162,10 +211,10 @@ impl CpnStateGraph {
                     self.graph.add_edge(
                         current_node,
                         existing_node,
-                        StateEdge::new(format!("{:?}", transition), transition, 1),
+                        CpnStateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 } else {
-                    log::info!("New state: {:?}", new_state_node);
+                    log::debug!("New state: {:?}", new_state_node);
                     queue.push_back(new_state.clone());
                     let new_node = self.graph.add_node(new_state_node.clone());
                     state_index_map.insert(new_state_node, new_node);
@@ -173,7 +222,7 @@ impl CpnStateGraph {
                     self.graph.add_edge(
                         current_node,
                         new_node,
-                        StateEdge::new(format!("{:?}", transition), transition, 1),
+                        CpnStateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 }
             }

@@ -351,6 +351,12 @@ impl<'cpn, 'translate, 'tcx> Visitor<'tcx> for BodyToColorPetriNet<'cpn, 'transl
 
             // deal statement
             for stmt in bb.statements.iter() {
+                // 如果此基本块的Terminal是Assert, 则跳过
+                if let Some(ref term) = bb.terminator {
+                    if let TerminatorKind::Assert { .. } = &term.kind {
+                        continue;
+                    }
+                }
                 self.visit_statement_body(stmt, bb_idx);
             }
 
