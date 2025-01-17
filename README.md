@@ -17,5 +17,5 @@
    cargo install --path .
   ```
 3. Usage
-   `cargo pn -- -m datarace -t my-crate --type library --api-spec tests/lib.toml--viz-callgraph --viz-petrinet`
+   `cargo pn -- -m datarace -t my_crate --type library --api-spec tests/lib.toml--viz-callgraph --viz-petrinet`
 

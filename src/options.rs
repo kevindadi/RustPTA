@@ -246,7 +246,10 @@ impl Options {
             _ => DetectorKind::Deadlock,
         };
 
-        self.crate_name = matches.get_one::<String>("target_crate").unwrap().clone();
+        self.crate_name = matches
+            .get_one::<String>("target_crate")
+            .expect("The target crate must be declared and linked with an underscore.")
+            .clone();
         self.output = matches
             .get_one::<String>("diagnostics_output")
             .cloned()
