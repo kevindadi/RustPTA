@@ -1226,7 +1226,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 }
             }
 
-            // 4. 处理关联的锁
             let guard_id = LockGuardId::new(
                 self.instance_id,
                 args.get(1).unwrap().node.place().unwrap().local,

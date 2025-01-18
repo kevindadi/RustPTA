@@ -221,6 +221,23 @@ pub enum PetriNetError {
     },
 }
 
+fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
+    let mut current = x;
+    while union_find[current] != *current {
+        current = &union_find[current];
+    }
+    current.clone()
+}
+
+// 并查集的合并函数
+fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
+    let root_x = find(union_find, x);
+    let root_y = find(union_find, y);
+    if root_x != root_y {
+        union_find.insert(root_y, root_x);
+    }
+}
+
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
     output_directory: PathBuf,
@@ -580,7 +597,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    pub fn construct_lock_with_dfs(&mut self /*alias_analysis: &RefCell<AliasAnalysis>*/) {
+    pub fn construct_lock_with_dfs(&mut self) {
         let lockguards = self.collect_lockguards();
         let mut info = FxHashMap::default();
 
@@ -589,8 +606,14 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             self.lock_info.extend(map.into_iter());
         }
 
-        let mut adj_list: HashMap<usize, Vec<usize>> = HashMap::new();
-        let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect::<Vec<LockGuardId>>();
+        let mut union_find: HashMap<LockGuardId, LockGuardId> = HashMap::new();
+        let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect();
+
+        for lock_id in &lockid_vec {
+            union_find.insert(lock_id.clone(), lock_id.clone());
+        }
+
+        // 合并有别名关系的锁
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
                 match self
@@ -599,13 +622,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
                 {
                     ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                        adj_list.entry(i).or_insert_with(Vec::new).push(j);
-                        adj_list.entry(j).or_insert_with(Vec::new).push(i);
-                        log::debug!(
-                            "lockid_vec[i]: {:?} and lockid_vec[j]: {:?} alias probably",
-                            lockid_vec[i],
-                            lockid_vec[j]
-                        );
+                        union(&mut union_find, &lockid_vec[i], &lockid_vec[j]);
                     }
                     _ => {
                         log::debug!(
@@ -617,56 +634,38 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
             }
         }
-        debug!("{:?}", adj_list);
-        let mut visited: Vec<bool> = vec![false; lockid_vec.len()];
-        let mut group_id = 0;
-        let mut groups: HashMap<usize, Vec<LockGuardId>> = HashMap::new();
 
-        for i in 0..lockid_vec.len() {
-            if !visited[i] {
-                let mut stack: VecDeque<usize> = VecDeque::new();
-                stack.push_back(i);
-                visited[i] = true;
-                while let Some(node) = stack.pop_front() {
-                    groups
-                        .entry(group_id)
-                        .or_insert_with(Vec::new)
-                        .push(lockid_vec[node].clone());
-                    if let Some(neighbors) = adj_list.get(&node) {
-                        for &neighbor in neighbors {
-                            if !visited[neighbor] {
-                                stack.push_back(neighbor);
-                                visited[neighbor] = true;
-                            }
-                        }
-                    }
-                }
-                group_id += 1;
-            }
+        // 先按根节点分组
+        let mut temp_groups: HashMap<LockGuardId, Vec<LockGuardId>> = HashMap::new();
+        for lock_id in &lockid_vec {
+            let root = find(&union_find, lock_id);
+            temp_groups.entry(root).or_default().push(lock_id.clone());
         }
 
-        for (id, lock_vec) in groups {
-            match &info[&lock_vec[0]].lockguard_ty {
+        // 将分组转换为所需的格式：用组内所有成员作为key
+        let mut group_id = 0;
+        for group in temp_groups.values() {
+            match &info[&group[0]].lockguard_ty {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
-                    let lock_name = format!("Mutex_{}", id);
-
+                    let lock_name = format!("Mutex_{}", group_id);
                     let lock_p = Place::new(lock_name, 1, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
-                    for lock in lock_vec {
+                    for lock in group {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
                 }
                 _ => {
-                    let lock_name = format!("RwLock_{}", id);
+                    let lock_name = format!("RwLock_{}", group_id);
                     let lock_p = Place::new(lock_name, 10, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
-                    for lock in lock_vec {
+                    for lock in group {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
                 }
             }
+            group_id += 1;
         }
     }
 

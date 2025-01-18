@@ -36,9 +36,10 @@
                                       - memory: Memory safety analysis
                                       - [default: deadlock]
         -t, --target <NAME>            Target crate for analysis(Only underlined links can be used)
-        -pn-analysis-output=<PATH>            Output path for analysis results [default: diagnostics.json]
+        --pn-analysis-output=<PATH>            Output path for analysis results [default: diagnostics.json]
             --type <TYPE>              Target crate type (binary/library) [default: binary]
             --api-spec <PATH>          Path to library API specification file
+        --pn-test                      Do not perform state reduction
 
     VISUALIZATION OPTIONS:
             --viz-callgraph            Generate call graph visualization
@@ -48,14 +49,180 @@
             --viz-pointsto 
 
     EXAMPLES:
-        cargo pn -m datarace -t my_crate
-        cargo pn -m all -o results.json --viz-petrinet
-        cargo pn -t my_lib --type library --api-spec apis.json
+        cargo pn -m deadlock -t my_crate --pn-analysis-dir=./tmp --viz-petrinet
     "#;
 
+# 2. 建模方法
+该工具对每个实例化函数的控制流一一对应建模，以 example/double_lock为例，其对应的中间表示可以在`https://play.rust-lang.org/`找到。
+```bash
+fn main() -> () {
+    let mut _0: ();
+    let _1: std::sync::Arc<std::sync::Mutex<i32>>;
+    let mut _2: std::sync::Mutex<i32>;
+    let mut _4: &std::sync::Arc<std::sync::Mutex<i32>>;
+    let mut _6: std::result::Result<std::sync::MutexGuard<'_, i32>, std::sync::PoisonError<std::sync::MutexGuard<'_, i32>>>;
+    let _7: &std::sync::Mutex<i32>;
+    let mut _8: &std::sync::Arc<std::sync::Mutex<i32>>;
+    let mut _10: {closure@src/main.rs:9:29: 9:36};
+    let _11: ();
+    let mut _12: std::result::Result<(), std::boxed::Box<dyn std::any::Any + std::marker::Send>>;
+    let mut _13: bool;
+    scope 1 {
+        debug mu1 => _1;
+        let _3: std::sync::Arc<std::sync::Mutex<i32>>;
+        scope 2 {
+            debug mu2 => _3;
+            let _5: std::sync::MutexGuard<'_, i32>;
+            scope 3 {
+                debug g1 => _5;
+                let _9: std::thread::JoinHandle<()>;
+                scope 4 {
+                    debug th1 => _9;
+                }
+            }
+        }
+    }
 
-# 2. 运行实例与结果说明
-## 2.1 死锁检测(以example/condvar_lock为例)
+    bb0: {
+        _13 = const false;
+        _2 = Mutex::<i32>::new(const 1_i32) -> [return: bb1, unwind continue];
+    }
+
+    bb1: {
+        _1 = Arc::<Mutex<i32>>::new(move _2) -> [return: bb2, unwind continue];
+    }
+
+    bb2: {
+        _4 = &_1;
+        _3 = <Arc<Mutex<i32>> as Clone>::clone(move _4) -> [return: bb3, unwind: bb13];
+    }
+
+    bb3: {
+        _13 = const true;
+        _8 = &_1;
+        _7 = <Arc<Mutex<i32>> as Deref>::deref(move _8) -> [return: bb4, unwind: bb16];
+    }
+
+    bb4: {
+        _6 = Mutex::<i32>::lock(copy _7) -> [return: bb5, unwind: bb16];
+    }
+
+    bb5: {
+        _5 = Result::<MutexGuard<'_, i32>, PoisonError<MutexGuard<'_, i32>>>::unwrap(move _6) -> [return: bb6, unwind: bb16];
+    }
+
+    bb6: {
+        _13 = const false;
+        _10 = {closure@src/main.rs:9:29: 9:36} { mu2: move _3 };
+        _9 = spawn::<{closure@src/main.rs:9:29: 9:36}, ()>(move _10) -> [return: bb7, unwind: bb12];
+    }
+
+    bb7: {
+        _12 = JoinHandle::<()>::join(move _9) -> [return: bb8, unwind: bb12];
+    }
+
+    bb8: {
+        _11 = Result::<(), Box<dyn Any + Send>>::unwrap(move _12) -> [return: bb9, unwind: bb12];
+    }
+
+    bb9: {
+        drop(_5) -> [return: bb10, unwind: bb16];
+    }
+
+    bb10: {
+        _13 = const false;
+        drop(_1) -> [return: bb11, unwind continue];
+    }
+
+    bb11: {
+        return;
+    }
+
+    bb12 (cleanup): {
+        drop(_5) -> [return: bb16, unwind terminate(cleanup)];
+    }
+
+    bb13 (cleanup): {
+        drop(_1) -> [return: bb14, unwind terminate(cleanup)];
+    }
+
+    bb14 (cleanup): {
+        resume;
+    }
+
+    bb15 (cleanup): {
+        drop(_3) -> [return: bb13, unwind terminate(cleanup)];
+    }
+
+    bb16 (cleanup): {
+        switchInt(copy _13) -> [0: bb13, otherwise: bb15];
+    }
+}
+
+fn main::{closure#0}(_1: {closure@src/main.rs:9:29: 9:36}) -> () {
+    debug mu2 => (_1.0: std::sync::Arc<std::sync::Mutex<i32>>);
+    let mut _0: ();
+    let mut _2: std::sync::MutexGuard<'_, i32>;
+    let mut _3: std::result::Result<std::sync::MutexGuard<'_, i32>, std::sync::PoisonError<std::sync::MutexGuard<'_, i32>>>;
+    let _4: &std::sync::Mutex<i32>;
+    let mut _5: &std::sync::Arc<std::sync::Mutex<i32>>;
+    let mut _6: &mut i32;
+    let mut _7: &mut std::sync::MutexGuard<'_, i32>;
+    scope 1 {
+        debug g2 => _2;
+    }
+
+    bb0: {
+        _5 = &(_1.0: std::sync::Arc<std::sync::Mutex<i32>>);
+        _4 = <Arc<Mutex<i32>> as Deref>::deref(move _5) -> [return: bb1, unwind: bb8];
+    }
+
+    bb1: {
+        _3 = Mutex::<i32>::lock(copy _4) -> [return: bb2, unwind: bb8];
+    }
+
+    bb2: {
+        _2 = Result::<MutexGuard<'_, i32>, PoisonError<MutexGuard<'_, i32>>>::unwrap(move _3) -> [return: bb3, unwind: bb8];
+    }
+
+    bb3: {
+        _7 = &mut _2;
+        _6 = <MutexGuard<'_, i32> as DerefMut>::deref_mut(move _7) -> [return: bb4, unwind: bb7];
+    }
+
+    bb4: {
+        (*_6) = const 2_i32;
+        drop(_2) -> [return: bb5, unwind: bb8];
+    }
+
+    bb5: {
+        drop(_1) -> [return: bb6, unwind continue];
+    }
+
+    bb6: {
+        return;
+    }
+
+    bb7 (cleanup): {
+        drop(_2) -> [return: bb8, unwind terminate(cleanup)];
+    }
+
+    bb8 (cleanup): {
+        drop(_1) -> [return: bb9, unwind terminate(cleanup)];
+    }
+
+    bb9 (cleanup): {
+        resume;
+    }
+}
+```
+对应的网模型为：
+![原始Petri 网模型](/home/kevin/RustPTA/example/double_lock/tmp1/double_lock/graph.png "初始Petri网")
+经过状态缩减后的模型为：
+![Petri 网模型](/home/kevin/RustPTA/example/double_lock/tmp/double_lock/graph.png "Petri网")
+
+# 3. 运行实例与结果说明
+## 3.1 死锁检测(以example/condvar_lock为例)
 基于Petri网的检测结果表示为程序当前所处的（状态），以及该状态所包含的资源和所对应的源代码位置。如以下结果：
 ```bash 
     分析工具: Petri Net Deadlock Detector
@@ -90,7 +257,7 @@ main_0_wait表示为main函数等待调用函数的返回，incorrect_use_condva
 死锁2与之同理，不过阻塞行为不同，死锁2在闭包获取锁后，等待信号量，而incorrect_use_condvar函数在23行阻塞，无法通知闭包。
 
 
-## 2.2 数据竞争检测(以example/address_reuse为例)
+## 3.2 数据竞争检测(以example/address_reuse为例)
 ```bash
 [2025-01-17T22:31:53Z INFO  pn::callback] Race Ok("{\"unsafe_transitions\":[70,82]}"):
     {
@@ -111,7 +278,7 @@ main_0_wait表示为main函数等待调用函数的返回，incorrect_use_condva
 结果描述，数据竞争主要对于static数据和对于实现Sync的类型在unsafe代码中操作导致的读写不一致或写冲突进行检测。
 
 
-## 2.3 原子性违背检测(以example/atomic_se为例)
+## 3.3 原子性违背检测(以example/atomic_se为例)
 ```bash
 分析工具: Petri Net Atomicity Violation Detector
     分析时间: 362.735µs
@@ -140,3 +307,6 @@ main_0_wait表示为main函数等待调用函数的返回，incorrect_use_condva
 ```
 
 结果描述，对于原子性违背，主要检测在load操作时，是否存在不同线程或同一个线程内的两个store操作，导致在对load结果判断时，出现未定义的行为。
+
+## 3.4 万行级代码检测
+以 example/thousands_code为例，在定义 entry 函数后，（bin 文件默认为 main 函数，lib 库默认需要自行指定），工具只对调用链上的函数进行建模，所以函数库大小与模型并不强相关，建模工具可以在可接受时间内结束。

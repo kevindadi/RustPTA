@@ -54,8 +54,8 @@ fn parking_lot_rwlock() -> i32 {
 }
 
 fn main() {
-    // std_mutex();
+    std_mutex();
     std_rwlock();
-    // parking_lot_mutex();
-    // parking_lot_rwlock();
+    parking_lot_mutex();
+    parking_lot_rwlock();
 }

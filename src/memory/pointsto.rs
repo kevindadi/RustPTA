@@ -30,7 +30,7 @@ pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     pts: PointsToMap<'tcx>,
-    propagated_pts: PointsToMap<'tcx>,
+
     pub av: bool,
 }
 
@@ -42,7 +42,6 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
             body,
             tcx,
             pts: Default::default(),
-            propagated_pts: Default::default(),
             av,
         }
     }
@@ -110,6 +109,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
         self.propagate_points_to();
     }
 
+    #[allow(dead_code)]
     fn propagate_points_to(&mut self) {
         let mut updated_pts = self.pts.clone();
         // 收集所有带有projection的节点及其父节点的映射
@@ -134,8 +134,6 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                     .extend(parent_pts.iter().cloned());
             }
         }
-
-        self.propagated_pts = updated_pts;
     }
 
     /// pts(target) = pts(target) U pts(source)
@@ -153,12 +151,6 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
 
     pub fn finish(self) -> FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>> {
         self.pts
-    }
-
-    pub fn get_propagated_pts(
-        self,
-    ) -> FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>> {
-        self.propagated_pts
     }
 }
 
@@ -1108,42 +1100,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
-    pub fn get_or_insert_propagated_pts(
-        &mut self,
-        def_id: DefId,
-        body: &Body<'tcx>,
-    ) -> &PointsToMap<'tcx> {
-        // 1. 首先检查缓存中是否已经有这个函数的 points-to 分析结果
-        if self.pts.contains_key(&def_id) {
-            // 如果有，直接返回缓存的结果
-            self.pts.get(&def_id).unwrap()
-        } else {
-            // 2. 如果没有，执行新的 points-to 分析
-            let mut pointer_analysis = Andersen::new(body, self.tcx, self.av);
-            pointer_analysis.analyze();
-            let pts = pointer_analysis.get_propagated_pts();
-            self.pts.entry(def_id).or_insert(pts)
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn get_or_insert_pts_propagate(
-        &mut self,
-        def_id: DefId,
-        body: &Body<'tcx>,
-    ) -> &PointsToMap<'tcx> {
-        // 1. 首先检查缓存中是否已经有这个函数的 points-to 分析结果
-        if self.pts.contains_key(&def_id) {
-            // 如果有，直接返回缓存的结果
-            self.pts.get(&def_id).unwrap()
-        } else {
-            // 2. 如果没有，执行新的 points-to 分析
-            let mut pointer_analysis = Andersen::new(body, self.tcx, self.av);
-            pointer_analysis.analyze();
-            let pts = pointer_analysis.get_propagated_pts();
-            self.pts.entry(def_id).or_insert(pts)
-        }
-    }
     /// 检查同一函数中p1和p2的别名关系
     /// 如果pts(p1)和pts(p2)的交集不为空，则它们可能存在别名关系，否则不太可能存在别名关系
     fn intraproc_alias(
@@ -1161,34 +1117,32 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             .next()
             .is_some()
         {
-            Some(ApproximateAliasKind::Probably)
-        } else {
-            Some(ApproximateAliasKind::Unlikely)
+            return Some(ApproximateAliasKind::Probably);
         }
 
-        // let pts1 = points_to_map.get(node1)?;
-        // let pts2 = points_to_map.get(node2)?;
+        let pts1 = points_to_map.get(node1)?;
+        let pts2 = points_to_map.get(node2)?;
 
-        // fn get_place_ref<'tcx>(node: &ConstraintNode<'tcx>) -> Option<PlaceRef<'tcx>> {
-        //     match node {
-        //         ConstraintNode::Place(place) => Some(*place),
-        //         ConstraintNode::Alloc(place) => Some(*place),
-        //         _ => None,
-        //     }
-        // }
+        fn get_place_ref<'tcx>(node: &ConstraintNode<'tcx>) -> Option<PlaceRef<'tcx>> {
+            match node {
+                ConstraintNode::Place(place) => Some(*place),
+                ConstraintNode::Alloc(place) => Some(*place),
+                _ => None,
+            }
+        }
 
-        // for n1 in pts1 {
-        //     for n2 in pts2 {
-        //         match (get_place_ref(n1), get_place_ref(n2)) {
-        //             (Some(p1), Some(p2)) if p1 == p2 => {
-        //                 return Some(ApproximateAliasKind::Probably);
-        //             }
-        //             _ => continue,
-        //         }
-        //     }
-        // }
+        for n1 in pts1 {
+            for n2 in pts2 {
+                match (get_place_ref(n1), get_place_ref(n2)) {
+                    (Some(p1), Some(p2)) if p1 == p2 => {
+                        return Some(ApproximateAliasKind::Probably);
+                    }
+                    _ => continue,
+                }
+            }
+        }
 
-        // Some(ApproximateAliasKind::Unlikely)
+        Some(ApproximateAliasKind::Unlikely)
     }
 
     /// Check if `pointer` points-to `pointee` in the same function.
@@ -1606,28 +1560,60 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
+    /// Check if `pointer` points-to `pointee` in the same function.
+    fn intraproc_points_to(
+        &mut self,
+        instance: &Instance<'tcx>,
+        pointer: ConstraintNode<'tcx>,
+        pointee: ConstraintNode<'tcx>,
+    ) -> Option<ApproximateAliasKind> {
+        let body = self.tcx.instance_mir(instance.def);
+        let points_to_map = self.get_or_insert_pts(instance.def_id(), body);
+        let pointer_pts = points_to_map.get(&pointer)?;
+        // 1. if pts(pointer) contains pointee then probably alias
+        if pointer_pts.contains(&pointee) {
+            return Some(ApproximateAliasKind::Probably);
+        }
+        let pointee_pts = points_to_map.get(&pointee)?;
+        // 2. if exists p: pts(pointer) contains Place(p) and pts(pointee) contains Alloc(p) then possibly alias
+        if pointer_pts.iter().any(|n1| {
+            let p = match n1 {
+                ConstraintNode::Place(p) => *p,
+                _ => return false,
+            };
+            pointee_pts.iter().any(|n2| {
+                matches!(n2, ConstraintNode::Alloc(p2) if *p2 == p)
+                    || matches!(n2, ConstraintNode::Place(p2) if *p2 == p)
+            })
+        }) {
+            return Some(ApproximateAliasKind::Possibly);
+        } else {
+            return Some(ApproximateAliasKind::Unlikely);
+        }
+    }
+
+    fn get_parent_node(&self, node: &ConstraintNode<'tcx>) -> Option<ConstraintNode<'tcx>> {
+        match node {
+            ConstraintNode::Place(place) | ConstraintNode::Alloc(place) => {
+                if !place.projection.is_empty() {
+                    Some(ConstraintNode::Place(PlaceRef {
+                        local: place.local,
+                        projection: &[], // 空 projection 表示父节点
+                    }))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn intra_points_to(
         &mut self,
         instance: &Instance<'tcx>,
         pointer: ConstraintNode<'tcx>,
         pointee: ConstraintNode<'tcx>,
     ) -> ApproximateAliasKind {
-        fn get_parent_node<'tcx>(node: &ConstraintNode<'tcx>) -> Option<ConstraintNode<'tcx>> {
-            match node {
-                ConstraintNode::Place(place) | ConstraintNode::Alloc(place) => {
-                    if !place.projection.is_empty() {
-                        Some(ConstraintNode::Place(PlaceRef {
-                            local: place.local,
-                            projection: &[], // 空 projection 表示父节点
-                        }))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        }
-
         let body = self.tcx.instance_mir(instance.def);
         let points_to_map = self.get_or_insert_pts(instance.def_id(), body).clone();
         // let points_to_map = self.get_or_insert_propagated_pts(instance.def_id(), body).clone();
@@ -1643,22 +1629,22 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
 
             if alias_kind > final_alias_kind {
                 final_alias_kind = alias_kind;
-            }
-
-            if let Some(parent_pointer) = get_parent_node(&local_pointee) {
-                // 匹配Wrap Condvar的Arc指向关系
-                log::debug!(
-                    "child pointer: {:?} and parent pointer: {:?}",
-                    local_pointee,
-                    parent_pointer
-                );
-                if let Some(set) = points_to_map.get(&parent_pointer) {
-                    for local_pointee in set {
-                        let alias_kind = self
-                            .intraproc_alias(instance, local_pointee, &pointee)
-                            .unwrap_or(ApproximateAliasKind::Unknown);
-                        if alias_kind > final_alias_kind {
-                            final_alias_kind = alias_kind;
+            } else {
+                if let Some(parent_pointer) = self.get_parent_node(&local_pointee) {
+                    // 匹配Wrap Condvar的Arc指向关系
+                    log::debug!(
+                        "child pointer: {:?} and parent pointer: {:?}",
+                        local_pointee,
+                        parent_pointer
+                    );
+                    if let Some(sets) = points_to_map.get(&parent_pointer) {
+                        for parent_node in sets {
+                            let alias_kind = self
+                                .intraproc_alias(instance, parent_node, &pointee)
+                                .unwrap_or(ApproximateAliasKind::Unknown);
+                            if alias_kind > final_alias_kind {
+                                final_alias_kind = alias_kind;
+                            }
                         }
                     }
                 }

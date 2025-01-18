@@ -3,7 +3,6 @@ extern crate rustc_span;
 
 use rustc_middle::ty::{EarlyBinder, TypingEnv};
 use smallvec::SmallVec;
-use std::cmp::Ordering;
 
 use rustc_hash::FxHashMap;
 use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};

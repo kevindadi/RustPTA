@@ -17,16 +17,9 @@ fn addr() -> usize {
 }
 
 fn thread1() {
-    // unsafe {
-    //     VAL.get().write(24);
-    // }
     let alloc = addr();
     unsafe {
-        let val: *const i32 = std::mem::transmute(&VAL);
-        let val_mut = &*val;
-        if *val_mut == 24 {
-            ADDR.store(alloc, Relaxed);
-        }
+        VAL.get().write(24);
     }
     ADDR.store(alloc, Relaxed);
 }
@@ -42,11 +35,11 @@ fn thread2() -> bool {
             // If the new allocation is at the same address as the old one, there must be a
             // happens-before relationship between them. Therefore, we can read VAL without racing
             // and must observe the write above.
-            let val = unsafe {
-                VAL.get().write(22);
-                VAL.get().read()
-            };
+            let val1 = unsafe { VAL.get() };
 
+            let val2 = unsafe { val1.read() };
+
+            assert_eq!(val2, 24);
             return true;
         }
     }
