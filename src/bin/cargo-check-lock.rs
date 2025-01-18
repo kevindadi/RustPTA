@@ -14,9 +14,9 @@ OPTIONS:
                                    - deadlock: Deadlock detection
                                    - datarace: Data race detection
                                    - memory: Memory safety analysis
-                                   - all: Run all analyses [default: deadlock]
-    -t, --target <NAME>            Target crate for analysis
-    -o, --output <PATH>            Output path for analysis results [default: diagnostics.json]
+                                   - [default: deadlock]
+    -t, --target <NAME>            Target crate for analysis(Only underlined links can be used)
+    --pn-analysis-dir=<PATH>            Output path for analysis results [default: diagnostics.json]
         --type <TYPE>              Target crate type (binary/library) [default: binary]
         --api-spec <PATH>          Path to library API specification file
 

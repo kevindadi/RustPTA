@@ -17,9 +17,16 @@ fn addr() -> usize {
 }
 
 fn thread1() {
+    // unsafe {
+    //     VAL.get().write(24);
+    // }
     let alloc = addr();
     unsafe {
-        VAL.get().write(42);
+        let val: *const i32 = std::mem::transmute(&VAL);
+        let val_mut = &*val;
+        if *val_mut == 24 {
+            ADDR.store(alloc, Relaxed);
+        }
     }
     ADDR.store(alloc, Relaxed);
 }
@@ -27,7 +34,7 @@ fn thread1() {
 fn thread2() -> bool {
     // We try to get an allocation at the same address as the global `ADDR`. If we fail too often,
     // just bail. `main` will try again with a different allocation.
-    for _ in 0..16 {
+    for _ in 0..100 {
         let alloc = addr();
         let addr = ADDR.load(Relaxed);
         if alloc == addr {
@@ -36,10 +43,10 @@ fn thread2() -> bool {
             // happens-before relationship between them. Therefore, we can read VAL without racing
             // and must observe the write above.
             let val = unsafe {
-                // VAL.get().write(24);
+                VAL.get().write(22);
                 VAL.get().read()
             };
-            assert_eq!(val, 24);
+
             return true;
         }
     }
@@ -52,7 +59,16 @@ fn main() {
     while !success {
         let t1 = thread::spawn(thread1);
         let t2 = thread::spawn(thread2);
+
         t1.join().unwrap();
+        // unsafe {
+        //     let alloc = addr();
+        //     let val = VAL.get() as *mut i32;
+        //     if *val != 24 {
+        //         *val = 24;
+        //         ADDR.store(alloc, Relaxed);
+        //     }
+        // }
         success = t2.join().unwrap();
 
         // Reset everything.

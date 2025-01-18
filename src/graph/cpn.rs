@@ -188,7 +188,6 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
         }
     }
 
-    // 添加控制库所
     fn add_control_place(&mut self, basic_block: String, token_num: usize) -> NodeIndex {
         self.net.add_node(ColorPetriNode::ControlPlace {
             basic_block,
@@ -224,11 +223,9 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
             .map(|(local, info)| (*local, info.clone()))
             .collect();
 
-        // 两两比较数据
         for i in 0..places_data.len() {
             let (local_i, info_i) = &places_data[i];
 
-            // 如果这个数据已经被分配了别名组，跳过
             if alias_groups
                 .values()
                 .any(|group| group.iter().any(|(l, _)| l == local_i))
@@ -238,7 +235,6 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
 
             let mut current_group = vec![(local_i.clone(), info_i.clone())];
 
-            // 与剩余数据比较
             for j in i + 1..places_data.len() {
                 let (local_j, info_j) = &places_data[j];
                 match self.alias.borrow_mut().alias(*local_i, *local_j) {
@@ -249,7 +245,6 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                 }
             }
 
-            // 如果找到了别名（包括自己），创建新的别名组
             if !current_group.is_empty() {
                 alias_groups.insert(next_alias_id, current_group);
                 next_alias_id += 1;
@@ -267,15 +262,12 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
                 1,
             );
 
-            // 记录每个数据对应的库所
             for (local, _) in group {
                 self.unsafe_places.insert(local, node);
             }
         }
-        // log::info!("unsafe_places: {:?}", self.unsafe_places);
     }
 
-    // 设置标识
     pub fn set_marking(&mut self, place: NodeIndex, tokens: usize) {
         self.marking.insert(place, tokens);
     }
@@ -300,7 +292,6 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
         self.construct_func();
         self.construct_unsafe_places();
 
-        // 设置一个id,记录已经转换的函数
         let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
@@ -321,10 +312,8 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
 
         self.reduce_state();
 
-        // 验证网络结构
         if let Err(err) = self.verify_structure() {
             log::error!("Color Petri net structure verification failed: {}", err);
-            // 可以选择在这里panic或进行其他错误处理
         }
     }
 
@@ -466,7 +455,7 @@ impl<'analysis, 'tcx> ColorPetriNet<'analysis, 'tcx> {
         }
     }
 
-    /// 验证彩色Petri网的结构正确性
+    /// 验证着色Petri网的结构正确性
     ///
     /// 检查规则:
     /// 1. UnsafeTransition的前驱必须包含至少一个控制库所和一个数据库所

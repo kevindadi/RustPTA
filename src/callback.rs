@@ -251,6 +251,8 @@ impl PTACallbacks {
                 let atomicity_violation = detector.detect();
                 log::info!("atomicity_violation: {}", atomicity_violation);
 
+                // log::info!("atomic_races: {}", detector.generate_atomic_races());
+
                 if self.options.dump_options.dump_points_to {
                     pn.alias.borrow_mut().print_all_points_to_relations();
                 }

@@ -52,6 +52,32 @@ impl<'a> AtomicityViolationDetector<'a> {
         report
     }
 
+    pub fn generate_atomic_races(&self) -> String {
+        let mut report = String::new();
+        report.push_str("Found Atomic Race Conditions:\n\n");
+
+        for (i, info) in self.state_graph.atomic_races.iter().enumerate() {
+            report.push_str(&format!("Race Condition #{}\n", i + 1));
+            report.push_str(&format!("State: {:?}\n", info.state));
+            report.push_str("Conflicting Operations:\n");
+
+            for op in &info.operations {
+                report.push_str(&format!(
+                    "- {} operation at {}, ordering: {}\n",
+                    match op.op_type {
+                        AtomicOpType::Load => "Load",
+                        AtomicOpType::Store => "Store",
+                    },
+                    op.span,
+                    op.ordering
+                ));
+            }
+            report.push_str("\n");
+        }
+
+        report
+    }
+
     fn collect_atomic_operations(
         &self,
     ) -> (HashMap<NodeIndex, AtomicOp>, HashMap<NodeIndex, AtomicOp>) {
@@ -226,4 +252,25 @@ impl<'a> AtomicityViolationDetector<'a> {
             None
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AtomicRaceInfo {
+    pub state: Vec<(usize, u8)>,              // 发生竞争的状态
+    pub operations: Vec<AtomicRaceOperation>, // 冲突的操作
+}
+
+#[derive(Debug, Clone)]
+pub struct AtomicRaceOperation {
+    pub op_type: AtomicOpType,
+    pub transition: NodeIndex,
+    pub var_id: AliasId,
+    pub ordering: String,
+    pub span: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AtomicOpType {
+    Load,
+    Store,
 }

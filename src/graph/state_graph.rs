@@ -1,19 +1,20 @@
+use super::pn::{PetriNetEdge, PetriNetNode};
+use crate::detect::atomicity_violation::AtomicOpType;
+use crate::detect::atomicity_violation::AtomicRaceInfo;
+use crate::detect::atomicity_violation::AtomicRaceOperation;
+use crate::graph::pn::CallType;
+use crate::graph::pn::ControlType;
+use crate::options::Options;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Direction, Graph};
 use rustc_hir::def_id::DefId;
-
-use std::io::Write;
-
-use crate::options::Options;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::hash::Hasher;
-
-use super::pn::{PetriNetEdge, PetriNetNode};
-
-use serde::Serialize;
+use std::io::Write;
 
 #[derive(Debug, Clone)]
 pub struct StateEdge {
@@ -91,6 +92,7 @@ pub struct StateGraph {
     pub initial_net: Box<Graph<PetriNetNode, PetriNetEdge>>,
     pub initial_mark: HashSet<(NodeIndex, u8)>,
     pub deadlock_marks: HashSet<Vec<(usize, u8)>>,
+    pub atomic_races: Vec<AtomicRaceInfo>,
     pub apis_deadlock_marks: HashMap<String, HashSet<Vec<(usize, u8)>>>,
     pub apis_graph: HashMap<String, Box<Graph<StateNode, StateEdge>>>,
     pub function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
@@ -111,6 +113,7 @@ impl StateGraph {
             initial_net: Box::new(initial_net),
             initial_mark,
             deadlock_marks: HashSet::new(),
+            atomic_races: Vec::new(),
             apis_deadlock_marks: HashMap::new(),
             apis_graph: HashMap::new(),
             function_counter,
@@ -160,6 +163,15 @@ impl StateGraph {
                 continue;
             } else {
                 visited_states.insert(current_state_node.clone());
+            }
+
+            // 检查原子变量访问冲突
+            if let Some(race_info) = self.check_atomic_race(
+                &enabled_transitions,
+                &current_net,
+                &normalize_state(&current_mark),
+            ) {
+                self.atomic_races.push(race_info);
             }
 
             let current_node = state_index_map.get(&current_state_node).unwrap().clone();
@@ -310,6 +322,76 @@ impl StateGraph {
                         );
                 }
             }
+        }
+    }
+
+    fn check_atomic_race(
+        &mut self,
+        enabled_transitions: &[NodeIndex],
+        net: &Graph<PetriNetNode, PetriNetEdge>,
+        current_state: &Vec<(usize, u8)>,
+    ) -> Option<AtomicRaceInfo> {
+        let mut operations = Vec::new();
+        let mut has_race = false;
+
+        // 收集所有原子操作
+        for &t in enabled_transitions {
+            if let Some(PetriNetNode::T(transition)) = net.node_weight(t) {
+                match &transition.transition_type {
+                    ControlType::Call(CallType::AtomicLoad(var_id, ordering, span, _)) => {
+                        operations.push(AtomicRaceOperation {
+                            op_type: AtomicOpType::Load,
+                            transition: t,
+                            var_id: var_id.clone(),
+                            ordering: format!("{:?}", ordering),
+                            span: span.clone(),
+                        });
+                    }
+                    ControlType::Call(CallType::AtomicStore(var_id, ordering, span, _)) => {
+                        operations.push(AtomicRaceOperation {
+                            op_type: AtomicOpType::Store,
+                            transition: t,
+                            var_id: var_id.clone(),
+                            ordering: format!("{:?}", ordering),
+                            span: span.clone(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 检查冲突
+        for i in 0..operations.len() {
+            for j in i + 1..operations.len() {
+                if operations[i].var_id == operations[j].var_id {
+                    // store-store 冲突
+                    if operations[i].op_type == AtomicOpType::Store
+                        && operations[j].op_type == AtomicOpType::Store
+                    {
+                        has_race = true;
+                    }
+                    // store-load 冲突 (当 load 是 Relaxed 时)
+                    else if (operations[i].op_type == AtomicOpType::Store
+                        && operations[j].op_type == AtomicOpType::Load
+                        && operations[j].ordering == "Relaxed")
+                        || (operations[i].op_type == AtomicOpType::Load
+                            && operations[j].op_type == AtomicOpType::Store
+                            && operations[i].ordering == "Relaxed")
+                    {
+                        has_race = true;
+                    }
+                }
+            }
+        }
+
+        if has_race {
+            Some(AtomicRaceInfo {
+                state: current_state.clone(),
+                operations,
+            })
+        } else {
+            None
         }
     }
 
