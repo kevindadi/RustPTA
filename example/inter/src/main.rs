@@ -5,8 +5,8 @@ struct Foo {
     rw1: sync::RwLock<i32>,
     mu2: parking_lot::Mutex<i32>,
     rw2: parking_lot::RwLock<i32>,
-    mu3: spin::Mutex<i32>,
-    rw3: spin::RwLock<i32>,
+    // mu3: spin::Mutex<i32>,
+    // rw3: spin::RwLock<i32>,
 }
 
 impl Foo {
@@ -16,8 +16,8 @@ impl Foo {
             rw1: sync::RwLock::new(1),
             mu2: parking_lot::Mutex::new(1),
             rw2: parking_lot::RwLock::new(1),
-            mu3: spin::Mutex::new(1),
-            rw3: spin::RwLock::new(1),
+            // mu3: spin::Mutex::new(1),
+            // rw3: spin::RwLock::new(1),
         }
     }
 
@@ -108,52 +108,52 @@ impl Foo {
         *self.rw2.write() += 1;
     }
 
-    fn spin_mutex_1(&self) {
-        match *self.mu3.lock() {
-            1 => self.recur(),
-            _ => {
-                self.spin_mutex_2();
-            }
-        };
-    }
+    // fn spin_mutex_1(&self) {
+    //     match *self.mu3.lock() {
+    //         1 => self.recur(),
+    //         _ => {
+    //             self.spin_mutex_2();
+    //         }
+    //     };
+    // }
 
-    fn recur(&self) {
-        self.spin_mutex_1();
-    }
+    // fn recur(&self) {
+    //     self.spin_mutex_1();
+    // }
 
-    fn spin_mutex_2(&self) {
-        *self.mu3.lock() += 1;
-    }
+    // fn spin_mutex_2(&self) {
+    //     *self.mu3.lock() += 1;
+    // }
 
-    fn spin_rwlock_read_1(&self) {
-        match *self.rw3.read() {
-            1 => {
-                self.spin_rwlock_write_2();
-            }
-            _ => {
-                self.spin_rwlock_read_2();
-            }
-        }
-    }
+    // fn spin_rwlock_read_1(&self) {
+    //     match *self.rw3.read() {
+    //         1 => {
+    //             self.spin_rwlock_write_2();
+    //         }
+    //         _ => {
+    //             self.spin_rwlock_read_2();
+    //         }
+    //     }
+    // }
 
-    fn spin_rwlock_write_1(&self) {
-        match *self.rw3.write() {
-            1 => {
-                self.spin_rwlock_write_2();
-            }
-            _ => {
-                self.spin_rwlock_read_2();
-            }
-        };
-    }
+    // fn spin_rwlock_write_1(&self) {
+    //     match *self.rw3.write() {
+    //         1 => {
+    //             self.spin_rwlock_write_2();
+    //         }
+    //         _ => {
+    //             self.spin_rwlock_read_2();
+    //         }
+    //     };
+    // }
 
-    fn spin_rwlock_read_2(&self) {
-        let _ = *self.rw3.read();
-    }
+    // fn spin_rwlock_read_2(&self) {
+    //     let _ = *self.rw3.read();
+    // }
 
-    fn spin_rwlock_write_2(&self) {
-        *self.rw3.write() += 1;
-    }
+    // fn spin_rwlock_write_2(&self) {
+    //     *self.rw3.write() += 1;
+    // }
 }
 
 pub fn main() {
@@ -163,19 +163,19 @@ pub fn main() {
     // foo1.sync_mutex_2();
     // foo1.sync_rwlock_read_1();
     // foo1.sync_rwlock_write_1();
-    // foo1.parking_lot_mutex_1();
-    // foo1.parking_lot_mutex_2();
+    foo1.parking_lot_mutex_1();
+    foo1.parking_lot_mutex_2();
 
-    // foo1.parking_lot_rwlock_read_1();
-    // foo1.parking_lot_rwlock_read_2();
-    // foo1.parking_lot_rwlock_write_1();
-    // foo1.parking_lot_rwlock_write_2();
+    foo1.parking_lot_rwlock_read_1();
+    foo1.parking_lot_rwlock_read_2();
+    foo1.parking_lot_rwlock_write_1();
+    foo1.parking_lot_rwlock_write_2();
 
     // foo1.spin_mutex_1();
     // foo1.spin_mutex_2();
-    foo1.recur();
-    foo1.spin_rwlock_read_1();
-    foo1.spin_rwlock_read_2();
-    foo1.spin_rwlock_write_1();
-    foo1.spin_rwlock_write_2();
+    // foo1.recur();
+    // foo1.spin_rwlock_read_1();
+    // foo1.spin_rwlock_read_2();
+    // foo1.spin_rwlock_write_1();
+    // foo1.spin_rwlock_write_2();
 }
