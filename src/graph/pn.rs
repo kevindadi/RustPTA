@@ -613,7 +613,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             union_find.insert(lock_id.clone(), lock_id.clone());
         }
 
-        // 合并有别名关系的锁
+        // 添加调试输出：显示所有的别名关系
+        log::debug!("=== 检测到的别名关系 ===");
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
                 match self
@@ -622,15 +623,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
                 {
                     ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+                        log::debug!("锁 {:?} 和 {:?} 存在别名关系", lockid_vec[i], lockid_vec[j]);
                         union(&mut union_find, &lockid_vec[i], &lockid_vec[j]);
                     }
-                    _ => {
-                        log::debug!(
-                            "lockid_vec[i]: {:?} and lockid_vec[j]: {:?} alias unknown",
-                            lockid_vec[i],
-                            lockid_vec[j]
-                        );
-                    }
+                    _ => {}
                 }
             }
         }
@@ -642,7 +638,24 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             temp_groups.entry(root).or_default().push(lock_id.clone());
         }
 
-        // 将分组转换为所需的格式：用组内所有成员作为key
+        // 添加调试输出：显示分组结果
+        log::debug!("\n=== 锁的分组结果 ===");
+        for (group_id, (root, group)) in temp_groups.iter().enumerate() {
+            log::debug!("组 {}: ", group_id);
+            log::debug!("  根节点: {:?}", root);
+            log::debug!("  组内成员:");
+            for lock in group {
+                let lock_type = match &info[lock].lockguard_ty {
+                    LockGuardTy::StdMutex(_) => "StdMutex",
+                    LockGuardTy::ParkingLotMutex(_) => "ParkingLotMutex",
+                    LockGuardTy::SpinMutex(_) => "SpinMutex",
+                    _ => "RwLock",
+                };
+                log::debug!("    - {:?} (类型: {})", lock, lock_type);
+            }
+        }
+
+        // 将分组转换为所需的格式并创建对应的Place节点
         let mut group_id = 0;
         for group in temp_groups.values() {
             match &info[&group[0]].lockguard_ty {
@@ -650,16 +663,18 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
                     let lock_name = format!("Mutex_{}", group_id);
-                    let lock_p = Place::new(lock_name, 1, PlaceType::Lock);
+                    let lock_p = Place::new(lock_name.clone(), 1, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
+                    log::debug!("创建 Mutex 节点: {}", lock_name);
                     for lock in group {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
                 }
                 _ => {
                     let lock_name = format!("RwLock_{}", group_id);
-                    let lock_p = Place::new(lock_name, 10, PlaceType::Lock);
+                    let lock_p = Place::new(lock_name.clone(), 10, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
+                    log::debug!("创建 RwLock 节点: {}", lock_name);
                     for lock in group {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
@@ -667,6 +682,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
             group_id += 1;
         }
+        log::info!("总共发现 {} 个锁组", group_id);
     }
 
     /// 简化 Petri 网中的状态,通过合并简单路径来减少网络的复杂度

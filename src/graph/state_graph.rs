@@ -146,8 +146,7 @@ impl StateGraph {
         state_index_map.insert(initial_state.clone(), initial_node);
 
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
-            // 获取当前状态下所有使能的变迁
-            let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
+            let enabled_transitions = get_enabled_transitions(&mut current_net, &current_mark);
 
             // 如果没有使能的变迁，将当前状态添加到死锁标识集合中
             if enabled_transitions.is_empty() {
@@ -205,14 +204,12 @@ impl StateGraph {
                 let new_state = StateNode::new(normalize_state(&new_mark), mark_node_index);
 
                 if let Some(&existing_node) = state_index_map.get(&new_state) {
-                    // 状态已存在，只添加边
                     self.graph.add_edge(
                         current_node.clone(),
                         existing_node,
                         StateEdge::new(format!("{:?}", transition), transition, 1),
                     );
                 } else {
-                    // 新状态，添加节点和边
                     queue.push_back((new_net.clone(), new_mark.clone()));
                     let new_node = self.graph.add_node(new_state.clone());
                     state_index_map.insert(new_state, new_node);
@@ -250,7 +247,7 @@ impl StateGraph {
         }
 
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
-            let enabled_transitions = self.get_enabled_transitions(&mut current_net, &current_mark);
+            let enabled_transitions = get_enabled_transitions(&mut current_net, &current_mark);
 
             if enabled_transitions.is_empty() {
                 let current_state_normalized = normalize_state(&current_mark);
@@ -334,7 +331,6 @@ impl StateGraph {
         let mut operations = Vec::new();
         let mut has_race = false;
 
-        // 收集所有原子操作
         for &t in enabled_transitions {
             if let Some(PetriNetNode::T(transition)) = net.node_weight(t) {
                 match &transition.transition_type {
@@ -393,55 +389,6 @@ impl StateGraph {
         } else {
             None
         }
-    }
-
-    /// 获取当前标识下所有使能的变迁
-    /// 1. 使用 `set_current_mark` 函数设置当前标识
-    /// 2. 遍历网络中的每个节点，检查其是否为变迁节点
-    /// 3. 对于每个变迁节点，检查其所有输入库所是否有足够的 token
-    /// 4. 如果所有输入库所的 token 数量均满足要求，则该变迁为使能状态
-    /// 5. 将所有使能的变迁节点索引添加到返回的向量中
-    pub fn get_enabled_transitions(
-        &self,
-        net: &mut Graph<PetriNetNode, PetriNetEdge>,
-        mark: &HashSet<(NodeIndex, u8)>,
-    ) -> Vec<NodeIndex> {
-        let mut sched_transiton = Vec::<NodeIndex>::new();
-
-        // 使用内联函数设置当前标识
-        set_current_mark(net, mark);
-
-        // 检查变迁使能的逻辑
-        for node_index in net.node_indices() {
-            match net.node_weight(node_index) {
-                Some(PetriNetNode::T(_)) => {
-                    let mut enabled = true;
-                    for edge in net.edges_directed(node_index, Direction::Incoming) {
-                        match net.node_weight(edge.source()).unwrap() {
-                            PetriNetNode::P(place) => {
-                                if *place.tokens.read().unwrap() < edge.weight().label {
-                                    enabled = false;
-                                    break;
-                                }
-                                // if *place.tokens.borrow() < edge.weight().label {
-                                //     enabled = false;
-                                //     break;
-                                // }
-                            }
-                            _ => {
-                                log::error!("The predecessor set of transition is not place");
-                            }
-                        }
-                    }
-                    if enabled {
-                        sched_transiton.push(node_index);
-                    }
-                }
-                _ => continue,
-            }
-        }
-
-        sched_transiton
     }
 
     // pub fn fire_transition(
@@ -653,4 +600,52 @@ pub fn fire_transition(
     }
 
     (Box::new(new_net), new_state) // 返回新图和新状态
+}
+
+/// 获取当前标识下所有使能的变迁
+/// 1. 使用 `set_current_mark` 函数设置当前标识
+/// 2. 遍历网络中的每个节点，检查其是否为变迁节点
+/// 3. 对于每个变迁节点，检查其所有输入库所是否有足够的 token
+/// 4. 如果所有输入库所的 token 数量均满足要求，则该变迁为使能状态
+/// 5. 将所有使能的变迁节点索引添加到返回的向量中
+pub fn get_enabled_transitions(
+    net: &mut Graph<PetriNetNode, PetriNetEdge>,
+    mark: &HashSet<(NodeIndex, u8)>,
+) -> Vec<NodeIndex> {
+    let mut sched_transiton = Vec::<NodeIndex>::new();
+
+    // 使用内联函数设置当前标识
+    set_current_mark(net, mark);
+
+    // 检查变迁使能的逻辑
+    for node_index in net.node_indices() {
+        match net.node_weight(node_index) {
+            Some(PetriNetNode::T(_)) => {
+                let mut enabled = true;
+                for edge in net.edges_directed(node_index, Direction::Incoming) {
+                    match net.node_weight(edge.source()).unwrap() {
+                        PetriNetNode::P(place) => {
+                            if *place.tokens.read().unwrap() < edge.weight().label {
+                                enabled = false;
+                                break;
+                            }
+                            // if *place.tokens.borrow() < edge.weight().label {
+                            //     enabled = false;
+                            //     break;
+                            // }
+                        }
+                        _ => {
+                            log::error!("The predecessor set of transition is not place");
+                        }
+                    }
+                }
+                if enabled {
+                    sched_transiton.push(node_index);
+                }
+            }
+            _ => continue,
+        }
+    }
+
+    sched_transiton
 }
