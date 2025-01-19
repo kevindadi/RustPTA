@@ -146,6 +146,7 @@ impl StateGraph {
         state_index_map.insert(initial_state.clone(), initial_node);
 
         while let Some((mut current_net, current_mark)) = queue.pop_front() {
+            log::debug!("Processing state with marking: {:?}", current_mark);
             let enabled_transitions = get_enabled_transitions(&mut current_net, &current_mark);
 
             // 如果没有使能的变迁，将当前状态添加到死锁标识集合中
