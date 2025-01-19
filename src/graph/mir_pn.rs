@@ -537,7 +537,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end: NodeIndex,
         span: &str,
     ) {
-        log::info!("handle_rayon_join: {:?}", callee_func_name);
+        log::debug!("handle_rayon_join: {:?}", callee_func_name);
         let bb_wait_name = format!("{}_{}_{}", callee_func_name, bb_idx.index(), "wait_closure");
         let bb_wait_place =
             Place::new_with_span(bb_wait_name, 0, PlaceType::BasicBlock, span.to_string());
