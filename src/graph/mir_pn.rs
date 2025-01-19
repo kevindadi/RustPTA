@@ -19,6 +19,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         visit::Visitor, BasicBlock, BasicBlockData, Const, Operand, SwitchTargets, TerminatorKind,
+        UnwindAction,
     },
     ty,
 };
@@ -26,7 +27,7 @@ use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
-use rustc_span::source_map::Spanned;
+use rustc_span::{source_map::Spanned, sym::tt};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -60,6 +61,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
     pub exclude_bb: HashSet<usize>,
     return_transition: NodeIndex,
+    entry_exit: (NodeIndex, NodeIndex),
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -81,6 +83,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
         atomic_places: &'translate HashMap<AliasId, NodeIndex>,
         atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
+        entry_exit: (NodeIndex, NodeIndex),
     ) -> Self {
         Self {
             instance_id,
@@ -111,6 +114,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             atomic_order_maps,
             exclude_bb: HashSet::new(),
             return_transition: NodeIndex::new(0),
+            entry_exit,
         }
     }
 
@@ -192,16 +196,20 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 args,
                 destination,
                 target,
+                unwind,
                 ..
-            } => self.handle_call(
-                bb_idx,
-                func,
-                args,
-                destination,
-                target,
-                name,
-                &format!("{:?}", term.source_info.span),
-            ),
+            } => {
+                self.handle_call(
+                    bb_idx,
+                    func,
+                    args,
+                    destination,
+                    target,
+                    name,
+                    &format!("{:?}", term.source_info.span),
+                    unwind,
+                );
+            }
             TerminatorKind::Drop { place, target, .. } => {
                 self.handle_drop(&bb_idx, place, target, name, bb)
             }
@@ -214,6 +222,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     fn handle_goto(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
+        if self.body.basic_blocks[*target].is_cleanup {
+            self.handle_panic(bb_idx, name);
+            return;
+        }
+
         let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "goto");
         let bb_term_transition = Transition::new(bb_term_name, ControlType::Goto);
         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
@@ -1244,6 +1257,34 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
     }
 
+    fn handle_unwind_continue(&mut self, bb_idx: BasicBlock, name: &str) {
+        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "unwind");
+        let bb_term_transition =
+            Transition::new(bb_term_name, ControlType::Return(self.instance_id));
+        let bb_term_node = self.net.add_node(PetriNetNode::T(bb_term_transition));
+        self.net.add_edge(
+            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            bb_term_node,
+            PetriNetEdge { label: 1 },
+        );
+        self.net
+            .add_edge(bb_term_node, self.entry_exit.1, PetriNetEdge { label: 1 });
+    }
+
+    fn handle_panic(&mut self, bb_idx: BasicBlock, name: &str) {
+        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "panic");
+        let bb_term_transition =
+            Transition::new(bb_term_name, ControlType::Return(self.instance_id));
+        let bb_term_node = self.net.add_node(PetriNetNode::T(bb_term_transition));
+        self.net.add_edge(
+            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            bb_term_node,
+            PetriNetEdge { label: 1 },
+        );
+        self.net
+            .add_edge(bb_term_node, self.entry_exit.1, PetriNetEdge { label: 1 });
+    }
+
     fn handle_call(
         &mut self,
         bb_idx: BasicBlock,
@@ -1253,7 +1294,23 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         name: &str,
         span: &str,
+        unwind: &UnwindAction,
     ) {
+        // 只有continue当做return处理
+        match (target, unwind) {
+            (None, UnwindAction::Continue) => {
+                self.handle_unwind_continue(bb_idx, name);
+                return;
+            }
+            (Some(t), _) => {
+                if self.body.basic_blocks[*t].is_cleanup {
+                    self.handle_panic(bb_idx, name);
+                    return;
+                }
+            }
+            _ => {}
+        }
+
         let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "call");
         let bb_end = self.create_call_transition(bb_idx, &bb_term_name);
         let callee_ty = func.ty(self.body, self.tcx);
@@ -1353,6 +1410,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
         // 5. 处理普通函数调用
         log::debug!("callee_func_name with normal: {:?}", callee_func_name);
+        if callee_func_name.contains("core::panic") {
+            self.net
+                .add_edge(bb_end, self.entry_exit.1, PetriNetEdge { label: 1 });
+            return;
+        }
         self.handle_normal_call(bb_end, target, name, bb_idx, span, &callee_def_id, args);
     }
 
@@ -1418,6 +1480,16 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
         let def_id = self.instance.def_id();
 
         let fn_name = self.tcx.def_path_str(def_id);
+
+        // 跳过序列化/反序列化相关函数
+        if fn_name.contains("::deserialize")
+            || fn_name.contains("::serialize")
+            || fn_name.contains("::visit_seq")
+            || fn_name.contains("::visit_map")
+        {
+            log::debug!("Skipping serialization function: {}", fn_name);
+            return;
+        }
 
         // 闭包中使用println！会导致promoted到一个独立MIR中
         // fix: 若在闭包中只构建常量,则promoted块会占据一个Block导致错误

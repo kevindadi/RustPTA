@@ -153,11 +153,13 @@ impl StateGraph {
             if enabled_transitions.is_empty() {
                 let current_state_normalized = normalize_state(&current_mark);
                 self.deadlock_marks.insert(current_state_normalized.clone());
+                // log::warn!("Deadlock state found: {:?}", current_mark);
                 continue;
             }
             let current_state_node = StateNode::new(
                 normalize_state(&current_mark),
-                current_mark.clone().into_iter().map(|(n, _)| n).collect(),
+                // current_mark.clone().into_iter().map(|(n, _)| n).collect(),
+                current_mark.iter().map(|(n, _)| *n).collect(),
             );
             if visited_states.contains(&current_state_node) {
                 continue;
@@ -171,23 +173,34 @@ impl StateGraph {
                 &current_net,
                 &normalize_state(&current_mark),
             ) {
+                // log::warn!("Atomic race detected: {:?}", race_info);
                 self.atomic_races.push(race_info);
             }
 
-            let current_node = state_index_map.get(&current_state_node).unwrap().clone();
+            // 获取当前状态的节点索引
+            let current_node = match state_index_map.get(&current_state_node) {
+                Some(&node) => node,
+                None => {
+                    log::error!(
+                        "Current state not found in index map: {:?}",
+                        current_state_node
+                    );
+                    continue;
+                }
+            };
 
             let new_states: Vec<_> = {
                 let mut handles = vec![];
 
                 for transition in enabled_transitions {
-                    let current_net = current_net.clone();
+                    let mut net_clone = current_net.clone();
                     let current_mark = current_mark.clone();
 
                     let handle = std::thread::spawn(move || {
-                        let mut net_clone = current_net.clone();
-                        let (new_net, new_mark) =
-                            fire_transition(&mut net_clone, &current_mark, transition);
-                        (transition, new_net, new_mark)
+                        match fire_transition(&mut net_clone, &current_mark, transition) {
+                            Ok((new_net, new_mark)) => Ok((transition, new_net, new_mark)),
+                            Err(e) => Err(format!("Error firing transition: {:?}", e)),
+                        }
                     });
 
                     handles.push(handle);
@@ -195,7 +208,17 @@ impl StateGraph {
 
                 handles
                     .into_iter()
-                    .map(|handle| handle.join().unwrap())
+                    .filter_map(|handle| match handle.join() {
+                        Ok(Ok(result)) => Some(result),
+                        Ok(Err(e)) => {
+                            log::error!("{}", e);
+                            None
+                        }
+                        Err(e) => {
+                            log::error!("Thread panicked: {:?}", e);
+                            None
+                        }
+                    })
                     .collect()
             };
 
@@ -274,15 +297,27 @@ impl StateGraph {
 
                     let handle = std::thread::spawn(move || {
                         let mut net_clone = current_net.clone();
-                        let (new_net, new_mark) =
-                            fire_transition(&mut net_clone, &current_mark, transition);
-                        (transition, new_net, new_mark)
+                        match fire_transition(&mut net_clone, &current_mark, transition) {
+                            Ok((new_net, new_mark)) => Ok((transition, new_net, new_mark)),
+                            Err(e) => Err(format!("Error firing transition: {:?}", e)),
+                        }
                     });
                     handles.push(handle);
                 }
+
                 handles
                     .into_iter()
-                    .map(|handle| handle.join().unwrap())
+                    .filter_map(|handle| match handle.join() {
+                        Ok(Ok(result)) => Some(result),
+                        Ok(Err(e)) => {
+                            log::error!("{}", e);
+                            None
+                        }
+                        Err(e) => {
+                            log::error!("Thread panicked: {:?}", e);
+                            None
+                        }
+                    })
                     .collect()
             };
 
@@ -470,29 +505,19 @@ impl StateGraph {
     #[allow(dead_code)]
     pub fn dot(&self) -> std::io::Result<()> {
         if self.options.dump_options.dump_state_graph {
-            let sg_dot = format!(
-                "digraph {{\n{:?}\n}}",
-                Dot::with_config(&self.graph, &[Config::GraphContentOnly])
-            );
+            let output_path = self
+                .options
+                .output
+                .as_ref()
+                .unwrap()
+                .join("state_graph.dot");
 
-            let mut file = std::fs::File::create(
-                self.options
-                    .output
-                    .as_ref()
-                    .unwrap()
-                    .join("state_graph.dot"),
-            )
-            .unwrap();
-            let _ = file.write_all(format!("{:?}", sg_dot).as_bytes());
-            log::info!(
-                "State graph saved to {}",
-                self.options
-                    .output
-                    .as_ref()
-                    .unwrap()
-                    .join("state_graph.dot")
-                    .display()
-            );
+            let mut file = std::fs::File::create(&output_path)?;
+
+            // 使用 petgraph 的 Dot 结构直接写入
+            write!(file, "{:?}", Dot::new(&self.graph))?;
+
+            log::info!("State graph saved to {}", output_path.display());
         }
         Ok(())
     }
@@ -539,10 +564,13 @@ pub fn fire_transition(
     net: &mut Graph<PetriNetNode, PetriNetEdge>,
     mark: &HashSet<(NodeIndex, u8)>,
     transition: NodeIndex,
-) -> (
-    Box<Graph<PetriNetNode, PetriNetEdge>>,
-    HashSet<(NodeIndex, u8)>,
-) {
+) -> Result<
+    (
+        Box<Graph<PetriNetNode, PetriNetEdge>>,
+        HashSet<(NodeIndex, u8)>,
+    ),
+    String,
+> {
     let mut new_net = net.clone(); // 克隆当前网，创建新图
     set_current_mark(&mut new_net, mark);
     let mut new_state = HashSet::<(NodeIndex, u8)>::new();
@@ -600,7 +628,7 @@ pub fn fire_transition(
         }
     }
 
-    (Box::new(new_net), new_state) // 返回新图和新状态
+    Ok((Box::new(new_net), new_state)) // 返回新图和新状态
 }
 
 /// 获取当前标识下所有使能的变迁

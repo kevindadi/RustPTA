@@ -23,6 +23,7 @@ use std::hash::Hash;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use thiserror::Error;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
@@ -251,12 +252,11 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     lock_info: LockGuardMap<'tcx>,
     // all condvars
     condvars: HashMap<CondVarId, NodeIndex>,
-    pub entry_node: NodeIndex,
     pub api_spec: ApiSpec,
     pub api_marks: HashMap<String, HashSet<(NodeIndex, u8)>>,
     atomic_places: HashMap<AliasId, NodeIndex>,
     atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
-    pub exit_node: NodeIndex,
+    pub entry_exit: (NodeIndex, NodeIndex),
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
@@ -281,12 +281,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
             condvars: HashMap::<CondVarId, NodeIndex>::new(),
-            entry_node: NodeIndex::new(0),
             api_spec,
             api_marks: HashMap::<String, HashSet<(NodeIndex, u8)>>::new(),
             atomic_places: HashMap::<AliasId, NodeIndex>::new(),
             atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
-            exit_node: NodeIndex::new(0),
+            entry_exit: (NodeIndex::new(0), NodeIndex::new(0)),
         }
     }
 
@@ -360,6 +359,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn construct(&mut self /*alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>*/) {
+        let start_time = Instant::now();
         log::info!("construct petri net");
         self.construct_func();
 
@@ -400,10 +400,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         //self.reduce_state_from(self.entry_node);
 
         // 验证网络结构
-        if let Err(err) = self.verify_structure() {
+        if let Err(err) = self.verify_and_clean() {
             log::error!("Petri net structure verification failed: {}", err);
             // 可以选择在这里panic或者进行其他错误处理
         }
+        log::info!("construct petri net time: {:?}", start_time.elapsed());
     }
 
     pub fn visitor_function_body(
@@ -437,6 +438,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &self.condvars,
             &self.atomic_places,
             &self.atomic_order_maps,
+            self.entry_exit,
         );
         func_body.translate();
     }
@@ -462,8 +464,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         self.process_functions(|self_, func_id, func_name| {
             if func_id == main_func {
                 let (start, end) = self_.create_function_places(func_name, true);
-                self_.entry_node = start;
-                self_.exit_node = end;
+                self_.entry_exit = (start, end);
                 (start, end)
             } else {
                 self_.create_function_places(func_name, false)
@@ -488,6 +489,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let func_name = format_name(func_id);
             if !func_name.starts_with(&self.options.crate_name)
                 || self.function_counter.contains_key(&func_id)
+                || func_name.contains("::deserialize")
+                || func_name.contains("::serialize")
+                || func_name.contains("::visit_seq")
+                || func_name.contains("::visit_map")
             {
                 continue;
             }
@@ -1056,11 +1061,26 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     /// 返回:
     /// - Ok(()) 如果网络结构正确
     /// - Err(String) 包含错误描述的字符串
-    pub fn verify_structure(&self) -> Result<()> {
+    pub fn verify_structure(&self) -> Result<Vec<NodeIndex>> {
+        let mut transitions_to_remove = Vec::new();
+
+        // 检查结构并收集需要删除的变迁
         for node_idx in self.net.node_indices() {
             match &self.net[node_idx] {
                 PetriNetNode::T(transition) => {
-                    // 检查Transition的前驱
+                    // 检查变迁的后继
+                    let successors: Vec<_> = self
+                        .net
+                        .neighbors_directed(node_idx, Direction::Outgoing)
+                        .collect();
+
+                    if successors.is_empty() {
+                        transitions_to_remove.push(node_idx);
+                        log::warn!("Found transition with no successors: {}", transition.name);
+                        continue;
+                    }
+
+                    // 检查变迁的前驱和后继是否都是库所
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if let PetriNetNode::T(_) = &self.net[pred] {
                             return Err(PetriNetError::InvalidTransitionConnection {
@@ -1071,9 +1091,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         }
                     }
 
-                    // 检查Transition的后继
-                    for succ in self.net.neighbors_directed(node_idx, Direction::Outgoing) {
-                        if let PetriNetNode::T(_) = &self.net[succ] {
+                    for succ in &successors {
+                        if let PetriNetNode::T(_) = &self.net[*succ] {
                             return Err(PetriNetError::InvalidTransitionConnection {
                                 transition_name: transition.name.clone(),
                                 connection_type: "successor",
@@ -1083,6 +1102,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     }
                 }
                 PetriNetNode::P(place) => {
+                    // 检查库所的前驱和后继是否都是变迁
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if let PetriNetNode::P(_) = &self.net[pred] {
                             return Err(PetriNetError::InvalidPlaceConnection {
@@ -1106,12 +1126,38 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
 
+        Ok(transitions_to_remove)
+    }
+
+    pub fn remove_invalid_transitions(&mut self, transitions_to_remove: Vec<NodeIndex>) {
+        // 从后向前删除节点以保持索引有效
+        for transition_idx in transitions_to_remove.iter().rev() {
+            let _ = if let PetriNetNode::T(t) = &self.net[*transition_idx] {
+                t.name.clone()
+            } else {
+                String::from("Unknown")
+            };
+
+            self.net.remove_node(*transition_idx);
+        }
+
+        if !transitions_to_remove.is_empty() {
+            log::debug!(
+                "Removed {} transitions with no successors",
+                transitions_to_remove.len()
+            );
+        }
+    }
+
+    pub fn verify_and_clean(&mut self) -> Result<()> {
+        let transitions_to_remove = self.verify_structure()?;
+        self.remove_invalid_transitions(transitions_to_remove);
         Ok(())
     }
 
     pub fn get_terminal_states(&self) -> Vec<(usize, u8)> {
         let mut terminal_states = Vec::new();
-        terminal_states.push((self.exit_node.index(), 1));
+        terminal_states.push((self.entry_exit.1.index(), 1));
         for node_idx in self.net.node_indices() {
             if let Some(PetriNetNode::P(place)) = self.net.node_weight(node_idx) {
                 match place.place_type {
