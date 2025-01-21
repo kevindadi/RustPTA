@@ -9,7 +9,6 @@ use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceC
 use rustc_middle::mir::{Body, Local, Location};
 use rustc_middle::ty::TyKind;
 use rustc_middle::ty::{self, Instance, TyCtxt, TypingEnv};
-use rustc_span::Span;
 
 use crate::graph::callgraph::InstanceId;
 
