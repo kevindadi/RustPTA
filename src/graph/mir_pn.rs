@@ -1,12 +1,14 @@
 use super::{
     callgraph::{CallGraph, InstanceId},
-    pn::{CallType, ControlType, DropType, PetriNetEdge, PetriNetNode, Place, PlaceType},
+    pn::{
+        CallType, ControlType, DropType, KeyApiRegex, NetConfig, PetriNetEdge, PetriNetNode, Place,
+        PlaceType,
+    },
 };
 use crate::{
     concurrency::{
         atomic::AtomicOrdering,
-        candvar::CondVarId,
-        locks::{LockGuardId, LockGuardMap, LockGuardTy},
+        blocking::{CondVarId, LockGuardId, LockGuardMap, LockGuardTy},
     },
     graph::pn::Transition,
     memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
@@ -14,12 +16,11 @@ use crate::{
 };
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
-use regex::Regex;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        visit::Visitor, BasicBlock, BasicBlockData, Const, Operand, SwitchTargets, TerminatorKind,
-        UnwindAction,
+        visit::Visitor, BasicBlock, BasicBlockData, Const, Operand, Rvalue, Statement,
+        StatementKind, SwitchTargets, TerminatorKind, UnwindAction,
     },
     ty,
 };
@@ -27,7 +28,7 @@ use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
-use rustc_span::{source_map::Spanned, sym::tt};
+use rustc_span::source_map::Spanned;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -50,18 +51,14 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     bb_node_start_end: HashMap<BasicBlock, NodeIndex>,          // 基本块起始节点映射
     bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,           // 基本块节点列表
     condvar_id: &'translate HashMap<CondVarId, NodeIndex>,      // 条件变量ID映射
-    condvar_notify_re: Regex,
-    condvar_wait_re: Regex,
-    thread_join_re: Regex,
-    scope_spwan_re: Regex,
-    scope_join_re: Regex,
-    atomic_load_re: Regex,
-    atomic_store_re: Regex,
     atomic_places: &'translate HashMap<AliasId, NodeIndex>,
     atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
     pub exclude_bb: HashSet<usize>,
     return_transition: NodeIndex,
     entry_exit: (NodeIndex, NodeIndex),
+    unsafe_places: &'translate HashMap<AliasId, NodeIndex>,
+    key_api_regex: &'translate KeyApiRegex,
+    net_config: &'translate NetConfig,
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -70,20 +67,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         instance: &'translate Instance<'tcx>,
         body: &'translate Body<'tcx>,
         tcx: TyCtxt<'tcx>,
-        // param_env: ParamEnv<'tcx>,
         callgraph: &'translate CallGraph<'tcx>,
         net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
-        // callgraph: &'analysis CallGraph<'tcx>,
         alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>,
         lockguards: LockGuardMap<'tcx>,
         function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
         locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
-        // thread_id_handler: &'translate mut HashMap<usize, Vec<JoinHanderId>>,
-        // handler_id: &'translate mut HashMap<JoinHanderId, DefId>,
         condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
         atomic_places: &'translate HashMap<AliasId, NodeIndex>,
         atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
         entry_exit: (NodeIndex, NodeIndex),
+        unsafe_places: &'translate HashMap<AliasId, NodeIndex>,
+        key_api_regex: &'translate KeyApiRegex,
+        net_config: &'translate NetConfig,
     ) -> Self {
         Self {
             instance_id,
@@ -98,23 +94,15 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             locks_counter,
             bb_node_start_end: HashMap::default(),
             bb_node_vec: HashMap::new(),
-            // thread_id_handler,
-            // handler_id,
             condvar_id,
-            condvar_notify_re: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::notify").unwrap(),
-            condvar_wait_re: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::wait").unwrap(),
-            // TODO: 放一个Regex里
-            thread_join_re: Regex::new(r"std::thread[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
-            scope_spwan_re: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::spawn").unwrap(),
-            scope_join_re: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
-            atomic_load_re: Regex::new(r"atomic[:a-zA-Z0-9]*::load").unwrap(),
-            atomic_store_re: Regex::new(r"atomic[:a-zA-Z0-9]*::store").unwrap(),
-
             atomic_places,
             atomic_order_maps,
             exclude_bb: HashSet::new(),
             return_transition: NodeIndex::new(0),
             entry_exit,
+            unsafe_places,
+            key_api_regex,
+            net_config,
         }
     }
 
@@ -166,7 +154,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
         self.net.add_edge(
-            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
             bb_end,
             PetriNetEdge { label: 1 },
         );
@@ -232,7 +220,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
         self.net.add_edge(
-            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
             bb_end,
             PetriNetEdge { label: 1u8 },
         );
@@ -257,7 +245,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
             self.net.add_edge(
-                *self.bb_node_start_end.get(&bb_idx).unwrap(),
+                *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
                 bb_end,
                 PetriNetEdge { label: 1u8 },
             );
@@ -284,7 +272,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
 
         self.net.add_edge(
-            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
             self.return_transition,
             PetriNetEdge { label: 1u8 },
         );
@@ -303,7 +291,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
         self.net.add_edge(
-            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
             bb_end,
             PetriNetEdge { label: 1u8 },
         );
@@ -369,7 +357,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if let Some(target_bb) = target {
             self.net.add_edge(
                 bb_end,
-                *self.bb_node_start_end.get(target_bb).unwrap(),
+                *self.bb_node_vec.get(target_bb).unwrap().first().unwrap(),
                 PetriNetEdge { label: 1u8 },
             );
         }
@@ -387,16 +375,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if callee_func_name.contains("::spawn") {
             self.handle_spawn(callee_func_name, args, target, bb_end);
             true
-        } else if self.scope_join_re.is_match(callee_func_name) {
+        } else if self.key_api_regex.scope_join.is_match(callee_func_name) {
             self.handle_scope_join(callee_func_name, bb_idx, args, target, bb_end, span);
             true
-        } else if self.thread_join_re.is_match(callee_func_name) {
+        } else if self.key_api_regex.thread_join.is_match(callee_func_name) {
             self.handle_join(callee_func_name, args, target, bb_end);
             true
         } else if callee_func_name.contains("rayon_core::join") {
             self.handle_rayon_join(callee_func_name, bb_idx, args, target, bb_end, span);
             true
-        } else if self.scope_spwan_re.is_match(callee_func_name) {
+        } else if self.key_api_regex.scope_spwan.is_match(callee_func_name) {
             self.handle_scope_spawn(callee_func_name, bb_idx, args, target, bb_end, span);
             true
         } else {
@@ -1176,7 +1164,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         span: &str,
     ) -> bool {
         // 如果当前调用的是Condvar::notify, 则将当前BB的结束节点连接到Condvar的节点
-        if self.condvar_notify_re.is_match(callee_func_name) {
+        if self.key_api_regex.condvar_notify.is_match(callee_func_name) {
             let condvar_id = CondVarId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1202,7 +1190,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             self.connect_to_target(bb_end, target);
             true
-        } else if self.condvar_wait_re.is_match(callee_func_name) {
+        } else if self.key_api_regex.condvar_wait.is_match(callee_func_name) {
             // 处理wait调用
             // 1. 创建等待节点和变迁
             let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
@@ -1263,7 +1251,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             Transition::new(bb_term_name, ControlType::Return(self.instance_id));
         let bb_term_node = self.net.add_node(PetriNetNode::T(bb_term_transition));
         self.net.add_edge(
-            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
             bb_term_node,
             PetriNetEdge { label: 1 },
         );
@@ -1277,7 +1265,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             Transition::new(bb_term_name, ControlType::Return(self.instance_id));
         let bb_term_node = self.net.add_node(PetriNetNode::T(bb_term_transition));
         self.net.add_edge(
-            *self.bb_node_start_end.get(&bb_idx).unwrap(),
+            *self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap(),
             bb_term_node,
             PetriNetEdge { label: 1 },
         );
@@ -1330,84 +1318,97 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         let callee_func_name = format_name(callee_def_id);
 
-        // 1. 处理锁相关调用
-        if let Some(_) = self.handle_lock_call(destination, target, bb_end) {
-            log::debug!("callee_func_name with lock: {:?}", callee_func_name);
-            return;
+        if self.net_config.enable_blocking {
+            // 1. 处理锁相关调用
+            if let Some(_) = self.handle_lock_call(destination, target, bb_end) {
+                log::debug!("callee_func_name with lock: {:?}", callee_func_name);
+                return;
+            }
+
+            // 2. 处理条件变量调用
+            if self.handle_condvar_call(
+                &callee_func_name,
+                args,
+                bb_end,
+                target,
+                name,
+                &bb_idx,
+                span,
+            ) {
+                log::debug!("callee_func_name with condvar: {:?}", callee_func_name);
+                return;
+            }
+
+            if callee_func_name.contains("::drop") {
+                log::debug!("callee_func_name with drop: {:?}", callee_func_name);
+                let lockguard_id = LockGuardId::new(
+                    self.instance_id,
+                    args.get(0).unwrap().node.place().unwrap().local,
+                );
+                if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
+                    let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
+                    match &self.lockguards[&lockguard_id].lockguard_ty {
+                        LockGuardTy::StdMutex(_)
+                        | LockGuardTy::ParkingLotMutex(_)
+                        | LockGuardTy::SpinMutex(_) => {
+                            self.net
+                                .add_edge(bb_end, *lock_node, PetriNetEdge { label: 1u8 });
+
+                            match self.net.node_weight_mut(bb_end) {
+                                Some(PetriNetNode::T(t)) => {
+                                    t.transition_type =
+                                        ControlType::Drop(DropType::Unlock(lock_node.clone()));
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        LockGuardTy::StdRwLockRead(_)
+                        | LockGuardTy::ParkingLotRead(_)
+                        | LockGuardTy::SpinRead(_) => {
+                            self.net
+                                .add_edge(bb_end, *lock_node, PetriNetEdge { label: 1u8 });
+
+                            match self.net.node_weight_mut(bb_end) {
+                                Some(PetriNetNode::T(t)) => {
+                                    t.transition_type =
+                                        ControlType::Drop(DropType::Unlock(lock_node.clone()));
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {
+                            self.net
+                                .add_edge(bb_end, *lock_node, PetriNetEdge { label: 10u8 });
+                            match self.net.node_weight_mut(bb_end) {
+                                Some(PetriNetNode::T(t)) => {
+                                    t.transition_type =
+                                        ControlType::Drop(DropType::Unlock(lock_node.clone()));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                self.connect_to_target(bb_end, target);
+                return;
+            }
         }
 
-        // 2. 处理线程相关调用
+        // 3. 处理线程相关调用
         if self.handle_thread_call(&callee_func_name, args, target, bb_end, &bb_idx, span) {
             log::debug!("callee_func_name with thread: {:?}", callee_func_name);
             return;
         }
 
-        // 3. 处理条件变量调用
-        if self.handle_condvar_call(&callee_func_name, args, bb_end, target, name, &bb_idx, span) {
-            log::debug!("callee_func_name with condvar: {:?}", callee_func_name);
-            return;
-        }
-
-        // 4. 处理原子操作调用
-        if self.handle_atomic_call(&callee_func_name, args, bb_end, target, &bb_idx, span) {
-            log::debug!("callee_func_name with atomic: {:?}", callee_func_name);
-            return;
-        }
-
-        if callee_func_name.contains("::drop") {
-            log::debug!("callee_func_name with drop: {:?}", callee_func_name);
-            let lockguard_id = LockGuardId::new(
-                self.instance_id,
-                args.get(0).unwrap().node.place().unwrap().local,
-            );
-            if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
-                let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
-                match &self.lockguards[&lockguard_id].lockguard_ty {
-                    LockGuardTy::StdMutex(_)
-                    | LockGuardTy::ParkingLotMutex(_)
-                    | LockGuardTy::SpinMutex(_) => {
-                        self.net
-                            .add_edge(bb_end, *lock_node, PetriNetEdge { label: 1u8 });
-
-                        match self.net.node_weight_mut(bb_end) {
-                            Some(PetriNetNode::T(t)) => {
-                                t.transition_type =
-                                    ControlType::Drop(DropType::Unlock(lock_node.clone()));
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    LockGuardTy::StdRwLockRead(_)
-                    | LockGuardTy::ParkingLotRead(_)
-                    | LockGuardTy::SpinRead(_) => {
-                        self.net
-                            .add_edge(bb_end, *lock_node, PetriNetEdge { label: 1u8 });
-
-                        match self.net.node_weight_mut(bb_end) {
-                            Some(PetriNetNode::T(t)) => {
-                                t.transition_type =
-                                    ControlType::Drop(DropType::Unlock(lock_node.clone()));
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {
-                        self.net
-                            .add_edge(bb_end, *lock_node, PetriNetEdge { label: 10u8 });
-                        match self.net.node_weight_mut(bb_end) {
-                            Some(PetriNetNode::T(t)) => {
-                                t.transition_type =
-                                    ControlType::Drop(DropType::Unlock(lock_node.clone()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+        if self.net_config.enable_atomic {
+            // 4. 处理原子操作调用
+            if self.handle_atomic_call(&callee_func_name, args, bb_end, target, &bb_idx, span) {
+                log::debug!("callee_func_name with atomic: {:?}", callee_func_name);
+                return;
             }
-            self.connect_to_target(bb_end, target);
-            return;
         }
+
         // 5. 处理普通函数调用
         log::debug!("callee_func_name with normal: {:?}", callee_func_name);
         if callee_func_name.contains("core::panic") {
@@ -1431,13 +1432,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_node(PetriNetNode::T(bb_term_transition));
 
         self.net.add_edge(
-            *self.bb_node_start_end.get(bb_idx).unwrap(),
+            *self.bb_node_vec.get(bb_idx).unwrap().last().unwrap(),
             bb_end,
             PetriNetEdge { label: 1u8 },
         );
 
-        if !bb.is_cleanup {
-            // bb不检测数据竞争，仅提取操作语义，若Drop MutexGuard跳过
+        if !bb.is_cleanup && self.net_config.enable_blocking {
+            // bb不检测数据竞争，仅提取操作语义，若非Drop MutexGuard跳过
             let lockguard_id = LockGuardId::new(self.instance_id, place.local);
             // local is lockguard
             if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
@@ -1473,6 +1474,176 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             PetriNetEdge { label: 1u8 },
         );
     }
+
+    // 检查是否与unsafe数据存在别名关系
+    fn has_unsafe_alias(&self, place_id: AliasId) -> (bool, NodeIndex, Option<AliasId>) {
+        for (unsafe_place, node_index) in self.unsafe_places.iter() {
+            match self
+                .alias
+                .borrow_mut()
+                .alias_atomic(place_id.into(), *unsafe_place)
+            {
+                ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+                    return (true, node_index.clone(), Some(unsafe_place.clone()));
+                }
+                _ => return (false, NodeIndex::new(0), None),
+            }
+        }
+        (false, NodeIndex::new(0), None)
+    }
+
+    fn visit_statement_body(&mut self, statement: &Statement<'tcx>, bb_idx: BasicBlock) {
+        let span_str = format!("{:?}", statement.source_info.span);
+        if let StatementKind::Assign(box (dest, rvalue)) = &statement.kind {
+            let fn_name = self.tcx.def_path_str(self.instance.def_id());
+
+            // 先处理右值（读操作）
+            self.process_rvalue_reads(rvalue, &fn_name, bb_idx, &span_str);
+
+            // 再处理左值（写操作）
+            self.process_place_writes(dest, &fn_name, bb_idx, &span_str);
+        }
+    }
+
+    // 处理右值中的读操作
+    fn process_rvalue_reads(
+        &mut self,
+        rvalue: &Rvalue<'tcx>,
+        fn_name: &str,
+        bb_idx: BasicBlock,
+        span_str: &str,
+    ) {
+        //let mut data_ops = Vec::new();
+        // 访问右值中的所有Place
+        // 根据不同的Rvalue类型获取所有相关的Place
+        let places = match rvalue {
+            Rvalue::Use(operand) => match operand {
+                Operand::Move(place) | Operand::Copy(place) => vec![place],
+                Operand::Constant(_) => vec![],
+            },
+            Rvalue::BinaryOp(_, box (op1, op2)) => {
+                let mut places = Vec::new();
+                if let Operand::Move(place) | Operand::Copy(place) = op1 {
+                    places.push(place);
+                }
+                if let Operand::Move(place) | Operand::Copy(place) = op2 {
+                    places.push(place);
+                }
+                places
+            }
+            Rvalue::Ref(_, _, place) => {
+                vec![place]
+            }
+            Rvalue::Len(place) | Rvalue::Discriminant(place) => {
+                vec![place]
+            }
+            Rvalue::Aggregate(_, operands) => operands
+                .iter()
+                .filter_map(|op| match op {
+                    Operand::Move(place) | Operand::Copy(place) => Some(place),
+                    _ => None,
+                })
+                .collect(),
+            // 其他类型的Rvalue根据需要添加
+            _ => vec![],
+        };
+
+        // 处理所有找到的Place
+        for place in places {
+            let place_id = AliasId::new(self.instance_id, place.local);
+            let place_ty = format!("{:?}", place.ty(self.body, self.tcx));
+            // 检查是否与任何unsafe数据存在别名关系
+            let alias_result = self.has_unsafe_alias(place_id);
+            if alias_result.0 {
+                // 创建读操作
+                let transition_name = format!("{}_read_{}_in:{}", fn_name, place_ty, span_str);
+                let read_t = Transition::new(
+                    transition_name.clone(),
+                    ControlType::UnsafeRead(alias_result.1, span_str.to_string(), bb_idx.index()),
+                );
+                let unsafe_read_t = self.net.add_node(PetriNetNode::T(read_t));
+
+                // 链接bb的前一个库所
+                let bb_nodes = self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap();
+                self.net
+                    .add_edge(*bb_nodes, unsafe_read_t, PetriNetEdge { label: 1 });
+
+                // 找到Unsafe的库所
+                // TODO: 是否不允许链接到 Unsafe 对应的库所?
+                let unsafe_place = alias_result.1;
+                self.net
+                    .add_edge(unsafe_place, unsafe_read_t, PetriNetEdge { label: 1 });
+                self.net
+                    .add_edge(unsafe_read_t, unsafe_place, PetriNetEdge { label: 1 });
+
+                // 建立库所，链接terminator
+                let place_name = format!("{}_rready", &transition_name.as_str());
+                let temp_place = Place::new(place_name, 0, PlaceType::BasicBlock);
+                let temp_place_node = self.net.add_node(PetriNetNode::P(temp_place));
+                self.net
+                    .add_edge(unsafe_read_t, temp_place_node, PetriNetEdge { label: 1 });
+
+                self.bb_node_vec
+                    .get_mut(&bb_idx)
+                    .unwrap()
+                    .push(unsafe_read_t);
+                self.bb_node_vec
+                    .get_mut(&bb_idx)
+                    .unwrap()
+                    .push(temp_place_node);
+            }
+        }
+    }
+
+    // 处理左值的写操作
+    fn process_place_writes(
+        &mut self,
+        place: &rustc_middle::mir::Place<'tcx>,
+        fn_name: &str,
+        bb_idx: BasicBlock,
+        span_str: &str,
+    ) {
+        let place_id = AliasId::new(self.instance_id, place.local);
+        let place_ty = format!("{:?}", place.ty(self.body, self.tcx));
+        // 检查是否与任何unsafe数据存在别名关系
+        let alias_result = self.has_unsafe_alias(place_id);
+        if alias_result.0 {
+            let transition_name = format!("{}_write_{}_in:{}", fn_name, place_ty, span_str);
+            let write_t = Transition::new(
+                transition_name.clone(),
+                ControlType::UnsafeWrite(alias_result.1, span_str.to_string(), bb_idx.index()),
+            );
+            let unsafe_write_t = self.net.add_node(PetriNetNode::T(write_t));
+
+            // 链接bb的前一个库所
+            let bb_nodes = self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap();
+            self.net
+                .add_edge(*bb_nodes, unsafe_write_t, PetriNetEdge { label: 1 });
+
+            // 找到Unsafe的库所，TODO:这里直接返回，需要优化Move和Drop的位置
+            let unsafe_place = alias_result.1;
+            self.net
+                .add_edge(unsafe_place, unsafe_write_t, PetriNetEdge { label: 1 });
+            self.net
+                .add_edge(unsafe_write_t, unsafe_place, PetriNetEdge { label: 1 });
+
+            // 建立库所，链接terminator
+            let place_name = format!("{}_wready", &transition_name.as_str());
+            let temp_place = Place::new(place_name, 0, PlaceType::BasicBlock);
+            let temp_place_node = self.net.add_node(PetriNetNode::P(temp_place));
+            self.net
+                .add_edge(unsafe_write_t, temp_place_node, PetriNetEdge { label: 1 });
+
+            self.bb_node_vec
+                .get_mut(&bb_idx)
+                .unwrap()
+                .push(unsafe_write_t);
+            self.bb_node_vec
+                .get_mut(&bb_idx)
+                .unwrap()
+                .push(temp_place_node);
+        }
+    }
 }
 
 impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -1501,6 +1672,19 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
             // 不检测cleanup的块，所有的unwind操作忽略
             if bb.is_cleanup || bb.is_empty_unreachable() {
                 continue;
+            }
+
+            if self.net_config.enable_unsafe {
+                // deal statement
+                for stmt in bb.statements.iter() {
+                    // 如果此基本块的Terminal是Assert, 则跳过
+                    if let Some(ref term) = bb.terminator {
+                        if let TerminatorKind::Assert { .. } = &term.kind {
+                            break;
+                        }
+                    }
+                    self.visit_statement_body(stmt, bb_idx);
+                }
             }
 
             if bb_idx.index() == 0 {

@@ -154,6 +154,9 @@ impl PTACallbacks {
                 api_spec,
                 false,
                 self.output_directory.clone(),
+                true,
+                false,
+                false,
             );
             pn.construct();
             pn.save_petri_net_to_file();
@@ -217,12 +220,6 @@ impl PTACallbacks {
             DetectorKind::AtomicityViolation => {
                 // 收集atomic变量和操作信息
                 log::debug!("Starting atomic operation collection");
-                let mut atomic_collector =
-                    AtomicCollector::new(tcx, &callgraph, self.options.crate_name.clone());
-                let atomic_vars = atomic_collector.analyze();
-
-                // 输出收集到的atomic信息
-                atomic_collector.to_json_pretty().unwrap();
                 let mut pn = PetriNet::new(
                     &self.options,
                     tcx,
@@ -230,11 +227,10 @@ impl PTACallbacks {
                     ApiSpec::default(),
                     true,
                     self.output_directory.clone(),
+                    false,
+                    true,
+                    false,
                 );
-
-                if !atomic_vars.is_empty() {
-                    pn.add_atomic_places(&atomic_vars);
-                }
 
                 pn.construct();
                 pn.save_petri_net_to_file();
@@ -265,6 +261,9 @@ impl PTACallbacks {
                     ApiSpec::default(),
                     false,
                     self.output_directory.clone(),
+                    true,
+                    false,
+                    false,
                 );
                 pn.construct();
                 pn.save_petri_net_to_file();
