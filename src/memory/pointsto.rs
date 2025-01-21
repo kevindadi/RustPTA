@@ -21,8 +21,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::{Directed, Direction, Graph};
 
 use crate::concurrency::atomic::is_atomic_ptr_store;
-use crate::concurrency::candvar::CondVarId;
-use crate::concurrency::locks::LockGuardId;
+use crate::concurrency::blocking::{CondVarId, LockGuardId};
 use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::memory::ownership;
 

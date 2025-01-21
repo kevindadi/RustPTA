@@ -1,12 +1,12 @@
 extern crate rustc_hash;
 extern crate rustc_span;
 
-use rustc_middle::ty::{EarlyBinder, TypingEnv};
-use smallvec::SmallVec;
+use std::collections::HashMap;
+
+use rustc_middle::ty::{EarlyBinder, TyKind, TypingEnv};
 
 use rustc_hash::FxHashMap;
-use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
-use rustc_middle::mir::{Body, Local, Location, TerminatorKind};
+use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::{self, Instance, TyCtxt};
 use rustc_span::Span;
 
@@ -24,6 +24,20 @@ impl LockGuardId {
         Self { instance_id, local }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CondVarId {
+    pub instance_id: InstanceId,
+    pub local: Local,
+}
+
+impl CondVarId {
+    pub fn new(instance_id: InstanceId, local: Local) -> Self {
+        Self { instance_id, local }
+    }
+}
+
+pub type CondvarMap<'tcx> = HashMap<CondVarId, String>;
 
 /// LockGuardKind, DataTy
 #[derive(Clone, Debug)]
@@ -113,45 +127,27 @@ impl<'tcx> LockGuardTy<'tcx> {
 pub struct LockGuardInfo<'tcx> {
     pub lockguard_ty: LockGuardTy<'tcx>,
     pub span: Span,
-    pub gen_locs: SmallVec<[Location; 4]>,
-    pub move_gen_locs: SmallVec<[Location; 4]>,
-    pub recursive_gen_locs: SmallVec<[Location; 4]>,
-    pub kill_locs: SmallVec<[Location; 4]>,
 }
 
 impl<'tcx> LockGuardInfo<'tcx> {
     pub fn new(lockguard_ty: LockGuardTy<'tcx>, span: Span) -> Self {
-        Self {
-            lockguard_ty,
-            span,
-            gen_locs: Default::default(),
-            move_gen_locs: Default::default(),
-            recursive_gen_locs: Default::default(),
-            kill_locs: Default::default(),
-        }
-    }
-
-    pub fn is_gen_only_by_move(&self) -> bool {
-        self.gen_locs == self.move_gen_locs
-    }
-
-    pub fn is_gen_only_by_recursive(&self) -> bool {
-        self.gen_locs == self.recursive_gen_locs
+        Self { lockguard_ty, span }
     }
 }
 
 pub type LockGuardMap<'tcx> = FxHashMap<LockGuardId, LockGuardInfo<'tcx>>;
 
 /// Collect lockguard info.
-pub struct LockGuardCollector<'a, 'b, 'tcx> {
+pub struct BlockingCollector<'a, 'b, 'tcx> {
     instance_id: InstanceId,
     instance: &'a Instance<'tcx>,
     body: &'b Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     pub lockguards: LockGuardMap<'tcx>,
+    pub condvars: CondvarMap<'tcx>,
 }
 
-impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
+impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
     pub fn new(
         instance_id: InstanceId,
         instance: &'a Instance<'tcx>,
@@ -164,16 +160,12 @@ impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
             body,
             tcx,
             lockguards: Default::default(),
+            condvars: Default::default(),
         }
     }
 
     pub fn analyze(&mut self) {
         for (local, local_decl) in self.body.local_decls.iter_enumerated() {
-            // let local_ty = self.instance.instantiate_mir_and_normalize_erasing_regions(
-            //     self.tcx,
-            //     self.param_env,
-            //     ty::EarlyBinder::bind(local_decl.ty),
-            // );
             let typing_env = TypingEnv::post_analysis(self.tcx, self.instance.def_id());
             let local_ty = self.instance.instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
@@ -185,58 +177,16 @@ impl<'a, 'b, 'tcx> LockGuardCollector<'a, 'b, 'tcx> {
                 let lockguard_info = LockGuardInfo::new(lockguard_ty, local_decl.source_info.span);
                 self.lockguards.insert(lockguard_id, lockguard_info);
             }
-        }
-        self.visit_body(self.body);
-    }
-}
 
-impl<'a, 'b, 'tcx> Visitor<'tcx> for LockGuardCollector<'a, 'b, 'tcx> {
-    fn visit_local(&mut self, local: Local, context: PlaceContext, location: Location) {
-        let lockguard_id = LockGuardId::new(self.instance_id, local);
-        // local is lockguard
-        if let Some(info) = self.lockguards.get_mut(&lockguard_id) {
-            match context {
-                PlaceContext::NonMutatingUse(NonMutatingUseContext::Move) => {
-                    info.kill_locs.push(location);
+            if let TyKind::Adt(adt_def, _) = local_ty.kind() {
+                let path = self.tcx.def_path_str(adt_def.did());
+                if path.contains("Condvar") {
+                    log::info!("{}", path);
+                    self.condvars.insert(
+                        CondVarId::new(self.instance_id, local),
+                        format!("{:?}", local_decl.source_info.span),
+                    );
                 }
-                PlaceContext::MutatingUse(context) => match context {
-                    MutatingUseContext::Drop => info.kill_locs.push(location),
-                    MutatingUseContext::Store => {
-                        info.gen_locs.push(location);
-                        info.move_gen_locs.push(location);
-                    }
-                    MutatingUseContext::Call => {
-                        // if lockguard = parking_lot::recursive_read() then record to recursive_gen_locs
-                        if let LockGuardTy::ParkingLotRead(_) = info.lockguard_ty {
-                            let term = self.body[location.block].terminator();
-                            if let TerminatorKind::Call { ref func, .. } = term.kind {
-                                // Only after monomorphizing can Instance::resolve work
-                                // let func_ty =
-                                //     self.instance.instantiate_mir_and_normalize_erasing_regions(
-                                //         self.tcx,
-                                //         self.param_env,
-                                //         ty::EarlyBinder::bind(func.ty(self.body, self.tcx)),
-                                //     );
-                                let typing_env =
-                                    TypingEnv::post_analysis(self.tcx, self.instance.def_id());
-                                let func_ty = ty::EarlyBinder::bind(func.ty(self.body, self.tcx));
-                                let func_ty =
-                                    self.instance.instantiate_mir_and_normalize_erasing_regions(
-                                        self.tcx, typing_env, func_ty,
-                                    );
-                                if let ty::FnDef(def_id, _) = *func_ty.kind() {
-                                    let fn_name = self.tcx.def_path_str(def_id);
-                                    if fn_name.contains("read_recursive") {
-                                        info.recursive_gen_locs.push(location);
-                                    }
-                                }
-                            }
-                        }
-                        info.gen_locs.push(location);
-                    }
-                    _ => {}
-                },
-                _ => {}
             }
         }
     }

@@ -1,6 +1,7 @@
+use crate::concurrency::atomic::AtomicCollector;
 use crate::concurrency::atomic::AtomicOrdering;
-use crate::concurrency::atomic::AtomicVarMap;
 use crate::memory::pointsto::AliasId;
+use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::OwnCrateType;
 use crate::utils::format_name;
 use crate::utils::ApiEntry;
@@ -12,8 +13,10 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction;
 use petgraph::Graph;
+use regex::Regex;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
+use serde_json::json;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -28,12 +31,10 @@ use thiserror::Error;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use super::mir_pn::BodyToPetriNet;
-use crate::concurrency::candvar::CondVarCollector;
-use crate::concurrency::candvar::CondVarId;
-use crate::{
-    concurrency::locks::{LockGuardCollector, LockGuardId, LockGuardMap, LockGuardTy},
-    memory::pointsto::{AliasAnalysis, ApproximateAliasKind},
+use crate::concurrency::blocking::{
+    BlockingCollector, CondVarId, LockGuardId, LockGuardMap, LockGuardTy,
 };
+use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
 
 #[derive(Debug, Clone)]
 pub enum Shape {
@@ -53,6 +54,7 @@ pub struct Place {
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PlaceType {
+    Unsafe,
     Atomic,
     Lock,
     CondVar,
@@ -118,6 +120,9 @@ pub enum ControlType {
     Drop(DropType),     // 资源释放
     Assert,
 
+    UnsafeRead(NodeIndex, String, usize),
+    UnsafeWrite(NodeIndex, String, usize),
+
     // 函数调用
     Call(CallType),
 }
@@ -135,9 +140,6 @@ pub enum CallType {
     AtomicLoad(AliasId, AtomicOrdering, String, InstanceId),
     AtomicStore(AliasId, AtomicOrdering, String, InstanceId),
     AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String, InstanceId),
-    // 内存访问相关
-    UnsafeRead(NodeIndex),
-    UnsafeWrite(NodeIndex),
 
     // 线程操作-后续reduce网会改变NodeIndex
     // 资源最先创建不因网结构改变
@@ -239,6 +241,74 @@ fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y:
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum CollectorType {
+    Blocking,
+    Atomic,
+    Unsafe,
+}
+
+impl CollectorType {
+    pub fn is_enabled(&self, config: &NetConfig) -> bool {
+        match self {
+            CollectorType::Blocking => config.enable_blocking,
+            CollectorType::Atomic => config.enable_atomic,
+            CollectorType::Unsafe => config.enable_unsafe,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NetConfig {
+    pub enable_blocking: bool,
+    pub enable_atomic: bool,
+    pub enable_unsafe: bool,
+}
+
+impl NetConfig {
+    pub fn new(enable_blocking: bool, enable_atomic: bool, enable_unsafe: bool) -> Self {
+        Self {
+            enable_blocking,
+            enable_atomic,
+            enable_unsafe,
+        }
+    }
+
+    pub fn all_enabled() -> Self {
+        Self::new(true, true, true)
+    }
+
+    pub fn none_enabled() -> Self {
+        Self::new(false, false, false)
+    }
+}
+
+pub struct KeyApiRegex {
+    // Std::thread
+    pub thread_join: Regex,
+    pub scope_spwan: Regex,
+    pub scope_join: Regex,
+    pub condvar_notify: Regex,
+    pub condvar_wait: Regex,
+
+    pub atomic_load: Regex,
+    pub atomic_store: Regex,
+}
+
+impl KeyApiRegex {
+    fn new() -> Self {
+        Self {
+            thread_join: Regex::new(r"std::thread[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
+            scope_spwan: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::spawn").unwrap(),
+            scope_join: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
+            condvar_notify: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::notify").unwrap(),
+            condvar_wait: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::wait").unwrap(),
+            atomic_load: Regex::new(r"atomic[:a-zA-Z0-9]*::load").unwrap(),
+            atomic_store: Regex::new(r"atomic[:a-zA-Z0-9]*::store").unwrap(),
+        }
+    }
+}
+
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
     output_directory: PathBuf,
@@ -257,6 +327,10 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     atomic_places: HashMap<AliasId, NodeIndex>,
     atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
     pub entry_exit: (NodeIndex, NodeIndex),
+    pub enable_block_collector: bool,
+    pub enable_atomic_collector: bool,
+    pub enbale_unsafe_collector: bool,
+    pub unsafe_places: HashMap<AliasId, NodeIndex>,
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
@@ -267,6 +341,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         api_spec: ApiSpec,
         av: bool,
         output_directory: PathBuf,
+        enable_block_collector: bool,
+        enable_atomic_collector: bool,
+        enbale_unsafe_collector: bool,
     ) -> Self {
         let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph, av));
         Self {
@@ -286,6 +363,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             atomic_places: HashMap::<AliasId, NodeIndex>::new(),
             atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
             entry_exit: (NodeIndex::new(0), NodeIndex::new(0)),
+            enable_block_collector,
+            enable_atomic_collector,
+            enbale_unsafe_collector,
+            unsafe_places: HashMap::default(),
         }
     }
 
@@ -328,14 +409,17 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    pub fn add_atomic_places(&mut self, atomic_var: &AtomicVarMap) {
-        log::info!("add atomic places");
-        for (_, atomic_info) in atomic_var {
+    pub fn construct_atomic_resources(&mut self) {
+        let mut atomic_collector =
+            AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
+        let atomic_vars = atomic_collector.analyze();
+
+        // 输出收集到的atomic信息
+        atomic_collector.to_json_pretty().unwrap();
+        for (_, atomic_info) in atomic_vars {
             let atomic_type = atomic_info.var_type.clone();
             let alias_id = atomic_info.get_alias_id();
-            log::debug!("id: {:?}", alias_id);
             if !atomic_type.starts_with("&") {
-                log::debug!("add atomic: {:?}", atomic_type);
                 let atomic_name = atomic_type.clone();
                 let atomic_place = Place::new_with_span(
                     atomic_name,
@@ -358,22 +442,110 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
+    fn construct_unsafe_blocks(&mut self) {
+        let unsafe_analyzer =
+            UnsafeAnalyzer::new(self.tcx, self.callgraph, self.options.crate_name.clone());
+        let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
+        unsafe_info.iter().for_each(|(def_id, info)| {
+            log::debug!(
+                "{}:\n{}",
+                format_name(*def_id),
+                serde_json::to_string_pretty(&json!({
+                    "unsafe_fn": info.is_unsafe_fn,
+                    "unsafe_blocks": info.unsafe_blocks,
+                    "unsafe_places": info.unsafe_places
+                }))
+                .unwrap()
+            )
+        });
+        log::debug!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
+
+        let mut next_alias_id: u32 = 0;
+        let mut alias_groups: HashMap<u32, Vec<(AliasId, String)>> = HashMap::new();
+        let places_data: Vec<_> = unsafe_data
+            .unsafe_places
+            .iter()
+            .map(|(local, info)| (*local, info.clone()))
+            .collect();
+
+        for i in 0..places_data.len() {
+            let (local_i, info_i) = &places_data[i];
+
+            if alias_groups
+                .values()
+                .any(|group| group.iter().any(|(l, _)| l == local_i))
+            {
+                continue;
+            }
+
+            let mut current_group = vec![(local_i.clone(), info_i.clone())];
+
+            for j in i + 1..places_data.len() {
+                let (local_j, info_j) = &places_data[j];
+                match self.alias.borrow_mut().alias(*local_i, *local_j) {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+                        current_group.push((local_j.clone(), info_j.clone()));
+                    }
+                    _ => {}
+                }
+            }
+
+            if !current_group.is_empty() {
+                alias_groups.insert(next_alias_id, current_group);
+                next_alias_id += 1;
+            }
+        }
+
+        // 为每个别名组创建数据库所
+        for (_, group) in alias_groups {
+            let unsafe_span = group[0].1.clone();
+            let unsafe_local = group[0].0.clone();
+            let unsafe_name = format!("{:?}", unsafe_local);
+
+            let place = Place::new_with_span(unsafe_name, 1, PlaceType::Unsafe, unsafe_span);
+
+            let node = self.net.add_node(PetriNetNode::P(place));
+            self.unsafe_places.insert(unsafe_local, node);
+
+            for (local, _) in group {
+                self.unsafe_places.insert(local, node);
+            }
+        }
+    }
+
     pub fn construct(&mut self /*alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>*/) {
         let start_time = Instant::now();
-        log::info!("construct petri net");
+        let cons_config = NetConfig::new(
+            self.enable_block_collector,
+            self.enable_atomic_collector,
+            self.enbale_unsafe_collector,
+        );
+
+        log::info!("Construct Function Start and End Places");
         self.construct_func();
 
         if !self.api_spec.apis.is_empty() {
-            log::info!("construct api");
+            log::info!("Consturct API Markings");
             self.marking_api();
         }
 
-        log::info!("construct function");
-        self.construct_lock_with_dfs();
-        log::info!("construct lock");
-        self.collect_condvar();
-        log::info!("collect condvar");
-        log::info!("visitor function body");
+        if self.enable_block_collector {
+            self.construct_lock_with_dfs();
+            log::info!("Collector Block Primitive!");
+        }
+
+        if self.enable_atomic_collector {
+            self.construct_atomic_resources();
+            log::info!("Collector Atomic Variable!")
+        }
+
+        if self.enbale_unsafe_collector {
+            self.construct_unsafe_blocks();
+            log::info!("Collector Unsafe Blocks!");
+        }
+
+        // 初始化同步 API 的正则表达式
+        let key_api_regex = KeyApiRegex::new();
         // 设置一个id,记录已经转换的函数
         let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
@@ -381,21 +553,23 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 && format_name(caller.instance().def_id()).starts_with(&self.options.crate_name)
             {
                 log::debug!(
-                    "visitor function body: {:?}",
+                    "Current visitor function body: {:?}",
                     format_name(caller.instance().def_id())
                 );
                 if visited_func_id.contains(&caller.instance().def_id()) {
                     continue;
                 }
-                self.visitor_function_body(node, caller);
+                self.visitor_function_body(node, caller, &key_api_regex, &cons_config);
                 visited_func_id.insert(caller.instance().def_id());
             }
         }
 
+        log::info!("Visitor Function Body Complete!");
+
         // 如果CrateType是LIB，不优化以防初始标识被改变
         if self.api_spec.apis.is_empty() && !self.options.test {
             self.reduce_state();
-            log::info!("reduce state");
+            log::info!("Merge long(>= 3) P-T chains");
         }
         //self.reduce_state_from(self.entry_node);
 
@@ -404,13 +578,15 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::error!("Petri net structure verification failed: {}", err);
             // 可以选择在这里panic或者进行其他错误处理
         }
-        log::info!("construct petri net time: {:?}", start_time.elapsed());
+        log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
     }
 
     pub fn visitor_function_body(
         &mut self,
         node: NodeIndex,
         caller: &CallGraphNode<'tcx>,
+        key_api_regex: &KeyApiRegex,
+        cons_config: &NetConfig,
         //alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>,
     ) {
         let body = self.tcx.optimized_mir(caller.instance().def_id());
@@ -439,6 +615,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &self.atomic_places,
             &self.atomic_order_maps,
             self.entry_exit,
+            &self.unsafe_places,
+            key_api_regex,
+            cons_config,
         );
         func_body.translate();
     }
@@ -521,94 +700,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         (start_id, end_id)
     }
 
-    // Construct lock for place
-    pub fn construct_lock(&mut self) {
-        let lockguards = self.collect_lockguards();
-        // classify the lock point to the same memory location
-        // let mut lockguard_relations = FxHashSet::<(LockGuardId, LockGuardId)>::default();
-        let mut info = FxHashMap::default();
-
-        for (_, map) in lockguards.clone().into_iter() {
-            info.extend(map.clone().into_iter());
-            self.lock_info.extend(map.into_iter());
-        }
-
-        log::debug!("The count of locks: {:?}", info.keys().count());
-        let mut lock_map: HashMap<LockGuardId, u32> = HashMap::new();
-        let mut counter: u32 = 0;
-        for (a, _) in info.iter() {
-            for (b, _) in info.iter() {
-                // lockguard_relations.insert((*k1, *k2));
-                if a == b {
-                    continue;
-                }
-                let possibility = self
-                    .alias
-                    .borrow_mut()
-                    .alias(a.clone().into(), b.clone().into());
-                match possibility {
-                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                        if !lock_map.contains_key(a) && !lock_map.contains_key(b) {
-                            lock_map.insert(*a, counter);
-                            lock_map.insert(*b, counter);
-                            counter += 1;
-                        } else if !lock_map.contains_key(a) {
-                            let value = *lock_map.get(b).unwrap();
-                            lock_map.insert(*a, value);
-                        } else if !lock_map.contains_key(b) {
-                            let value = *lock_map.get(a).unwrap();
-                            lock_map.insert(*b, value);
-                        } else {
-                            assert_eq!(*lock_map.get(a).unwrap(), *lock_map.get(b).unwrap());
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let mut lock_id_map: HashMap<u32, Vec<LockGuardId>> = HashMap::new();
-        for (lock_id, value) in lock_map {
-            if lock_id_map.contains_key(&value) {
-                let vec = lock_id_map.get_mut(&value).unwrap();
-                vec.push(lock_id);
-            } else {
-                let mut vec = Vec::new();
-                vec.push(lock_id);
-                lock_id_map.insert(value, vec);
-            }
-        }
-        log::debug!("The lock_id_map count?: {:?}", lock_id_map.keys().count());
-
-        for (id, lock_vec) in lock_id_map {
-            match &info[&lock_vec[0]].lockguard_ty {
-                LockGuardTy::StdMutex(_)
-                | LockGuardTy::ParkingLotMutex(_)
-                | LockGuardTy::SpinMutex(_) => {
-                    let lock_p = Place::new(format!("Mutex_{}", id), 1, PlaceType::Lock);
-                    let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
-                    for lock in lock_vec {
-                        self.locks_counter.insert(lock.clone(), lock_node);
-                    }
-                }
-                _ => {
-                    let lock_p = Place::new(format!("RwLock_{}", id), 10, PlaceType::Lock);
-                    let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
-                    for lock in lock_vec {
-                        self.locks_counter.insert(lock.clone(), lock_node);
-                    }
-                }
-            }
-        }
-    }
-
     pub fn construct_lock_with_dfs(&mut self) {
-        let lockguards = self.collect_lockguards();
+        // 使用新的收集函数
+        let lockguards = self.collect_blocking_primitives();
         let mut info = FxHashMap::default();
 
-        for (_, map) in lockguards.clone().into_iter() {
-            info.extend(map.clone().into_iter());
-            self.lock_info.extend(map.into_iter());
+        for (_, map) in lockguards.into_iter() {
+            info.extend(map);
         }
 
         let mut union_find: HashMap<LockGuardId, LockGuardId> = HashMap::new();
@@ -715,7 +813,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 queue.push_back(node);
             }
         }
-
+        // TODO: 设置新的截止条件，以防止 unsafe 操作被 merge
         while let Some(start) = queue.pop_front() {
             if visited.contains(&start) {
                 continue;
@@ -928,62 +1026,54 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     // Mapping JoinHandle To Thread DefId
-    fn collect_lockguards(&self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
+    fn collect_blocking_primitives(&mut self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
         let mut lockguards = FxHashMap::default();
-        for (instance_id, node) in self.callgraph.graph.node_references() {
-            let instance = match node {
-                CallGraphNode::WithBody(instance) => instance,
-                _ => continue,
-            };
-            // Only analyze local fn with body
-            if !instance.def_id().is_local() {
-                continue;
-            }
-            let body = self.tcx.instance_mir(instance.def);
-            let mut lockguard_collector =
-                LockGuardCollector::new(instance_id, instance, body, self.tcx);
-            lockguard_collector.analyze();
-            if !lockguard_collector.lockguards.is_empty() {
-                lockguards.insert(instance_id, lockguard_collector.lockguards);
-            }
-        }
-        lockguards
-    }
+        let mut condvars = FxHashMap::default();
 
-    fn collect_condvar(&mut self) {
-        let mut condvars: FxHashMap<NodeIndex, HashMap<CondVarId, String>> = FxHashMap::default();
+        // 遍历 callgraph 收集信息
         for (instance_id, node) in self.callgraph.graph.node_references() {
             let instance = match node {
                 CallGraphNode::WithBody(instance) => instance,
                 _ => continue,
             };
 
+            // 只分析本地函数
             if !instance.def_id().is_local() {
                 continue;
             }
 
             let body = self.tcx.instance_mir(instance.def);
-            let mut condvar_collector =
-                CondVarCollector::new(instance_id, instance, body, self.tcx);
-            condvar_collector.analyze();
-            if !condvar_collector.condvars.is_empty() {
-                condvars.insert(instance_id, condvar_collector.condvars);
+            let mut collector = BlockingCollector::new(instance_id, instance, body, self.tcx);
+            collector.analyze();
+
+            // 收集锁信息
+            if !collector.lockguards.is_empty() {
+                lockguards.insert(instance_id, collector.lockguards.clone());
+                self.lock_info.extend(collector.lockguards);
+            }
+
+            // 收集条件变量信息
+            if !collector.condvars.is_empty() {
+                condvars.insert(instance_id, collector.condvars);
             }
         }
 
-        // create node for all condvars
+        // 处理条件变量
         if !condvars.is_empty() {
             for condvar_map in condvars.into_values() {
-                for condvar in condvar_map.into_iter() {
-                    let condvar_name = format!("Condvar:{}", condvar.1);
+                for (condvar_id, span) in condvar_map {
+                    let condvar_name = format!("Condvar:{}", span);
                     let condvar_p = Place::new(condvar_name, 1, PlaceType::CondVar);
                     let condvar_node = self.net.add_node(PetriNetNode::P(condvar_p));
-                    self.condvars.insert(condvar.0.clone(), condvar_node);
+                    self.condvars.insert(condvar_id, condvar_node);
                 }
             }
         } else {
-            log::debug!("no condvars found");
+            log::debug!("Not Found Condvars In This Crate");
         }
+
+        // 返回收集到的锁信息供后续处理
+        lockguards
     }
 
     pub fn get_current_mark(&self) -> HashSet<(NodeIndex, u8)> {

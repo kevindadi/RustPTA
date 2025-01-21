@@ -20,7 +20,23 @@ use std::io::Write;
 pub struct StateEdge {
     pub label: String,
     pub transition: NodeIndex,
+    pub transition_type: StateEdgeType,
     pub weight: u32,
+}
+
+#[derive(Debug, Clone)]
+pub enum StateEdgeType {
+    ControlFlow,
+    ThreadOperate,
+    LockOperate,
+    AtomicOperate,
+    UnsafeOperate,
+}
+
+impl Default for StateEdgeType {
+    fn default() -> Self {
+        StateEdgeType::ControlFlow
+    }
 }
 
 impl StateEdge {
@@ -28,6 +44,7 @@ impl StateEdge {
         Self {
             label,
             transition,
+            transition_type: StateEdgeType::default(),
             weight,
         }
     }

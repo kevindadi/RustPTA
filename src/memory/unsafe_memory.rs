@@ -324,7 +324,6 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafeCollector<'a, 'tcx> {
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         // 检查终止符是否在unsafe上下文中
         match terminator.kind {
-            // 特别关注函数调用
             TerminatorKind::Call { ref func, .. } => {
                 let func_ty = func.ty(self.body, self.tcx);
                 if let TyKind::FnDef(def_id, _) = func_ty.kind() {
