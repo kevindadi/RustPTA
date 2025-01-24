@@ -1,4 +1,5 @@
-use crate::graph::pn::PetriNetNode;
+use crate::graph::net_structure::PetriNetNode;
+use crate::graph::net_structure::{CallType, ControlType};
 use crate::graph::state_graph::StateGraph;
 use crate::report::{DeadlockReport, DeadlockState, DeadlockTrace};
 use petgraph::graph::{node_index, NodeIndex};
@@ -336,7 +337,6 @@ impl<'a> DeadlockDetector<'a> {
 
         for node in self.state_graph.initial_net.node_indices() {
             if let PetriNetNode::T(transition) = &self.state_graph.initial_net[node] {
-                use crate::graph::pn::{CallType, ControlType};
                 match &transition.transition_type {
                     ControlType::Call(CallType::Lock(lock_place))
                     | ControlType::Call(CallType::RwLockWrite(lock_place))

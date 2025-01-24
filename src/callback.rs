@@ -3,26 +3,23 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use crate::concurrency::atomic::AtomicCollector;
+use crate::concurrency::channel::ChannelCollector;
 use crate::detect::atomicity_violation::AtomicityViolationDetector;
+use crate::detect::datarace::DataRaceDetector;
 use crate::detect::deadlock::DeadlockDetector;
 use crate::extern_tools::lola::LolaAnalyzer;
 use crate::extern_tools::tina::TinaAnalyzer;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::cpn::ColorPetriNet;
-use crate::graph::cpn_state_graph::CpnStateGraph;
 use crate::graph::pn::PetriNet;
 use crate::graph::state_graph::StateGraph;
-use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::{AnalysisTool, Options, OwnCrateType};
-use crate::utils::{format_name, parse_api_spec, ApiSpec};
+use crate::utils::{parse_api_spec, ApiSpec};
 use crate::DetectorKind;
 use log::debug;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
-use serde_json::{self, json};
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
 
@@ -178,43 +175,34 @@ impl PTACallbacks {
         }
         match &self.options.detector_kind {
             DetectorKind::DataRace => {
-                let unsafe_analyzer =
-                    UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
-                let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
-                unsafe_info.iter().for_each(|(def_id, info)| {
-                    log::debug!(
-                        "{}:\n{}",
-                        format_name(*def_id),
-                        serde_json::to_string_pretty(&json!({
-                            "unsafe_fn": info.is_unsafe_fn,
-                            "unsafe_blocks": info.unsafe_blocks,
-                            "unsafe_places": info.unsafe_places
-                        }))
-                        .unwrap()
-                    )
-                });
-                log::debug!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
-                let mut cpn =
-                    ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data, false);
-                cpn.construct();
-                cpn.cpn_to_dot("cpn.dot").unwrap();
-                log::info!("generate states reachable graph ");
-                let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
+                let mut pn = PetriNet::new(
+                    &self.options,
+                    tcx,
+                    &callgraph,
+                    ApiSpec::default(),
+                    true,
+                    self.output_directory.clone(),
+                    false,
+                    false,
+                    true,
+                );
+
+                pn.construct();
+                pn.save_petri_net_to_file();
+                let terminal_states = pn.get_terminal_states();
+                let mut state_graph = StateGraph::new(
+                    pn.net.clone(),
+                    pn.get_current_mark(),
+                    pn.function_counter.clone(),
+                    self.options.clone(),
+                    terminal_states,
+                );
                 state_graph.generate_states();
-                state_graph.race_info.iter().for_each(|race_info| {
-                    log::info!(
-                        "Race {:?}:\n{}",
-                        serde_json::to_string(&json!({
-                            "unsafe_transitions": race_info.transitions,
-                        })),
-                        serde_json::to_string_pretty(&json!({
-                            "operations": race_info.span_str,
-                        }))
-                        .unwrap()
-                    )
-                });
+                let detector = DataRaceDetector::new(&state_graph);
+                let data_races = detector.detect();
+                log::info!("Data Race: {}", data_races);
                 if self.options.dump_options.dump_points_to {
-                    cpn.alias.borrow_mut().print_all_points_to_relations();
+                    pn.alias.borrow_mut().print_all_points_to_relations();
                 }
             }
             DetectorKind::AtomicityViolation => {
@@ -265,18 +253,9 @@ impl PTACallbacks {
                     false,
                     false,
                 );
+                let channels = pn.collect_channel_info();
                 pn.construct();
                 pn.save_petri_net_to_file();
-                // let unfolding = UnfoldingNet::new(pn.net.clone(), pn.get_current_mark());
-
-                // match unfolding.check_local_deadlock() {
-                //     Some(deadlock_path) => {
-                //         println!("发现死锁路径: {:?}", deadlock_path);
-                //     }
-                //     None => {
-                //         println!("未发现死锁");
-                //     }
-                // }
 
                 match self.options.analysis_tool {
                     AnalysisTool::LoLA => {

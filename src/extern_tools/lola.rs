@@ -8,7 +8,8 @@ use std::{
 };
 
 use crate::extern_tools::normalize_name;
-use crate::graph::pn::{PetriNet, PetriNetNode};
+use crate::graph::net_structure::PetriNetNode;
+use crate::graph::pn::PetriNet;
 use crate::report::{DeadlockReport, DeadlockTrace};
 
 #[derive(Debug, Serialize, Deserialize)]

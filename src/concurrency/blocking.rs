@@ -180,8 +180,7 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
 
             if let TyKind::Adt(adt_def, _) = local_ty.kind() {
                 let path = self.tcx.def_path_str(adt_def.did());
-                if path.contains("Condvar") {
-                    log::info!("{}", path);
+                if path.starts_with("std::sync::Condvar") {
                     self.condvars.insert(
                         CondVarId::new(self.instance_id, local),
                         format!("{:?}", local_decl.source_info.span),

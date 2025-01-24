@@ -1,6 +1,6 @@
 use super::{
     callgraph::{CallGraph, InstanceId},
-    pn::{
+    net_structure::{
         CallType, ControlType, DropType, KeyApiRegex, NetConfig, PetriNetEdge, PetriNetNode, Place,
         PlaceType,
     },
@@ -10,7 +10,7 @@ use crate::{
         atomic::AtomicOrdering,
         blocking::{CondVarId, LockGuardId, LockGuardMap, LockGuardTy},
     },
-    graph::pn::Transition,
+    graph::net_structure::Transition,
     memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
     utils::format_name,
 };
@@ -1556,10 +1556,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let alias_result = self.has_unsafe_alias(place_id);
             if alias_result.0 {
                 // 创建读操作
-                let transition_name = format!("{}_read_{}_in:{}", fn_name, place_ty, span_str);
+                let transition_name =
+                    format!("{}_read_{:?}_in:{}", fn_name, place_id.local, span_str);
                 let read_t = Transition::new(
                     transition_name.clone(),
-                    ControlType::UnsafeRead(alias_result.1, span_str.to_string(), bb_idx.index()),
+                    ControlType::UnsafeRead(
+                        alias_result.1,
+                        span_str.to_string(),
+                        bb_idx.index(),
+                        place_ty,
+                    ),
                 );
                 let unsafe_read_t = self.net.add_node(PetriNetNode::T(read_t));
 
@@ -1578,7 +1584,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
                 // 建立库所，链接terminator
                 let place_name = format!("{}_rready", &transition_name.as_str());
-                let temp_place = Place::new(place_name, 0, PlaceType::BasicBlock);
+                let temp_place = Place::new_with_no_token(place_name, PlaceType::BasicBlock);
                 let temp_place_node = self.net.add_node(PetriNetNode::P(temp_place));
                 self.net
                     .add_edge(unsafe_read_t, temp_place_node, PetriNetEdge { label: 1 });
@@ -1608,10 +1614,15 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         // 检查是否与任何unsafe数据存在别名关系
         let alias_result = self.has_unsafe_alias(place_id);
         if alias_result.0 {
-            let transition_name = format!("{}_write_{}_in:{}", fn_name, place_ty, span_str);
+            let transition_name = format!("{}_write_{:?}_in:{}", fn_name, place_id.local, span_str);
             let write_t = Transition::new(
                 transition_name.clone(),
-                ControlType::UnsafeWrite(alias_result.1, span_str.to_string(), bb_idx.index()),
+                ControlType::UnsafeWrite(
+                    alias_result.1,
+                    span_str.to_string(),
+                    bb_idx.index(),
+                    place_ty,
+                ),
             );
             let unsafe_write_t = self.net.add_node(PetriNetNode::T(write_t));
 
@@ -1629,7 +1640,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
             // 建立库所，链接terminator
             let place_name = format!("{}_wready", &transition_name.as_str());
-            let temp_place = Place::new(place_name, 0, PlaceType::BasicBlock);
+            let temp_place = Place::new_with_no_token(place_name, PlaceType::BasicBlock);
             let temp_place_node = self.net.add_node(PetriNetNode::P(temp_place));
             self.net
                 .add_edge(unsafe_write_t, temp_place_node, PetriNetEdge { label: 1 });

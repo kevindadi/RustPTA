@@ -1425,9 +1425,9 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 };
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance2.def_id() {
-                        let alias_kind = self
-                            .intraproc_points_to(def_inst, node2.clone(), upvar.clone())
-                            .unwrap_or(ApproximateAliasKind::Unlikely);
+                        let alias_kind =
+                            self.intra_points_to(def_inst, node2.clone(), upvar.clone());
+                        // .unwrap_or(ApproximateAliasKind::Unlikely);
                         // let alias_kind = self
                         //     .atomic_intraproc_alias(def_inst, &node2, &upvar)
                         //     .unwrap_or(ApproximateAliasKind::Unknown);
@@ -1453,9 +1453,9 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 };
                 for (def_inst, upvar) in defsite_upvars.iter() {
                     if def_inst.def_id() == instance1.def_id() {
-                        let alias_kind = self
-                            .intraproc_points_to(def_inst, node1.clone(), upvar.clone())
-                            .unwrap_or(ApproximateAliasKind::Unlikely);
+                        let alias_kind =
+                            self.intra_points_to(def_inst, node1.clone(), upvar.clone());
+                        // .unwrap_or(ApproximateAliasKind::Unlikely);
                         if alias_kind > ApproximateAliasKind::Unlikely {
                             return Some(alias_kind);
                         }
@@ -1630,7 +1630,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         // 2. if exists p: pts(pointer) contains Place(p) and pts(pointee) contains Alloc(p) then possibly alias
         if pointer_pts.iter().any(|n1| {
             let p = match n1 {
-                ConstraintNode::Place(p) => *p,
+                ConstraintNode::Place(p) | ConstraintNode::Alloc(p) => *p,
                 _ => return false,
             };
             pointee_pts.iter().any(|n2| {

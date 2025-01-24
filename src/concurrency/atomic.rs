@@ -205,7 +205,7 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
             log::debug!("No atomic variables found");
         } else {
             for (var_name, info) in self.atomic_vars.iter() {
-                log::info!(
+                log::debug!(
                     "Atomic Variable {}:\n{}",
                     var_name,
                     serde_json::to_string_pretty(&json!({
