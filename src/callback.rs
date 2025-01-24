@@ -253,7 +253,7 @@ impl PTACallbacks {
                     false,
                     false,
                 );
-                let channels = pn.collect_channel_info();
+
                 pn.construct();
                 pn.save_petri_net_to_file();
 

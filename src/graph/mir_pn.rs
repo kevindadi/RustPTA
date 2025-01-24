@@ -9,6 +9,7 @@ use crate::{
     concurrency::{
         atomic::AtomicOrdering,
         blocking::{CondVarId, LockGuardId, LockGuardMap, LockGuardTy},
+        channel::ChannelId,
     },
     graph::net_structure::Transition,
     memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
@@ -59,6 +60,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     unsafe_places: &'translate HashMap<AliasId, NodeIndex>,
     key_api_regex: &'translate KeyApiRegex,
     net_config: &'translate NetConfig,
+    channel_places: &'translate HashMap<ChannelId, NodeIndex>,
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -80,6 +82,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         unsafe_places: &'translate HashMap<AliasId, NodeIndex>,
         key_api_regex: &'translate KeyApiRegex,
         net_config: &'translate NetConfig,
+        channel_places: &'translate HashMap<ChannelId, NodeIndex>,
     ) -> Self {
         Self {
             instance_id,
@@ -103,6 +106,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             unsafe_places,
             key_api_regex,
             net_config,
+            channel_places,
         }
     }
 
@@ -372,7 +376,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        if callee_func_name.contains("::spawn") {
+        if self.key_api_regex.thread_spawn.is_match(callee_func_name) {
             self.handle_spawn(callee_func_name, args, target, bb_end);
             true
         } else if self.key_api_regex.scope_join.is_match(callee_func_name) {
@@ -1273,6 +1277,64 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .add_edge(bb_term_node, self.entry_exit.1, PetriNetEdge { label: 1 });
     }
 
+    fn handle_channel_call(
+        &mut self,
+        callee_func_name: &str,
+        args: &Box<[Spanned<Operand<'tcx>>]>,
+        bb_end: NodeIndex,
+        target: &Option<BasicBlock>,
+    ) -> bool {
+        if self.channel_places.is_empty() {
+            return false;
+        }
+
+        if self.key_api_regex.channel_send.is_match(callee_func_name) {
+            let channel_id = ChannelId::new(
+                self.instance_id,
+                args.first().unwrap().node.place().unwrap().local,
+            );
+
+            if let Some(channel_node) = self.channel_places.iter().find(|(id, _)| {
+                match self
+                    .alias
+                    .borrow_mut()
+                    .alias_atomic(channel_id.clone().into(), (**id).clone().into())
+                {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => true,
+                    _ => false,
+                }
+            }) {
+                self.net
+                    .add_edge(bb_end, *channel_node.1, PetriNetEdge { label: 1 });
+                self.connect_to_target(bb_end, target);
+                return true;
+            }
+        } else if self.key_api_regex.channel_recv.is_match(callee_func_name) {
+            let channel_id = ChannelId::new(
+                self.instance_id,
+                args.first().unwrap().node.place().unwrap().local,
+            );
+
+            if let Some(channel_node) = self.channel_places.iter().find(|(id, _)| {
+                match self
+                    .alias
+                    .borrow_mut()
+                    .alias_atomic(channel_id.clone().into(), (**id).clone().into())
+                {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => true,
+                    _ => false,
+                }
+            }) {
+                self.net
+                    .add_edge(*channel_node.1, bb_end, PetriNetEdge { label: 1 });
+                self.connect_to_target(bb_end, target);
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn handle_call(
         &mut self,
         bb_idx: BasicBlock,
@@ -1391,6 +1453,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     }
                 }
                 self.connect_to_target(bb_end, target);
+                return;
+            }
+
+            if self.handle_channel_call(&callee_func_name, args, bb_end, target) {
+                log::debug!("callee_func_name with channel: {:?}", callee_func_name);
                 return;
             }
         }
