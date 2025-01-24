@@ -22,6 +22,7 @@ use petgraph::{Directed, Direction, Graph};
 
 use crate::concurrency::atomic::is_atomic_ptr_store;
 use crate::concurrency::blocking::{CondVarId, LockGuardId};
+use crate::concurrency::channel::ChannelId;
 use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::memory::ownership;
 
@@ -847,6 +848,15 @@ impl std::convert::From<CondVarId> for AliasId {
         Self {
             instance_id: condvar_id.instance_id,
             local: condvar_id.local,
+        }
+    }
+}
+
+impl std::convert::From<ChannelId> for AliasId {
+    fn from(channel_id: ChannelId) -> Self {
+        Self {
+            instance_id: channel_id.instance_id,
+            local: channel_id.local,
         }
     }
 }

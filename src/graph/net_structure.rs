@@ -31,6 +31,7 @@ pub enum PlaceType {
     Atomic,
     Lock,
     CondVar,
+    Channel,
     FunctionStart,
     FunctionEnd,
     BasicBlock,
@@ -63,6 +64,23 @@ impl Place {
             tokens: Arc::new(RwLock::new(0)),
             capacity: 1u8,
             span: String::new(),
+            place_type,
+        }
+    }
+
+    // 创建一个无穷库所
+    pub fn new_indefinite(
+        name: String,
+        token: u8,
+        capacity: u8,
+        place_type: PlaceType,
+        span: String,
+    ) -> Self {
+        Self {
+            name,
+            tokens: Arc::new(RwLock::new(token)),
+            capacity,
+            span,
             place_type,
         }
     }
@@ -242,11 +260,15 @@ impl NetConfig {
 
 pub struct KeyApiRegex {
     // Std::thread
+    pub thread_spawn: Regex,
     pub thread_join: Regex,
     pub scope_spwan: Regex,
     pub scope_join: Regex,
     pub condvar_notify: Regex,
     pub condvar_wait: Regex,
+
+    pub channel_send: Regex,
+    pub channel_recv: Regex,
 
     pub atomic_load: Regex,
     pub atomic_store: Regex,
@@ -255,11 +277,14 @@ pub struct KeyApiRegex {
 impl KeyApiRegex {
     pub fn new() -> Self {
         Self {
+            thread_spawn: Regex::new(r"std::thread[:a-zA-Z0-9_#\{\}]*::spawn").unwrap(),
             thread_join: Regex::new(r"std::thread[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
             scope_spwan: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::spawn").unwrap(),
             scope_join: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
             condvar_notify: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::notify").unwrap(),
             condvar_wait: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::wait").unwrap(),
+            channel_send: Regex::new(r"mpsc[:a-zA-Z0-9_#\{\}]*::send").unwrap(),
+            channel_recv: Regex::new(r"mpsc[:a-zA-Z0-9_#\{\}]*::recv").unwrap(),
             atomic_load: Regex::new(r"atomic[:a-zA-Z0-9]*::load").unwrap(),
             atomic_store: Regex::new(r"atomic[:a-zA-Z0-9]*::store").unwrap(),
         }

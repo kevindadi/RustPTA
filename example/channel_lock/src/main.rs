@@ -3,41 +3,34 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 fn main() {
-    // 创建通道
     let (tx, rx) = mpsc::channel();
-    let shared_data = Arc::new(Mutex::new(Vec::new()));
+    let mu1 = Arc::new(Mutex::new(2));
 
-    // 线程1：发送数据
-    let tx1 = tx.clone();
-    thread::spawn(move || {
-        for i in 0..5 {
-            tx1.send(format!("线程1的消息 {}", i)).unwrap();
-        }
-    });
+    let mu2 = mu1.clone();
 
-    // 线程2：发送数据
-    let tx2 = tx.clone();
-    thread::spawn(move || {
-        for i in 0..5 {
-            tx2.send(format!("线程2的消息 {}", i)).unwrap();
-        }
-    });
-
-    // 主线程接收所有消息，并分发处理
-    let shared_data_clone = Arc::clone(&shared_data);
     let handle = thread::spawn(move || {
-        for received in rx {
-            println!("主线程接收消息: {}", received);
-
-            // 将消息存入共享数据
-            let mut data = shared_data_clone.lock().unwrap();
-            data.push(received);
+        let a = mu1.lock().unwrap();
+        for i in 0..5 {
+            tx.send(format!("线程1的消息 {}", i)).unwrap();
         }
     });
 
+    let data = mu2.lock().unwrap();
+    let _ = rx.recv().unwrap();
     handle.join().unwrap();
-
-    // 打印所有消息
-    let final_data = shared_data.lock().unwrap();
-    println!("所有消息: {:?}", *final_data);
 }
+
+// 存在一个误报，状态类生成问题
+// 死锁 #1
+// 状态ID: s9
+// 描述: Deadlock state with blocked resources
+// 标识:
+//   channel_lock::main::{closure#0}_end (): 1
+//   main_8 (src/main.rs:19:13: 19:22 (#0)): 1
+
+// 死锁 #2
+// 状态ID: s17
+// 描述: Deadlock state with blocked resources
+// 标识:
+//   main_8 (src/main.rs:19:13: 19:22 (#0)): 1
+//   main::{closure#0}_2 (src/main.rs:12:17: 12:36 (#0)): 1

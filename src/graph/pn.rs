@@ -1,5 +1,7 @@
 use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
-use crate::concurrency::channel::{ChannelCollector, ChannelMap};
+use crate::concurrency::channel::{
+    ChannelCollector, ChannelId, ChannelInfo, ChannelMap, EndpointType,
+};
 use crate::graph::net_structure::{ControlType, KeyApiRegex, NetConfig, Transition};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
@@ -14,6 +16,7 @@ use petgraph::Direction;
 use petgraph::Graph;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
+use rustc_span::Span;
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
@@ -69,6 +72,7 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub enable_atomic_collector: bool,
     pub enbale_unsafe_collector: bool,
     pub unsafe_places: HashMap<AliasId, NodeIndex>,
+    pub channel_places: HashMap<ChannelId, NodeIndex>,
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
@@ -105,6 +109,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             enable_atomic_collector,
             enbale_unsafe_collector,
             unsafe_places: HashMap::default(),
+            channel_places: HashMap::default(),
         }
     }
 
@@ -142,6 +147,67 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         self.api_marks.insert(group_key, group_mark);
                         log::debug!("Added mark for API group: [{}]", apis.join(", "));
                     }
+                }
+            }
+        }
+    }
+
+    pub fn construct_channel_resources(&mut self) {
+        let mut channel_collector =
+            ChannelCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
+        channel_collector.analyze();
+        channel_collector.to_json_pretty().unwrap();
+
+        // 通过Tuple创建的channel不会分配内存资源
+        // for (id, channel_info) in channel_collector.channel_tuples {
+        //     let channel_id = format!("{:?}", id);
+        //     let channel_place = Place::new_with_span(
+        //         channel_id,
+        //         1,
+        //         PlaceType::Channel,
+        //         format!("{:?}", channel_info.0.span),
+        //     );
+        //     let channel_node = self.net.add_node(PetriNetNode::P(channel_place));
+        //     self.channel_places.insert(id, channel_node);
+        // }
+
+        let mut span_groups: HashMap<String, Vec<(ChannelId, ChannelInfo<'tcx>)>> = HashMap::new();
+
+        // 收集所有 channel endpoints 并按 span 分组
+        for (id, info) in channel_collector.channels {
+            let key_string = format!("{:?}", info.span)
+                .split(":")
+                .take(2)
+                .collect::<Vec<&str>>()
+                .join("");
+            span_groups.entry(key_string).or_default().push((id, info));
+        }
+
+        // 处理配对的 channel endpoints
+        for (i, (span, endpoints)) in span_groups.iter().enumerate() {
+            if endpoints.len() == 2 {
+                // 确保有一对 sender 和 receiver
+                let has_pair = endpoints
+                    .iter()
+                    .any(|(_, info)| info.endpoint_type == EndpointType::Sender)
+                    && endpoints
+                        .iter()
+                        .any(|(_, info)| info.endpoint_type == EndpointType::Receiver);
+
+                if has_pair {
+                    let channel_id = format!("channel_{}", i);
+                    let channel_place =
+                        Place::new_indefinite(channel_id, 0, 100, PlaceType::Channel, span.clone());
+                    let channel_node = self.net.add_node(PetriNetNode::P(channel_place));
+
+                    for (id, _) in endpoints {
+                        self.channel_places.insert(id.clone(), channel_node);
+                    }
+
+                    log::debug!(
+                        "Created shared channel place for endpoints at span: {}",
+                        span
+                    );
                 }
             }
         }
@@ -270,6 +336,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         if self.enable_block_collector {
             self.construct_lock_with_dfs();
             log::info!("Collector Block Primitive!");
+            self.construct_channel_resources();
+            log::info!("Collector Channel Resources!");
         }
 
         if self.enable_atomic_collector {
@@ -356,6 +424,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &self.unsafe_places,
             key_api_regex,
             cons_config,
+            &self.channel_places,
         );
         func_body.translate();
     }
@@ -812,31 +881,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         // 返回收集到的锁信息供后续处理
         lockguards
-    }
-
-    pub fn collect_channel_info(&self) -> FxHashMap<InstanceId, ChannelMap<'tcx>> {
-        let mut channels = FxHashMap::default();
-        for (instance_id, node) in self.callgraph.graph.node_references() {
-            let instance = match node {
-                CallGraphNode::WithBody(instance) => instance,
-                _ => continue,
-            };
-
-            // 只分析本地函数
-            if !instance.def_id().is_local() {
-                continue;
-            }
-
-            let body = self.tcx.instance_mir(instance.def);
-            let mut collector = ChannelCollector::new(instance_id, instance, body, self.tcx);
-            collector.analyze();
-
-            if !collector.channels.is_empty() {
-                let _ = collector.to_json_pretty();
-                channels.insert(instance_id, collector.channels);
-            }
-        }
-        channels
     }
 
     pub fn get_current_mark(&self) -> HashSet<(NodeIndex, u8)> {
