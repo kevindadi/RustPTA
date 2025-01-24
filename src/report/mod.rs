@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::fmt;
 use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,15 +54,15 @@ impl fmt::Display for DeadlockReport {
                 }
             }
 
-            if !self.traces.is_empty() {
-                writeln!(f, "\n死锁路径:")?;
-                for (i, trace) in self.traces.iter().enumerate() {
-                    writeln!(f, "\n路径 #{}", i + 1)?;
-                    for (step_num, step) in trace.steps.iter().enumerate() {
-                        writeln!(f, "  步骤 {}: {}", step_num + 1, step)?;
-                    }
-                }
-            }
+            // if !self.traces.is_empty() {
+            //     writeln!(f, "\n死锁路径:")?;
+            //     for (i, trace) in self.traces.iter().enumerate() {
+            //         writeln!(f, "\n路径 #{}", i + 1)?;
+            //         for (step_num, step) in trace.steps.iter().enumerate() {
+            //             writeln!(f, "  步骤 {}: {}", step_num + 1, step)?;
+            //         }
+            //     }
+            // }
         }
 
         if let Some(space_info) = &self.state_space_info {
@@ -214,7 +213,6 @@ impl AtomicReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaceOperation {
     pub operation_type: String,     // "read" 或 "write"
-    pub thread_name: String,        // 线程标识
     pub variable: String,           // 变量标识
     pub location: String,           // 源代码位置
     pub basic_block: Option<usize>, // 基本块信息
@@ -222,9 +220,9 @@ pub struct RaceOperation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaceCondition {
-    pub operations: Vec<RaceOperation>,     // 相关的操作
-    pub variable_info: VariableInfo,        // 变量信息
-    pub state: Option<Vec<(usize, usize)>>, // 发生竞争的状态
+    pub operations: Vec<RaceOperation>, // 相关的操作
+    pub variable_info: String,          // 变量信息
+    pub state: Vec<(usize, u8)>,        // 发生竞争的状态
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,25 +254,19 @@ impl fmt::Display for RaceReport {
             for (i, race) in self.race_conditions.iter().enumerate() {
                 writeln!(f, "\n竞争 #{}", i + 1)?;
                 writeln!(f, "变量信息:")?;
-                writeln!(f, "  名称: {}", race.variable_info.name)?;
-                writeln!(f, "  类型: {}", race.variable_info.data_type)?;
-                writeln!(f, "  作用域: {}", race.variable_info.function_scope)?;
+                writeln!(f, "  名称: {}", race.variable_info)?;
+                // writeln!(f, "  类型: {}", race.variable_info.data_type)?;
+                // writeln!(f, "  作用域: {}", race.variable_info.function_scope)?;
 
                 writeln!(f, "\n相关操作:")?;
                 for op in &race.operations {
-                    writeln!(
-                        f,
-                        "  - {} by {} at {}",
-                        op.operation_type, op.thread_name, op.location
-                    )?;
+                    writeln!(f, "  - {} at {}", op.operation_type, op.location)?;
                     if let Some(bb) = op.basic_block {
                         writeln!(f, "    (Basic Block: {})", bb)?;
                     }
                 }
 
-                if let Some(state) = &race.state {
-                    writeln!(f, "\n竞争状态: {:?}", state)?;
-                }
+                writeln!(f, "\n竞争状态: {:?}", race.state)?;
             }
         }
 

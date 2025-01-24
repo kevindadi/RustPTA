@@ -1,5 +1,5 @@
 use crate::graph::callgraph::InstanceId;
-use crate::graph::pn::{CallType, ControlType, PetriNetEdge, PetriNetNode};
+use crate::graph::net_structure::{CallType, ControlType, PetriNetEdge, PetriNetNode};
 use crate::graph::state_graph::{StateEdge, StateGraph, StateNode};
 use crate::memory::pointsto::AliasId;
 use crate::report::{AtomicOperation, AtomicReport, AtomicViolation, ViolationPattern};

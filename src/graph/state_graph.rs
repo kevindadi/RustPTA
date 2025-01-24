@@ -1,9 +1,9 @@
-use super::pn::{PetriNetEdge, PetriNetNode};
+use super::net_structure::{PetriNetEdge, PetriNetNode};
 use crate::detect::atomicity_violation::AtomicOpType;
 use crate::detect::atomicity_violation::AtomicRaceInfo;
 use crate::detect::atomicity_violation::AtomicRaceOperation;
-use crate::graph::pn::CallType;
-use crate::graph::pn::ControlType;
+use crate::graph::net_structure::CallType;
+use crate::graph::net_structure::ControlType;
 use crate::options::Options;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;

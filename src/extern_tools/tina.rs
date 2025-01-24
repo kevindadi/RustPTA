@@ -1,4 +1,5 @@
-use crate::graph::pn::{PetriNet, PetriNetNode};
+use crate::graph::net_structure::PetriNetNode;
+use crate::graph::pn::PetriNet;
 use crate::report::{DeadlockReport, DeadlockState, StateSpaceInfo};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::options::Options;
 
-use super::pn::{PetriNetEdge, PetriNetNode};
+use super::net_structure::{PetriNetEdge, PetriNetNode};
 
 #[derive(Debug)]
 struct UnfoldingEvent {
