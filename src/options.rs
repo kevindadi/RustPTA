@@ -76,10 +76,9 @@ fn make_options_parser() -> clap::Command {
         )
         .arg(
             Arg::new("target_crate")
-                .short('t')
-                .long("target")
+                .short('p')
+                .long("pn-crate")
                 .help("Target crate for analysis")
-                .required(true),
         )
         .arg(
             Arg::new("crate_type")

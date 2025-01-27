@@ -1,4 +1,3 @@
-use parking_lot;
 use std::sync;
 
 fn std_mutex() {
@@ -29,33 +28,8 @@ fn std_rwlock() -> i32 {
     a
 }
 
-fn parking_lot_mutex() {
-    let mu1 = parking_lot::Mutex::new(1);
-    match *mu1.lock() {
-        1 => {}
-        _ => {
-            *mu1.lock() += 1;
-        }
-    };
-}
-
-fn parking_lot_rwlock() -> i32 {
-    let rw1 = parking_lot::RwLock::new(1);
-    let mut a = 0;
-    match *rw1.read() {
-        1 => {
-            *rw1.write() += 1;
-        }
-        _ => {
-            a = *rw1.read();
-        }
-    };
-    a
-}
 
 fn main() {
     std_mutex();
     std_rwlock();
-    parking_lot_mutex();
-    parking_lot_rwlock();
 }

@@ -473,6 +473,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
             let func_id = func_instance.instance().def_id();
             let func_name = format_name(func_id);
+            log::info!("func_name: {}", func_name);
             if !func_name.starts_with(&self.options.crate_name)
                 || self.function_counter.contains_key(&func_id)
                 || func_name.contains("::deserialize")
