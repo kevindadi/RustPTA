@@ -3,13 +3,9 @@ extern crate rustc_span;
 
 use std::collections::HashMap;
 
-use smallvec::SmallVec;
-
-use rustc_middle::mir::visit::{MutatingUseContext, NonMutatingUseContext, PlaceContext, Visitor};
-use rustc_middle::mir::{Body, Local, Location};
+use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::TyKind;
 use rustc_middle::ty::{self, Instance, TyCtxt, TypingEnv};
-use rustc_span::Span;
 
 use crate::graph::callgraph::InstanceId;
 
