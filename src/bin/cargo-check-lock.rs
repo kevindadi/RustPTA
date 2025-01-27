@@ -14,8 +14,8 @@ OPTIONS:
                                    - deadlock: Deadlock detection
                                    - datarace: Data race detection
                                    - atomic: Atomicity Violation detedtion
-                                   - [default: deadlock]
-    -t, --target <NAME>            Target crate for analysis(Only underlined links can be used)
+                                   - [default: all]
+    -p, --pn-crate <NAME>           Target crate for analysis(Only underlined links can be used)
     --pn-analysis-dir=<PATH>       Output path for analysis results [default: diagnostics.json]
         --type <TYPE>              Target crate type (binary/library) [default: binary]
         --api-spec <PATH>          Path to library API specification file

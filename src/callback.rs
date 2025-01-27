@@ -3,7 +3,6 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use crate::concurrency::channel::ChannelCollector;
 use crate::detect::atomicity_violation::AtomicityViolationDetector;
 use crate::detect::datarace::DataRaceDetector;
 use crate::detect::deadlock::DeadlockDetector;
@@ -173,6 +172,8 @@ impl PTACallbacks {
             // log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
             return;
         }
+
+        //  TODO:  mode 作为网的参数
         match &self.options.detector_kind {
             DetectorKind::DataRace => {
                 let mut pn = PetriNet::new(
