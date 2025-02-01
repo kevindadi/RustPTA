@@ -1,8 +1,8 @@
 use crate::graph::net_structure::{ControlType, PetriNetNode};
-use crate::graph::state_graph::{StateGraph, StateNode};
+use crate::graph::state_graph::StateGraph;
 use crate::report::{RaceCondition, RaceOperation, RaceReport};
 use petgraph::graph::NodeIndex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Instant;
 
 pub struct DataRaceDetector<'a> {

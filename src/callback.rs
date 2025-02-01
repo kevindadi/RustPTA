@@ -201,7 +201,8 @@ impl PTACallbacks {
                 state_graph.generate_states();
                 let detector = DataRaceDetector::new(&state_graph);
                 let data_races = detector.detect();
-                log::info!("Data Race: {}", data_races);
+                //log::info!("Data Race: {}", data_races);
+                println!("Data Race: {}", data_races);
                 if self.options.dump_options.dump_points_to {
                     pn.alias.borrow_mut().print_all_points_to_relations();
                 }
@@ -234,7 +235,8 @@ impl PTACallbacks {
                 state_graph.generate_states();
                 let detector = AtomicityViolationDetector::new(&state_graph);
                 let atomicity_violation = detector.detect();
-                log::info!("atomicity_violation: {}", atomicity_violation);
+                //log::info!("atomicity_violation: {}", atomicity_violation);
+                println!("atomicity_violation: {}", atomicity_violation);
 
                 // log::info!("atomic_races: {}", detector.generate_atomic_races());
 
@@ -288,7 +290,8 @@ impl PTACallbacks {
                         state_graph.dot().unwrap();
                         let deadlock_detector = DeadlockDetector::new(&state_graph);
                         let result = deadlock_detector.detect();
-                        log::info!("deadlock state: {}", result);
+                        //log::info!("deadlock state: {}", result);
+                        println!("deadlock state: {}", result);
                     }
                 }
 

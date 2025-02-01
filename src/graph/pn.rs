@@ -1,7 +1,5 @@
 use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
-use crate::concurrency::channel::{
-    ChannelCollector, ChannelId, ChannelInfo, ChannelMap, EndpointType,
-};
+use crate::concurrency::channel::{ChannelCollector, ChannelId, ChannelInfo, EndpointType};
 use crate::graph::net_structure::{ControlType, KeyApiRegex, NetConfig, Transition};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
@@ -16,7 +14,6 @@ use petgraph::Direction;
 use petgraph::Graph;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
-use rustc_span::Span;
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;

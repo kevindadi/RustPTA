@@ -5,7 +5,7 @@ use crate::detect::atomicity_violation::AtomicRaceOperation;
 use crate::graph::net_structure::CallType;
 use crate::graph::net_structure::ControlType;
 use crate::options::Options;
-use petgraph::dot::{Config, Dot};
+use petgraph::dot::Dot;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Direction, Graph};
@@ -444,71 +444,6 @@ impl StateGraph {
         }
     }
 
-    // pub fn fire_transition(
-    //     &self,
-    //     net: &mut Graph<PetriNetNode, PetriNetEdge>,
-    //     mark: &HashSet<(NodeIndex, usize)>,
-    //     transition: NodeIndex,
-    // ) -> (
-    //     Box<Graph<PetriNetNode, PetriNetEdge>>,
-    //     HashSet<(NodeIndex, usize)>,
-    // ) {
-    //     let mut new_net = net.clone(); // 克隆当前网，创建新图
-    //     set_current_mark(&mut new_net, mark);
-    //     let mut new_state = HashSet::<(NodeIndex, usize)>::new();
-    //     log::debug!("The transition to fire is: {}", transition.index());
-
-    //     // 从输入库所中减去token
-    //     log::debug!("sub token to source node!");
-    //     for edge in new_net.edges_directed(transition, Direction::Incoming) {
-    //         match new_net.node_weight(edge.source()).unwrap() {
-    //             PetriNetNode::P(place) => {
-    //                 let mut tokens = place.tokens.write().unwrap();
-    //                 *tokens -= edge.weight().label;
-    //             }
-    //             PetriNetNode::T(_) => {
-    //                 log::error!("{}", "this error!");
-    //             }
-    //         }
-    //     }
-
-    //     // 将token添加到输出库所中
-    //     log::debug!("add token to target node!");
-    //     for edge in new_net.edges_directed(transition, Direction::Outgoing) {
-    //         let place_node = new_net.node_weight(edge.target()).unwrap();
-    //         match place_node {
-    //             PetriNetNode::P(place) => {
-    //                 let mut tokens = place.tokens.write().unwrap();
-    //                 *tokens += edge.weight().label;
-    //                 if *tokens > place.capacity {
-    //                     *tokens = place.capacity;
-    //                 }
-    //                 assert!(place.capacity > 0);
-    //             }
-    //             PetriNetNode::T(_) => {
-    //                 log::error!("{}", "this error!");
-    //             }
-    //         }
-    //     }
-
-    //     log::debug!("generate new state!");
-    //     for node in new_net.node_indices() {
-    //         match &new_net[node] {
-    //             PetriNetNode::P(place) => {
-    //                 let tokens = *place.tokens.read().unwrap();
-    //                 if tokens > 0 {
-    //                     // 确保token数量不超过容量限制
-    //                     let final_tokens = tokens.min(place.capacity);
-    //                     new_state.insert((node, final_tokens));
-    //                 }
-    //             }
-    //             PetriNetNode::T(_) => {}
-    //         }
-    //     }
-
-    //     (Box::new(new_net), new_state) // 返回新图和新状态
-    // }
-
     /// 运行死锁检测
     pub fn detect_deadlock(&self) -> String {
         use crate::detect::deadlock::DeadlockDetector;
@@ -599,13 +534,17 @@ pub fn fire_transition(
         match new_net.node_weight(edge.source()).unwrap() {
             PetriNetNode::P(place) => {
                 let label = edge.weight().label;
-                {
-                    assert!(*place.tokens.read().unwrap() >= label, "{}", place.name);
+                let mut tokens = place.tokens.write().unwrap();
+                if *tokens < label {
+                    return Err(format!(
+                        "库所 {} 的token数量不足: 需要 {}, 实际 {}",
+                        place.name, label, *tokens
+                    ));
                 }
-                *place.tokens.write().unwrap() -= label;
+                *tokens -= label;
             }
             PetriNetNode::T(_) => {
-                log::error!("{}", "this error!");
+                return Err("发现输入边连接到变迁节点".to_string());
             }
         }
     }
