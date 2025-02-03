@@ -47,7 +47,7 @@ impl LolaAnalyzer {
             if let PetriNetNode::P(place) = &petri_net.net[index] {
                 let normalized_name = normalize_name(&place.name);
                 places.push(normalized_name.clone());
-                let tokens = place.tokens.read().unwrap();
+                let tokens = place.tokens.borrow();
                 if *tokens > 0 {
                     markings.push(format!("{}: {}", normalized_name, *tokens));
                 }

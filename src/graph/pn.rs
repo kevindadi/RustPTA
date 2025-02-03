@@ -470,7 +470,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
             let func_id = func_instance.instance().def_id();
             let func_name = format_name(func_id);
-            log::info!("func_name: {}", func_name);
             if !func_name.starts_with(&self.options.crate_name)
                 || self.function_counter.contains_key(&func_id)
                 || func_name.contains("::deserialize")
@@ -886,8 +885,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         for node in self.net.node_indices() {
             match &self.net[node] {
                 PetriNetNode::P(place) => {
-                    if *place.tokens.read().unwrap() > 0 {
-                        current_mark.insert((node.clone(), *place.tokens.read().unwrap() as u8));
+                    if *place.tokens.borrow() > 0 {
+                        current_mark.insert((node.clone(), *place.tokens.borrow() as u8));
                     }
                 }
                 PetriNetNode::T(_) => {
@@ -923,7 +922,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 &|_, nr| {
                     let label = match &nr.1 {
                         PetriNetNode::P(place) => {
-                            let tokens = *place.tokens.read().unwrap();
+                            let tokens = *place.tokens.borrow();
                             format!(
                                 "label = \"{}\\n(tokens: {})\", shape = circle",
                                 place.name, tokens
@@ -1060,7 +1059,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         continue;
                     }
                     _ => {
-                        terminal_states.push((node_idx.index(), *place.tokens.read().unwrap()));
+                        terminal_states.push((node_idx.index(), *place.tokens.borrow()));
                     }
                 }
             }

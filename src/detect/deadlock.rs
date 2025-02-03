@@ -66,8 +66,11 @@ impl<'a> DeadlockDetector<'a> {
 
             // 检查是否是正常终止状态
             let is_normal_termination = state.mark.iter().any(|(idx, _)| {
-                if let Some(PetriNetNode::P(place)) =
-                    self.state_graph.initial_net.node_weight(node_index(*idx))
+                if let Some(PetriNetNode::P(place)) = self
+                    .state_graph
+                    .initial_net
+                    .borrow()
+                    .node_weight(node_index(*idx))
                 {
                     place.name.contains("main_end")
                 } else {
@@ -255,8 +258,11 @@ impl<'a> DeadlockDetector<'a> {
         let has_terminal_state = cycle.iter().any(|&node| {
             if let Some(state) = self.state_graph.graph.node_weight(node) {
                 state.mark.iter().any(|(idx, _)| {
-                    if let Some(PetriNetNode::P(place)) =
-                        self.state_graph.initial_net.node_weight(node_index(*idx))
+                    if let Some(PetriNetNode::P(place)) = self
+                        .state_graph
+                        .initial_net
+                        .borrow()
+                        .node_weight(node_index(*idx))
                     {
                         place.name.contains("main_end")
                     } else {
@@ -335,8 +341,8 @@ impl<'a> DeadlockDetector<'a> {
     fn collect_lock_transitions(&self) -> HashMap<NodeIndex, Vec<NodeIndex>> {
         let mut lock_transitions = HashMap::new();
 
-        for node in self.state_graph.initial_net.node_indices() {
-            if let PetriNetNode::T(transition) = &self.state_graph.initial_net[node] {
+        for node in self.state_graph.initial_net.borrow().node_indices() {
+            if let PetriNetNode::T(transition) = &self.state_graph.initial_net.borrow()[node] {
                 match &transition.transition_type {
                     ControlType::Call(CallType::Lock(lock_place))
                     | ControlType::Call(CallType::RwLockWrite(lock_place))
@@ -360,10 +366,14 @@ impl<'a> DeadlockDetector<'a> {
             for edge in self
                 .state_graph
                 .initial_net
+                .borrow()
                 .edges_directed(transition, petgraph::Direction::Incoming)
             {
-                if let Some(PetriNetNode::P(_)) =
-                    self.state_graph.initial_net.node_weight(edge.source())
+                if let Some(PetriNetNode::P(_)) = self
+                    .state_graph
+                    .initial_net
+                    .borrow()
+                    .node_weight(edge.source())
                 {
                     let required_tokens = edge.weight().label;
                     let available_tokens = state_node
@@ -387,8 +397,11 @@ impl<'a> DeadlockDetector<'a> {
         let marking: Vec<(String, u8)> = mark
             .iter()
             .filter_map(|(idx, tokens)| {
-                if let Some(PetriNetNode::P(place)) =
-                    self.state_graph.initial_net.node_weight(node_index(*idx))
+                if let Some(PetriNetNode::P(place)) = self
+                    .state_graph
+                    .initial_net
+                    .borrow()
+                    .node_weight(node_index(*idx))
                 {
                     Some((format!("{} ({})", place.name, place.span), *tokens))
                 } else {

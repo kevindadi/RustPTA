@@ -69,7 +69,7 @@ impl TinaAnalyzer {
 
         for index in petri_net.net.node_indices() {
             if let PetriNetNode::P(place) = &petri_net.net[index] {
-                let tokens = place.tokens.read().unwrap();
+                let tokens = place.tokens.borrow();
                 let mut pl_str =
                     format!("pl {} ({})", normalize_name_for_tina(&place.name), tokens);
 

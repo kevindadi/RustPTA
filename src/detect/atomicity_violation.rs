@@ -6,9 +6,10 @@ use crate::report::{AtomicOperation, AtomicReport, AtomicViolation, ViolationPat
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Direction, Graph};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, RwLock};
-use std::thread;
+use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 pub struct AtomicityViolationDetector<'a> {
@@ -37,10 +38,10 @@ impl<'a> AtomicityViolationDetector<'a> {
 
         // 2. 将图结构包装在 Arc<RwLock> 中
         let graph = Arc::new(RwLock::new(self.state_graph.graph.clone()));
-        let initial_net = Arc::new(RwLock::new(self.state_graph.initial_net.as_ref().clone()));
 
         // 3. 并行检查违背
-        let violations = self.check_violations(loads, stores, &graph, &initial_net);
+        let violations =
+            self.check_violations(loads, stores, &graph, self.state_graph.initial_net.clone());
 
         if !violations.is_empty() {
             report.has_violation = true;
@@ -84,8 +85,10 @@ impl<'a> AtomicityViolationDetector<'a> {
         let mut loads = HashMap::new();
         let mut stores = HashMap::new();
 
-        for node_idx in self.state_graph.initial_net.node_indices() {
-            if let Some(PetriNetNode::T(t)) = self.state_graph.initial_net.node_weight(node_idx) {
+        for node_idx in self.state_graph.initial_net.borrow().node_indices() {
+            if let Some(PetriNetNode::T(t)) =
+                self.state_graph.initial_net.borrow().node_weight(node_idx)
+            {
                 match &t.transition_type {
                     ControlType::Call(CallType::AtomicLoad(var_id, ordering, span, thread_id)) => {
                         if format!("{:?}", ordering) == "Relaxed" {
@@ -123,50 +126,33 @@ impl<'a> AtomicityViolationDetector<'a> {
         loads: HashMap<NodeIndex, AtomicOp>,
         stores: HashMap<NodeIndex, AtomicOp>,
         graph: &Arc<RwLock<Graph<StateNode, StateEdge>>>,
-        initial_net: &Arc<RwLock<Graph<PetriNetNode, PetriNetEdge>>>,
+        initial_net: Rc<RefCell<Graph<PetriNetNode, PetriNetEdge>>>,
     ) -> Vec<ViolationPattern> {
-        let all_violations = Arc::new(Mutex::new(Vec::new()));
-        let mut handles = vec![];
+        let mut all_violations = Vec::new();
+        let graph = graph.read().unwrap();
+        let initial_net = initial_net.borrow();
 
         for (load_trans, load_op) in loads {
-            let all_violations = Arc::clone(&all_violations);
-            let stores = stores.clone();
-            let graph = Arc::clone(graph);
-            let initial_net = Arc::clone(initial_net);
-            unsafe {
-                let handle = thread::spawn(move || {
-                    let graph = graph.read().unwrap();
-                    for state in graph.node_indices() {
-                        for edge in graph.edges_directed(state, Direction::Outgoing) {
-                            if edge.weight().transition == load_trans {
-                                if let Some(violation) = Self::check_state_for_violation(
-                                    &graph,
-                                    &initial_net.read().unwrap(),
-                                    state,
-                                    &load_op,
-                                    &stores,
-                                ) {
-                                    all_violations.lock().unwrap().push(violation);
-                                }
-                            }
+            for state in graph.node_indices() {
+                for edge in graph.edges_directed(state, Direction::Outgoing) {
+                    if edge.weight().transition == load_trans {
+                        if let Some(violation) = Self::check_state_for_violation(
+                            &graph,
+                            &initial_net,
+                            state,
+                            &load_op,
+                            &stores,
+                        ) {
+                            all_violations.push(violation);
                         }
                     }
-                });
-                handles.push(handle);
+                }
             }
         }
 
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        let violations = Arc::try_unwrap(all_violations)
-            .unwrap()
-            .into_inner()
-            .unwrap();
         let mut pattern_map: HashMap<ViolationPattern, Vec<Vec<(usize, u8)>>> = HashMap::new();
 
-        for violation in violations {
+        for violation in all_violations {
             let pattern = ViolationPattern {
                 load_op: AtomicOperation {
                     operation_type: "load".to_string(),

@@ -3,10 +3,12 @@ use crate::memory::pointsto::AliasId;
 
 use super::callgraph::InstanceId;
 use petgraph::graph::NodeIndex;
+use petgraph::Graph;
 use regex::Regex;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::sync::{Arc, RwLock};
+use std::rc::Rc;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -18,12 +20,13 @@ pub enum Shape {
 #[derive(Debug, Clone)]
 pub struct Place {
     pub name: String,
-    // pub tokens: RefCell<usize>,
-    pub tokens: Arc<RwLock<u8>>,
+    pub tokens: Rc<RefCell<u8>>,
     pub capacity: u8,
     pub span: String,
     pub place_type: PlaceType,
 }
+
+type PetriNetGraph = Graph<PetriNetNode, PetriNetEdge>;
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PlaceType {
@@ -41,7 +44,7 @@ impl Place {
     pub fn new(name: String, token: u8, place_type: PlaceType) -> Self {
         Self {
             name,
-            tokens: Arc::new(RwLock::new(token)),
+            tokens: Rc::new(RefCell::new(token)),
             capacity: token,
             span: String::new(),
             place_type,
@@ -51,7 +54,7 @@ impl Place {
     pub fn new_with_span(name: String, token: u8, place_type: PlaceType, span: String) -> Self {
         Self {
             name,
-            tokens: Arc::new(RwLock::new(token)),
+            tokens: Rc::new(RefCell::new(token)),
             capacity: 1u8,
             span,
             place_type,
@@ -61,7 +64,7 @@ impl Place {
     pub fn new_with_no_token(name: String, place_type: PlaceType) -> Self {
         Self {
             name,
-            tokens: Arc::new(RwLock::new(0)),
+            tokens: Rc::new(RefCell::new(0)),
             capacity: 1u8,
             span: String::new(),
             place_type,
@@ -78,7 +81,7 @@ impl Place {
     ) -> Self {
         Self {
             name,
-            tokens: Arc::new(RwLock::new(token)),
+            tokens: Rc::new(RefCell::new(token)),
             capacity,
             span,
             place_type,
