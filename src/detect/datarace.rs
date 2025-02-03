@@ -26,7 +26,12 @@ impl<'a> DataRaceDetector<'a> {
             // 收集当前状态的所有不安全操作
             for edge in self.state_graph.graph.edges(state) {
                 let transition = edge.weight().transition;
-                if let Some(node) = self.state_graph.initial_net.node_weight(transition) {
+                if let Some(node) = self
+                    .state_graph
+                    .initial_net
+                    .borrow()
+                    .node_weight(transition)
+                {
                     match node {
                         PetriNetNode::T(t) => match &t.transition_type {
                             ControlType::UnsafeRead(alias_id, span, basic_block, place_ty) => {

@@ -166,7 +166,7 @@ impl PTACallbacks {
                 terminal_states,
             );
             for (api_name, initial_mark) in pn.api_marks.iter() {
-                state_graph.generate_states_with_api(api_name.clone(), initial_mark.clone());
+                // TODO: API可达图重构
             }
 
             // log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
