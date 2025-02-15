@@ -4,7 +4,7 @@ use crate::graph::net_structure::{ControlType, KeyApiRegex, NetConfig, Transitio
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::OwnCrateType;
-use crate::utils::{format_name, ApiEntry, ApiSpec};
+use crate::util::{format_name, ApiEntry, ApiSpec};
 use crate::Options;
 use anyhow::Result;
 use log::debug;

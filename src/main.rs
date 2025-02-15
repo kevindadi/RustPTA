@@ -10,7 +10,7 @@ pub mod graph;
 pub mod memory;
 pub mod options;
 pub mod report;
-pub mod utils;
+pub mod util;
 
 extern crate rustc_abi;
 extern crate rustc_data_structures;

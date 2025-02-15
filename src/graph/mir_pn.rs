@@ -13,7 +13,7 @@ use crate::{
     },
     graph::net_structure::Transition,
     memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
-    utils::format_name,
+    util::format_name,
 };
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;

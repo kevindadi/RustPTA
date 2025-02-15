@@ -12,7 +12,8 @@ use crate::graph::callgraph::CallGraph;
 use crate::graph::pn::PetriNet;
 use crate::graph::state_graph::StateGraph;
 use crate::options::{AnalysisTool, Options, OwnCrateType};
-use crate::utils::{parse_api_spec, ApiSpec};
+use crate::util::mem_watcher::MemoryWatcher;
+use crate::util::{parse_api_spec, ApiSpec};
 use crate::DetectorKind;
 use log::debug;
 use rustc_driver::Compilation;
@@ -115,6 +116,9 @@ impl rustc_driver::Callbacks for PTACallbacks {
 
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
+        let mut mem_watcher = MemoryWatcher::new();
+        mem_watcher.start();
+        
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
@@ -169,6 +173,7 @@ impl PTACallbacks {
                 // TODO: API可达图重构
             }
 
+            mem_watcher.stop();
             // log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
             return;
         }
@@ -300,5 +305,6 @@ impl PTACallbacks {
                 }
             }
         }
+        mem_watcher.stop();
     }
 }

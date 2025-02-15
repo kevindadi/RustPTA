@@ -17,7 +17,7 @@ use serde_json::json;
 
 use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::pointsto::AliasId;
-use crate::utils::format_name;
+use crate::util::format_name;
 
 static ATOMIC_PTR_STORE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(std|core)::sync::atomic::AtomicPtr::<.*>::store").unwrap());
