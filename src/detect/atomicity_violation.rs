@@ -33,13 +33,10 @@ impl<'a> AtomicityViolationDetector<'a> {
         let start_time = Instant::now();
         let mut report = AtomicReport::new("Petri Net Atomicity Violation Detector".to_string());
 
-        // 1. 收集所有的 load 和 store 操作
         let (loads, stores) = self.collect_atomic_operations();
 
-        // 2. 将图结构包装在 Arc<RwLock> 中
         let graph = Arc::new(RwLock::new(self.state_graph.graph.clone()));
 
-        // 3. 并行检查违背
         let violations =
             self.check_violations(loads, stores, &graph, self.state_graph.initial_net.clone());
 

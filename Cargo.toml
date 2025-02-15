@@ -37,6 +37,8 @@ itertools = "*"
 toml = "0.8.19"
 thiserror = "*"
 anyhow = "*"
+nom = "*"
+libc = "*"
 
 [profile.dev]
 incremental = false
