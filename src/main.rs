@@ -1,6 +1,18 @@
-#![feature(rustc_private)]
-#![feature(box_patterns)]
 #![warn(non_snake_case)]
+#![feature(
+    rustc_private,             // for rustc internals
+    box_patterns,              // for conciseness
+    associated_type_defaults,  // for crate::indexed::Indexed
+    min_specialization,        // for rustc_index::newtype_index
+    type_alias_impl_trait,     // for impl Trait in trait definition, eg crate::mir::utils 
+    trait_alias,
+)]
+#![allow(
+    clippy::single_match,
+    clippy::needless_lifetimes,
+    clippy::needless_return,
+    clippy::len_zero
+)]
 
 pub mod callback;
 pub mod concurrency;
@@ -10,6 +22,7 @@ pub mod graph;
 pub mod memory;
 pub mod options;
 pub mod report;
+
 pub mod util;
 
 extern crate rustc_abi;

@@ -54,6 +54,7 @@ pub struct FunctionNode<'tcx> {
     pub instance: Instance<'tcx>,
     pub def_id: DefId,
     pub name: Box<str>,
+    // pub func_id: FuncId,
 }
 
 impl<'tcx> FunctionNode<'tcx> {
