@@ -39,6 +39,15 @@ thiserror = "*"
 anyhow = "*"
 nom = "*"
 libc = "*"
+arrayvec = "*"
+humantime = "*"
+lazy_static = "*"
+log-derive = "*"
+rayon = "~1.6.0"
+rayon-core = "~1.10.0"
+rpds = { version = "*", features = ["serde"] }
+rustc_tools_util = "*"
+
 
 [profile.dev]
 incremental = false

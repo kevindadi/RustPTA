@@ -6,14 +6,12 @@
 //! Memory usage monitoring. Currently only supported on Linux.
 
 use libc::pid_t;
-use log::error;
 use nom::bytes::streaming::tag;
 use nom::character::complete::digit1;
 use nom::combinator::map_res;
 use nom::multi::count;
 use nom::sequence::terminated;
-use nom::IResult;
-use nom::Parser;
+use nom::{IResult, Parser};
 use std::io::{Error, ErrorKind, Result};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
