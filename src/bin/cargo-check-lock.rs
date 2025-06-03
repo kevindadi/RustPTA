@@ -14,6 +14,7 @@ OPTIONS:
                                    - deadlock: Deadlock detection
                                    - datarace: Data race detection
                                    - atomic: Atomicity Violation detedtion
+                                   - flml: Generate FLML intermediate representation
                                    - [default: all]
     -p, --pn-crate <NAME>           Target crate for analysis(Only underlined links can be used)
     --pn-analysis-dir=<PATH>       Output path for analysis results [default: diagnostics.json]
@@ -26,11 +27,13 @@ VISUALIZATION OPTIONS:
         --viz-stategraph           Generate state graph visualization
         --viz-unsafe               Generate unsafe operations report
         --viz-pointsto 
+        --viz-flml                 Generate FLML intermediate representation
 
 EXAMPLES:
     cargo pn -m datarace -t my_crate
     cargo pn -m all -o results.json --viz-petrinet
     cargo pn -t my_lib --type library --api-spec apis.json
+    cargo pn -m flml -t my_crate --viz-flml
 "#;
 
 fn show_help() {

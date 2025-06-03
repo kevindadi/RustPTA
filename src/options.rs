@@ -24,7 +24,8 @@ pub enum DetectorKind {
     Deadlock,
     AtomicityViolation,
     DataRace,
-    // More to be supported.
+    FLML, // 新增FLML中间表示生成模式
+          // More to be supported.
 }
 
 #[derive(Debug, Clone)]
@@ -64,7 +65,7 @@ fn make_options_parser() -> clap::Command {
                 .long("mode")
                 .help("Analysis mode: deadlock detection, data race detection, etc.")
                 .default_values(&["deadlock"])
-                .value_parser(["deadlock", "datarace", "atomic", "all"])
+                .value_parser(["deadlock", "datarace", "atomic", "flml", "all"])
                 .hide_default_value(true),
         )
         .arg(
@@ -78,7 +79,7 @@ fn make_options_parser() -> clap::Command {
             Arg::new("target_crate")
                 .short('p')
                 .long("pn-crate")
-                .help("Target crate for analysis")
+                .help("Target crate for analysis"),
         )
         .arg(
             Arg::new("crate_type")
@@ -116,6 +117,7 @@ fn make_options_parser() -> clap::Command {
                     "dump_stategraph",
                     "dump_unsafe",
                     "dump_points_to",
+                    "dump_flml",
                 ])
                 .multiple(true),
         )
@@ -147,6 +149,12 @@ fn make_options_parser() -> clap::Command {
             Arg::new("dump_points_to")
                 .long("viz-pointsto")
                 .help("Generate points-to relations report")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("dump_flml")
+                .long("viz-flml")
+                .help("Generate FLML intermediate representation")
                 .action(clap::ArgAction::SetTrue),
         );
     parser
@@ -191,6 +199,7 @@ pub struct DumpOptions {
     pub dump_state_graph: bool,
     pub dump_unsafe_info: bool,
     pub dump_points_to: bool,
+    pub dump_flml: bool,
 }
 
 impl Default for DumpOptions {
@@ -201,6 +210,7 @@ impl Default for DumpOptions {
             dump_state_graph: false,
             dump_unsafe_info: false,
             dump_points_to: false,
+            dump_flml: false,
         }
     }
 }
@@ -242,6 +252,7 @@ impl Options {
             "atomic" => DetectorKind::AtomicityViolation,
             "all" => DetectorKind::All,
             "datarace" => DetectorKind::DataRace,
+            "flml" => DetectorKind::FLML,
             _ => DetectorKind::Deadlock,
         };
 
@@ -287,6 +298,7 @@ impl Options {
             dump_state_graph: matches.get_flag("dump_stategraph"),
             dump_unsafe_info: matches.get_flag("dump_unsafe"),
             dump_points_to: matches.get_flag("dump_points_to"),
+            dump_flml: matches.get_flag("dump_flml"),
         };
 
         self.test = matches.get_flag("petri_net_test");

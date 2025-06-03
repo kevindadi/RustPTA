@@ -9,6 +9,7 @@ use crate::detect::deadlock::DeadlockDetector;
 use crate::extern_tools::lola::LolaAnalyzer;
 use crate::extern_tools::tina::TinaAnalyzer;
 use crate::graph::callgraph::CallGraph;
+use crate::graph::mir_flml::{AnalysisConfig, MirToFLMLConverter};
 use crate::graph::pn::PetriNet;
 use crate::graph::state_graph::StateGraph;
 use crate::options::{AnalysisTool, Options, OwnCrateType};
@@ -180,6 +181,44 @@ impl PTACallbacks {
 
         //  TODO:  mode 作为网的参数
         match &self.options.detector_kind {
+            DetectorKind::FLML => {
+                // 生成FLML中间表示
+                log::info!("Generating FLML intermediate representation");
+                
+                // 根据选项选择配置
+                let config = AnalysisConfig::deadlock_detection(); // 默认使用死锁检测配置
+                let mut converter = MirToFLMLConverter::new(tcx, config);
+                
+                // 转换所有函数
+                for instance in instances.iter() {
+                    if tcx.is_mir_available(instance.def_id()) {
+                        let body = tcx.optimized_mir(instance.def_id());
+                        converter.convert_function(instance.def_id(), body);
+                        log::debug!("Converted function: {}", tcx.def_path_str(instance.def_id()));
+                    }
+                }
+                
+                // 导出FLML IR
+                if self.options.dump_options.dump_flml {
+                    match converter.export_to_json() {
+                        Ok(json_output) => {
+                            let output_path = self.output_directory.join("flml_ir.json");
+                            std::fs::write(&output_path, json_output).unwrap_or_else(|e| {
+                                log::error!("Failed to write FLML IR to file: {}", e);
+                            });
+                            log::info!("FLML IR exported to: {}", output_path.display());
+                        }
+                        Err(e) => {
+                            log::error!("Failed to export FLML IR to JSON: {}", e);
+                        }
+                    }
+                }
+                
+                let flml_ir = converter.get_flml_ir();
+                log::info!("FLML IR generated with {} nodes and {} edges", 
+                          flml_ir.graph.node_count(), 
+                          flml_ir.graph.edge_count());
+            }
             DetectorKind::DataRace => {
                 let mut pn = PetriNet::new(
                     &self.options,
