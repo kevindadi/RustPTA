@@ -1,0 +1,457 @@
+{
+  "config": "AnalysisConfig { include_loops: false, include_async: false, include_unsafe: false, include_data_deps: false, include_thread_sync: true, include_call_details: false, simplify_control_flow: true }",
+  "edges": [
+    {
+      "source": 0,
+      "target": 2,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 2,
+      "target": 3,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 3,
+      "target": 1,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 4,
+      "target": 6,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 6,
+      "target": 7,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 7,
+      "target": 8,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 8,
+      "target": 5,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 9,
+      "target": 11,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 11,
+      "target": 12,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 12,
+      "target": 13,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 13,
+      "target": 10,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 14,
+      "target": 16,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 16,
+      "target": 15,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 17,
+      "target": 19,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 19,
+      "target": 20,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 20,
+      "target": 18,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 21,
+      "target": 23,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 23,
+      "target": 22,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 24,
+      "target": 26,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 26,
+      "target": 29,
+      "type": "ControlFlow { condition: Some(\"branch_3\") }"
+    },
+    {
+      "source": 26,
+      "target": 27,
+      "type": "ControlFlow { condition: Some(\"branch_1\") }"
+    },
+    {
+      "source": 27,
+      "target": 28,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 28,
+      "target": 31,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 29,
+      "target": 30,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 30,
+      "target": 31,
+      "type": "ControlFlow { condition: None }"
+    },
+    {
+      "source": 31,
+      "target": 25,
+      "type": "ControlFlow { condition: None }"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 0,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:43 ~ std[0b46]::rt::lang_start)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:188:1: 201:2 (#0)"
+      },
+      "type": "Entry { id: \"std::rt::lang_start_entry\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:188:1: 201:2 (#0)\", def_id: Some(DefId(1:43 ~ std[0b46]::rt::lang_start)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 1,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:43 ~ std[0b46]::rt::lang_start)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:188:1: 201:2 (#0)"
+      },
+      "type": "Exit { id: \"std::rt::lang_start_exit\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:188:1: 201:2 (#0)\", def_id: Some(DefId(1:43 ~ std[0b46]::rt::lang_start)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 2,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 0,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:194:17: 199:6 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::rt::lang_start_bb0_comp\", comp_type: FunctionCall(DefId(1:39 ~ std[0b46]::rt::lang_start_internal)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:194:17: 199:6 (#0)\", def_id: None, bb_id: Some(0), attributes: {} } }"
+    },
+    {
+      "id": 3,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 1,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:201:2: 201:2 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::rt::lang_start_bb1_comp\", comp_type: Normal, metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:201:2: 201:2 (#0)\", def_id: None, bb_id: Some(1), attributes: {} } }"
+    },
+    {
+      "id": 4,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:45 ~ std[0b46]::rt::lang_start::{closure#0})",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:10: 195:93 (#0)"
+      },
+      "type": "Entry { id: \"std::rt::lang_start::{closure#0}_entry\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:10: 195:93 (#0)\", def_id: Some(DefId(1:45 ~ std[0b46]::rt::lang_start::{closure#0})), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 5,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:45 ~ std[0b46]::rt::lang_start::{closure#0})",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:10: 195:93 (#0)"
+      },
+      "type": "Exit { id: \"std::rt::lang_start::{closure#0}_exit\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:10: 195:93 (#0)\", def_id: Some(DefId(1:45 ~ std[0b46]::rt::lang_start::{closure#0})), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 6,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 0,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:18: 195:75 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::rt::lang_start::{closure#0}_bb0_comp\", comp_type: FunctionCall(DefId(1:7742 ~ std[0b46]::sys::backtrace::__rust_begin_short_backtrace)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:18: 195:75 (#0)\", def_id: None, bb_id: Some(0), attributes: {} } }"
+    },
+    {
+      "id": 7,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 1,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:18: 195:84 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::rt::lang_start::{closure#0}_bb1_comp\", comp_type: FunctionCall(DefId(1:6141 ~ std[0b46]::process::Termination::report)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:18: 195:84 (#0)\", def_id: None, bb_id: Some(1), attributes: {} } }"
+    },
+    {
+      "id": 8,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 2,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:93: 195:93 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::rt::lang_start::{closure#0}_bb2_comp\", comp_type: Normal, metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs:195:93: 195:93 (#0)\", def_id: None, bb_id: Some(2), attributes: {} } }"
+    },
+    {
+      "id": 9,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:7742 ~ std[0b46]::sys::backtrace::__rust_begin_short_backtrace)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:148:1: 158:2 (#0)"
+      },
+      "type": "Entry { id: \"std::sys::backtrace::__rust_begin_short_backtrace_entry\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:148:1: 158:2 (#0)\", def_id: Some(DefId(1:7742 ~ std[0b46]::sys::backtrace::__rust_begin_short_backtrace)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 10,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:7742 ~ std[0b46]::sys::backtrace::__rust_begin_short_backtrace)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:148:1: 158:2 (#0)"
+      },
+      "type": "Exit { id: \"std::sys::backtrace::__rust_begin_short_backtrace_exit\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:148:1: 158:2 (#0)\", def_id: Some(DefId(1:7742 ~ std[0b46]::sys::backtrace::__rust_begin_short_backtrace)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 11,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 0,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:152:18: 152:21 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::sys::backtrace::__rust_begin_short_backtrace_bb0_comp\", comp_type: FunctionCall(DefId(2:3704 ~ core[9148]::ops::function::FnOnce::call_once)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:152:18: 152:21 (#0)\", def_id: None, bb_id: Some(0), attributes: {} } }"
+    },
+    {
+      "id": 12,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 1,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/hint.rs:389:5: 389:40 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::sys::backtrace::__rust_begin_short_backtrace_bb1_comp\", comp_type: FunctionCall(DefId(2:1935 ~ core[9148]::intrinsics::black_box)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/hint.rs:389:5: 389:40 (#0)\", def_id: None, bb_id: Some(1), attributes: {} } }"
+    },
+    {
+      "id": 13,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 2,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:158:2: 158:2 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::sys::backtrace::__rust_begin_short_backtrace_bb2_comp\", comp_type: Normal, metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:158:2: 158:2 (#0)\", def_id: None, bb_id: Some(2), attributes: {} } }"
+    },
+    {
+      "id": 14,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:6143 ~ std[0b46]::process::{impl#57}::report)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/process.rs:2422:5: 2424:6 (#0)"
+      },
+      "type": "Entry { id: \"<() as std::process::Termination>::report_entry\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/process.rs:2422:5: 2424:6 (#0)\", def_id: Some(DefId(1:6143 ~ std[0b46]::process::{impl#57}::report)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 15,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(1:6143 ~ std[0b46]::process::{impl#57}::report)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/process.rs:2422:5: 2424:6 (#0)"
+      },
+      "type": "Exit { id: \"<() as std::process::Termination>::report_exit\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/process.rs:2422:5: 2424:6 (#0)\", def_id: Some(DefId(1:6143 ~ std[0b46]::process::{impl#57}::report)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 16,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 0,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/process.rs:2424:6: 2424:6 (#0)"
+      },
+      "type": "Computation { comp_id: \"<() as std::process::Termination>::report_bb0_comp\", comp_type: Normal, metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/process.rs:2424:6: 2424:6 (#0)\", def_id: None, bb_id: Some(0), attributes: {} } }"
+    },
+    {
+      "id": 17,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(2:2779 ~ core[9148]::ptr::drop_in_place)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:521:1: 527:2 (#0)"
+      },
+      "type": "Entry { id: \"std::ptr::drop_in_place_entry\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:521:1: 527:2 (#0)\", def_id: Some(DefId(2:2779 ~ core[9148]::ptr::drop_in_place)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 18,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(2:2779 ~ core[9148]::ptr::drop_in_place)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:521:1: 527:2 (#0)"
+      },
+      "type": "Exit { id: \"std::ptr::drop_in_place_exit\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:521:1: 527:2 (#0)\", def_id: Some(DefId(2:2779 ~ core[9148]::ptr::drop_in_place)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 19,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 0,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:526:14: 526:36 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::ptr::drop_in_place_bb0_comp\", comp_type: FunctionCall(DefId(2:2779 ~ core[9148]::ptr::drop_in_place)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:526:14: 526:36 (#0)\", def_id: None, bb_id: Some(0), attributes: {} } }"
+    },
+    {
+      "id": 20,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 1,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:527:2: 527:2 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::ptr::drop_in_place_bb1_comp\", comp_type: Normal, metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:527:2: 527:2 (#0)\", def_id: None, bb_id: Some(1), attributes: {} } }"
+    },
+    {
+      "id": 21,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(2:11127 ~ core[9148]::fmt::{impl#4}::new_const)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:588:5: 591:6 (#0)"
+      },
+      "type": "Entry { id: \"std::fmt::Arguments::<'a>::new_const_entry\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:588:5: 591:6 (#0)\", def_id: Some(DefId(2:11127 ~ core[9148]::fmt::{impl#4}::new_const)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 22,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(2:11127 ~ core[9148]::fmt::{impl#4}::new_const)",
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:588:5: 591:6 (#0)"
+      },
+      "type": "Exit { id: \"std::fmt::Arguments::<'a>::new_const_exit\", metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:588:5: 591:6 (#0)\", def_id: Some(DefId(2:11127 ~ core[9148]::fmt::{impl#4}::new_const)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 23,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 0,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:591:6: 591:6 (#0)"
+      },
+      "type": "Computation { comp_id: \"std::fmt::Arguments::<'a>::new_const_bb0_comp\", comp_type: Normal, metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:591:6: 591:6 (#0)\", def_id: None, bb_id: Some(0), attributes: {} } }"
+    },
+    {
+      "id": 24,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(0:3 ~ test_flml[8fe9]::main)",
+        "span": "test_flml.rs:1:1: 8:2 (#0)"
+      },
+      "type": "Entry { id: \"main_entry\", metadata: NodeMetadata { span: \"test_flml.rs:1:1: 8:2 (#0)\", def_id: Some(DefId(0:3 ~ test_flml[8fe9]::main)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 25,
+      "metadata": {
+        "attributes": {},
+        "bb_id": null,
+        "def_id": "DefId(0:3 ~ test_flml[8fe9]::main)",
+        "span": "test_flml.rs:1:1: 8:2 (#0)"
+      },
+      "type": "Exit { id: \"main_exit\", metadata: NodeMetadata { span: \"test_flml.rs:1:1: 8:2 (#0)\", def_id: Some(DefId(0:3 ~ test_flml[8fe9]::main)), bb_id: None, attributes: {} } }"
+    },
+    {
+      "id": 26,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 0,
+        "def_id": null,
+        "span": "test_flml.rs:3:8: 3:13 (#0)"
+      },
+      "type": "Decision { decision_id: \"main_bb0_decision\", branches: [\"true\", \"false\"], metadata: NodeMetadata { span: \"test_flml.rs:3:8: 3:13 (#0)\", def_id: None, bb_id: Some(0), attributes: {} } }"
+    },
+    {
+      "id": 27,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 1,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:28: 143:61 (#5)"
+      },
+      "type": "Computation { comp_id: \"main_bb1_comp\", comp_type: FunctionCall(DefId(2:11127 ~ core[9148]::fmt::{impl#4}::new_const)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:28: 143:61 (#5)\", def_id: None, bb_id: Some(1), attributes: {} } }"
+    },
+    {
+      "id": 28,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 2,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:9: 143:62 (#4)"
+      },
+      "type": "Computation { comp_id: \"main_bb2_comp\", comp_type: FunctionCall(DefId(1:3774 ~ std[0b46]::io::stdio::_print)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:9: 143:62 (#4)\", def_id: None, bb_id: Some(2), attributes: {} } }"
+    },
+    {
+      "id": 29,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 3,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:28: 143:61 (#7)"
+      },
+      "type": "Computation { comp_id: \"main_bb3_comp\", comp_type: FunctionCall(DefId(2:11127 ~ core[9148]::fmt::{impl#4}::new_const)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:28: 143:61 (#7)\", def_id: None, bb_id: Some(3), attributes: {} } }"
+    },
+    {
+      "id": 30,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 4,
+        "def_id": null,
+        "span": "/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:9: 143:62 (#6)"
+      },
+      "type": "Computation { comp_id: \"main_bb4_comp\", comp_type: FunctionCall(DefId(1:3774 ~ std[0b46]::io::stdio::_print)), metadata: NodeMetadata { span: \"/home/kevin/.rustup/toolchains/nightly-2024-12-11-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/macros.rs:143:9: 143:62 (#6)\", def_id: None, bb_id: Some(4), attributes: {} } }"
+    },
+    {
+      "id": 31,
+      "metadata": {
+        "attributes": {},
+        "bb_id": 5,
+        "def_id": null,
+        "span": "test_flml.rs:8:2: 8:2 (#0)"
+      },
+      "type": "Computation { comp_id: \"main_bb5_comp\", comp_type: Normal, metadata: NodeMetadata { span: \"test_flml.rs:8:2: 8:2 (#0)\", def_id: None, bb_id: Some(5), attributes: {} } }"
+    }
+  ]
+}
