@@ -20,13 +20,13 @@ impl<'a> DeadlockDetector<'a> {
         let start_time = Instant::now();
         let mut report = DeadlockReport::new("Petri Net Deadlock Detector".to_string());
 
-        // 运行基于状态可达性的死锁检测
+        // Run reachability-based deadlock detection
         let reachability_deadlocks = self.detect_reachability_deadlock();
 
-        // 运行基于锁依赖的死锁检测
+        // Run lock dependency-based deadlock detection
         // let dependency_deadlocks = self.detect_lock_dependency_deadlock();
         let dependency_deadlocks = HashSet::new();
-        // 合并结果
+        // Merge results
         let all_deadlocks: HashSet<_> = reachability_deadlocks
             .into_iter()
             .chain(dependency_deadlocks.into_iter())
@@ -53,18 +53,18 @@ impl<'a> DeadlockDetector<'a> {
         report
     }
 
-    /// 基于状态可达性的死锁检测
+    /// Reachability-based deadlock detection
     fn detect_reachability_deadlock(&self) -> HashSet<Vec<(usize, u8)>> {
         let mut deadlocks = HashSet::new();
 
-        // 1. 检测终止状态死锁
+        // 1. Detect terminal state deadlocks
         for node_idx in self.state_graph.graph.node_indices() {
             let state = &self.state_graph.graph[node_idx];
 
-            // 检查是否是终止状态
+            // Check if it's a terminal state
             let is_terminal = self.state_graph.graph.edges(node_idx).count() == 0;
 
-            // 检查是否是正常终止状态
+            // Check if it's a normal termination state
             let is_normal_termination = state.mark.iter().any(|(idx, _)| {
                 if let Some(PetriNetNode::P(place)) = self
                     .state_graph
@@ -78,7 +78,7 @@ impl<'a> DeadlockDetector<'a> {
                 }
             });
 
-            // 如果是终止状态但不是正常终止，则是死锁
+            // If it's a terminal state but not normal termination, it's a deadlock
             if is_terminal && !is_normal_termination {
                 deadlocks.insert(state.mark.clone());
             }
@@ -86,7 +86,7 @@ impl<'a> DeadlockDetector<'a> {
 
         if deadlocks.is_empty() {
             log::info!("no deadlock detected by reachability");
-            // 2. 检测环路死锁
+            // 2. Detect cycle deadlocks
             let cycle_deadlocks = self.detect_cycle_deadlocks();
             deadlocks.extend(cycle_deadlocks);
         }
@@ -94,14 +94,14 @@ impl<'a> DeadlockDetector<'a> {
         deadlocks
     }
 
-    /// 检测环路死锁
+    /// Detect cycle deadlocks
     fn detect_cycle_deadlocks(&self) -> HashSet<Vec<(usize, u8)>> {
         let mut deadlocks = HashSet::new();
         let mut visited = HashSet::new();
         let mut stack = HashSet::new();
-        let mut cycle_groups = HashMap::new(); // 改为使用 Vec 作为键
+        let mut cycle_groups = HashMap::new(); // Change to use Vec as key
 
-        // 从每个节点开始搜索环路
+        // Search for cycles starting from each node
         for start_node in self.state_graph.graph.node_indices() {
             if !visited.contains(&start_node) {
                 self.find_deadlock_cycles(
@@ -114,7 +114,7 @@ impl<'a> DeadlockDetector<'a> {
             }
         }
 
-        // 合并具有相同阻塞变迁的环路
+        // Merge cycles with the same blocked transitions
         for (blocked_transitions, states) in cycle_groups {
             if !blocked_transitions.is_empty() {
                 if let Some(state) = states.into_iter().next() {
@@ -167,20 +167,20 @@ impl<'a> DeadlockDetector<'a> {
         stack.remove(&current);
     }
 
-    /// 获取环路中始终被阻塞的变迁集合
+    /// Get the set of transitions that are consistently blocked in the cycle
     ///
-    /// # 算法流程
-    /// 1. 收集所有锁相关的变迁和所有可用的锁资源
-    /// 2. 从环路的第一个状态开始,找出被阻塞的变迁
-    /// 3. 遍历环路中的其他状态,找出在所有状态中都被阻塞的变迁
-    /// 4. 验证环路的有效性:
-    ///    - 检查环路是否稳定(所有后继状态都在环路中)
-    ///    - 检查被阻塞的锁是否构成死锁(不能包含所有锁资源)
+    /// # Algorithm Flow
+    /// 1. Collect all lock-related transitions and all available lock resources
+    /// 2. Starting from the first state in the cycle, find the blocked transitions
+    /// 3. Traverse other states in the cycle to find transitions blocked in all states
+    /// 4. Validate the cycle:
+    ///    - Check if the cycle is stable (all successor states are in the cycle)
+    ///    - Check if the blocked locks constitute a deadlock (cannot include all lock resources)
     ///
-    /// # 死锁判定条件
-    /// - 环路必须稳定
-    /// - 必须存在始终被阻塞的变迁
-    /// - 被阻塞的锁不能包含所有锁资源(否则说明是正常的执行路径)
+    /// # Deadlock Determination Conditions
+    /// - The cycle must be stable
+    /// - There must be consistently blocked transitions
+    /// - The blocked locks cannot include all lock resources (otherwise it's a normal execution path)
     fn get_consistently_blocked_transitions(
         &self,
         cycle: &[NodeIndex],
@@ -189,7 +189,7 @@ impl<'a> DeadlockDetector<'a> {
         let mut consistently_blocked = HashSet::new();
         let all_locks: HashSet<_> = lock_transitions.keys().cloned().collect();
 
-        // 首先收集第一个状态的被阻塞变迁
+        // First collect blocked transitions of the first state
         if let Some(&first_node) = cycle.first() {
             for (lock, transitions) in &lock_transitions {
                 let mut is_blocked = true;
@@ -205,7 +205,7 @@ impl<'a> DeadlockDetector<'a> {
             }
         }
 
-        // 检查这些变迁是否在循环中的所有状态都被阻塞
+        // Check if these transitions are blocked in all states of the cycle
         for &node in &cycle[1..] {
             let mut current_blocked = HashSet::new();
             for &lock in &consistently_blocked {
@@ -232,7 +232,7 @@ impl<'a> DeadlockDetector<'a> {
             }
         }
 
-        // 检查环路的稳定性
+        // Check cycle stability
         let is_stable = cycle.iter().all(|&node| {
             self.state_graph
                 .graph
@@ -240,7 +240,7 @@ impl<'a> DeadlockDetector<'a> {
                 .all(|edge| cycle.contains(&edge.target()))
         });
 
-        // 如果被阻塞的锁包含了所有锁,说明这是正常的执行路径而不是死锁
+        // If blocked locks include all locks, it's a normal execution path, not a deadlock
         if all_locks.is_subset(&consistently_blocked) {
             return None;
         }

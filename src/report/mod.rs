@@ -16,14 +16,14 @@ pub struct DeadlockTrace {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadlockReport {
-    pub tool_name: String,                        // 使用的分析工具名称
-    pub has_deadlock: bool,                       // 是否存在死锁
-    pub deadlock_count: usize,                    // 死锁数量
-    pub deadlock_states: Vec<DeadlockState>,      // 死锁状态列表
-    pub traces: Vec<DeadlockTrace>,               // 到达死锁的路径
-    pub analysis_time: Duration,                  // 分析耗时
-    pub state_space_info: Option<StateSpaceInfo>, // 状态空间信息
-    pub error: Option<String>,                    // 错误信息
+    pub tool_name: String,                        // Analysis tool name used
+    pub has_deadlock: bool,                       // Whether deadlock exists
+    pub deadlock_count: usize,                    // Number of deadlocks
+    pub deadlock_states: Vec<DeadlockState>,      // List of deadlock states
+    pub traces: Vec<DeadlockTrace>,               // Paths to deadlock
+    pub analysis_time: Duration,                  // Analysis time cost
+    pub state_space_info: Option<StateSpaceInfo>, // State space information
+    pub error: Option<String>,                    // Error information
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,19 +35,19 @@ pub struct StateSpaceInfo {
 
 impl fmt::Display for DeadlockReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "死锁分析报告")?;
-        writeln!(f, "分析工具: {}", self.tool_name)?;
-        writeln!(f, "分析时间: {:?}", self.analysis_time)?;
-        writeln!(f, "是否存在死锁: {}", self.has_deadlock)?;
+        writeln!(f, "Deadlock Analysis Report")?;
+        writeln!(f, "Analysis Tool: {}", self.tool_name)?;
+        writeln!(f, "Analysis Time: {:?}", self.analysis_time)?;
+        writeln!(f, "Deadlock Found: {}", self.has_deadlock)?;
 
         if self.has_deadlock {
-            writeln!(f, "\n发现 {} 个死锁状态:", self.deadlock_count)?;
+            writeln!(f, "\nFound {} deadlock states:", self.deadlock_count)?;
             for (i, state) in self.deadlock_states.iter().enumerate() {
-                writeln!(f, "\n死锁 #{}", i + 1)?;
-                writeln!(f, "状态ID: {}", state.state_id)?;
-                writeln!(f, "描述: {}", state.description)?;
+                writeln!(f, "\nDeadlock #{}", i + 1)?;
+                writeln!(f, "State ID: {}", state.state_id)?;
+                writeln!(f, "Description: {}", state.description)?;
                 if !state.marking.is_empty() {
-                    writeln!(f, "标识:")?;
+                    writeln!(f, "Tokens:")?;
                     for (place, tokens) in &state.marking {
                         writeln!(f, "  {}: {}", place, tokens)?;
                     }
@@ -55,25 +55,25 @@ impl fmt::Display for DeadlockReport {
             }
 
             // if !self.traces.is_empty() {
-            //     writeln!(f, "\n死锁路径:")?;
+            //     writeln!(f, "\nDeadlock paths:")?;
             //     for (i, trace) in self.traces.iter().enumerate() {
-            //         writeln!(f, "\n路径 #{}", i + 1)?;
+            //         writeln!(f, "\nPath #{}", i + 1)?;
             //         for (step_num, step) in trace.steps.iter().enumerate() {
-            //             writeln!(f, "  步骤 {}: {}", step_num + 1, step)?;
+            //             writeln!(f, "  Step {}: {}", step_num + 1, step)?;
             //         }
             //     }
             // }
         }
 
         if let Some(space_info) = &self.state_space_info {
-            writeln!(f, "\n状态空间信息:")?;
-            writeln!(f, "总状态数: {}", space_info.total_states)?;
-            writeln!(f, "总转换数: {}", space_info.total_transitions)?;
-            writeln!(f, "可达状态数: {}", space_info.reachable_states)?;
+            writeln!(f, "\nState Space Information:")?;
+            writeln!(f, "Total States: {}", space_info.total_states)?;
+            writeln!(f, "Total Transitions: {}", space_info.total_transitions)?;
+            writeln!(f, "Reachable States: {}", space_info.reachable_states)?;
         }
 
         if let Some(error) = &self.error {
-            writeln!(f, "\n错误信息: {}", error)?;
+            writeln!(f, "\nError Information: {}", error)?;
         }
 
         Ok(())
@@ -144,15 +144,15 @@ pub struct AtomicReport {
 
 impl fmt::Display for AtomicReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "原子性违背分析报告")?;
-        writeln!(f, "分析工具: {}", self.tool_name)?;
-        writeln!(f, "分析时间: {:?}", self.analysis_time)?;
-        writeln!(f, "是否存在违背: {}", self.has_violation)?;
+        writeln!(f, "Atomicity Violation Analysis Report")?;
+        writeln!(f, "Analysis Tool: {}", self.tool_name)?;
+        writeln!(f, "Analysis Time: {:?}", self.analysis_time)?;
+        writeln!(f, "Violation Found: {}", self.has_violation)?;
 
         if self.has_violation {
-            writeln!(f, "\n发现 {} 个原子性违背模式:", self.violation_count)?;
+            writeln!(f, "\nFound {} atomicity violation patterns:", self.violation_count)?;
             for (i, pattern) in self.violations.iter().enumerate() {
-                writeln!(f, "\n违背模式 #{}:", i + 1)?;
+                writeln!(f, "\nViolation Pattern #{}:", i + 1)?;
                 writeln!(
                     f,
                     "- Load Operation: {} at {} ({})",
@@ -173,7 +173,7 @@ impl fmt::Display for AtomicReport {
         }
 
         if let Some(error) = &self.error {
-            writeln!(f, "\n错误信息: {}", error)?;
+            writeln!(f, "\nError Information: {}", error)?;
         }
 
         Ok(())
@@ -212,17 +212,17 @@ impl AtomicReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaceOperation {
-    pub operation_type: String,     // "read" 或 "write"
-    pub variable: String,           // 变量标识
-    pub location: String,           // 源代码位置
-    pub basic_block: Option<usize>, // 基本块信息
+    pub operation_type: String,     // Operation type (Read/Write)
+    pub variable: String,           // Variable identifier
+    pub location: String,           // Source code location
+    pub basic_block: Option<usize>, // Basic block information
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaceCondition {
-    pub operations: Vec<RaceOperation>, // 相关的操作
-    pub variable_info: String,          // 变量信息
-    pub state: Vec<(usize, u8)>,        // 发生竞争的状态
+    pub operations: Vec<RaceOperation>, // Related operations
+    pub variable_info: String,          // Variable information
+    pub state: Vec<(usize, u8)>,        // State where race occurs
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,21 +244,21 @@ pub struct RaceReport {
 
 impl fmt::Display for RaceReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "数据竞争分析报告")?;
-        writeln!(f, "分析工具: {}", self.tool_name)?;
-        writeln!(f, "分析时间: {:?}", self.analysis_time)?;
-        writeln!(f, "是否存在竞争: {}", self.has_race)?;
+        writeln!(f, "Data Race Analysis Report")?;
+        writeln!(f, "Analysis Tool: {}", self.tool_name)?;
+        writeln!(f, "Analysis Time: {:?}", self.analysis_time)?;
+        writeln!(f, "Race Found: {}", self.has_race)?;
 
         if self.has_race {
-            writeln!(f, "\n发现 {} 个数据竞争:", self.race_count)?;
+            writeln!(f, "\nFound {} data races:", self.race_count)?;
             for (i, race) in self.race_conditions.iter().enumerate() {
-                writeln!(f, "\n竞争 #{}", i + 1)?;
-                writeln!(f, "变量信息:")?;
-                writeln!(f, "  名称: {}", race.variable_info)?;
+                writeln!(f, "\nRace #{}", i + 1)?;
+                writeln!(f, "Variable Information:")?;
+                writeln!(f, "  Name: {}", race.variable_info)?;
                 // writeln!(f, "  类型: {}", race.variable_info.data_type)?;
                 // writeln!(f, "  作用域: {}", race.variable_info.function_scope)?;
 
-                writeln!(f, "\n相关操作:")?;
+                writeln!(f, "\nRelated Operations:")?;
                 for op in &race.operations {
                     writeln!(f, "  - {} at {}", op.operation_type, op.location)?;
                     if let Some(bb) = op.basic_block {
@@ -266,12 +266,12 @@ impl fmt::Display for RaceReport {
                     }
                 }
 
-                writeln!(f, "\n竞争状态: {:?}", race.state)?;
+                writeln!(f, "\nRace State: {:?}", race.state)?;
             }
         }
 
         if let Some(error) = &self.error {
-            writeln!(f, "\n错误信息: {}", error)?;
+            writeln!(f, "\nError Information: {}", error)?;
         }
 
         Ok(())

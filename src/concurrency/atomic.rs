@@ -31,36 +31,6 @@ pub fn is_atomic_ptr_store<'tcx>(
     ATOMIC_PTR_STORE.is_match(&path)
 }
 
-macro_rules! is_atomic_api {
-    ($fn_name:expr, "load") => {
-        $fn_name.contains("::load")
-    };
-    ($fn_name:expr, "store") => {
-        $fn_name.contains("::store")
-    };
-    ($fn_name:expr, "compare_exchange") => {
-        $fn_name.contains("::compare_exchange")
-    };
-    ($fn_name:expr, "fetch_add") => {
-        $fn_name.contains("::fetch_add")
-    };
-    ($fn_name:expr, "fetch_sub") => {
-        $fn_name.contains("::fetch_sub")
-    };
-    ($fn_name:expr, "fetch_and") => {
-        $fn_name.contains("::fetch_and")
-    };
-    ($fn_name:expr, "fetch_or") => {
-        $fn_name.contains("::fetch_or")
-    };
-    ($fn_name:expr, "fetch_xor") => {
-        $fn_name.contains("::fetch_xor")
-    };
-    ($fn_name:expr, "swap") => {
-        $fn_name.contains("::swap")
-    };
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AtomicApi {
     Read,
@@ -142,11 +112,11 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
     }
 
     pub fn analyze(&mut self) -> AtomicVarMap {
-        // 遍历callgraph中的所有函数
+        // Traverse all functions in the callgraph
         for node_ref in self.callgraph.graph.node_references() {
             if let CallGraphNode::WithBody(instance) = node_ref.weight() {
                 let def_id = instance.def_id();
-                // 只分析当前crate的函数
+                // Only analyze functions in the current crate
                 if def_id.is_local() && format_name(def_id).starts_with(&self.crate_name) {
                     if self.tcx.is_mir_available(def_id) {
                         let body = self.tcx.optimized_mir(def_id);

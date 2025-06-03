@@ -21,7 +21,6 @@ pub mod extern_tools;
 pub mod graph;
 pub mod memory;
 pub mod options;
-pub mod reduce;
 pub mod report;
 
 pub mod util;

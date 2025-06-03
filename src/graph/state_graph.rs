@@ -300,7 +300,7 @@ impl StateGraph {
         }
     }
 
-    /// 运行死锁检测
+    /// Run deadlock detection
     pub fn detect_deadlock(&self) -> String {
         use crate::detect::deadlock::DeadlockDetector;
 
@@ -331,7 +331,7 @@ impl StateGraph {
     }
 
     fn set_current_mark(&self, mark: &HashSet<(NodeIndex, u8)>) {
-        // 首先将所有库所的 token 清零
+        // First clear all place tokens to zero
         for node_index in self.initial_net.borrow().node_indices() {
             if let Some(PetriNetNode::P(place)) = self.initial_net.borrow().node_weight(node_index)
             {
@@ -339,7 +339,7 @@ impl StateGraph {
             }
         }
 
-        // 直接根据 mark 中的 NodeIndex 设置对应的 token
+        // Set tokens directly based on the NodeIndex in mark
         for (node_index, token_count) in mark {
             if let Some(PetriNetNode::P(place)) = self.initial_net.borrow().node_weight(*node_index)
             {
@@ -356,12 +356,12 @@ impl StateGraph {
         }
     }
 
-    /// 发生一个变迁并生成新的网络状态
-    /// 1. 克隆当前网络创建新图
-    /// 2. 根据当前标识设置初始 token
-    /// 3. 从变迁的输入库所中减去相应的 token
-    /// 4. 向变迁的输出库所中添加相应的 token（考虑容量限制）
-    /// 5. 生成并返回新的状态
+    /// Fire a transition and generate a new network state
+    /// 1. Clone current network to create new graph
+    /// 2. Set initial tokens based on current marking
+    /// 3. Subtract tokens from input places of the transition
+    /// 4. Add tokens to output places of the transition (considering capacity limits)
+    /// 5. Generate and return new state
     pub fn fire_transition(
         &mut self,
         mark: &HashSet<(NodeIndex, u8)>,
@@ -371,7 +371,7 @@ impl StateGraph {
         let mut new_state = HashSet::<(NodeIndex, u8)>::new();
         log::debug!("The transition to fire is: {}", transition.index());
 
-        // 从输入库所中减去token
+        // Subtract tokens from input places
         log::debug!("sub token to source node!");
         for edge in self
             .initial_net
@@ -388,7 +388,7 @@ impl StateGraph {
                     let label = edge.weight().label;
                     if *place.tokens.borrow() < label {
                         return Err(format!(
-                            "库所 {} 的token数量不足: 需要 {}, 实际 {}",
+                            "Place {} has insufficient tokens: required {}, actual {}",
                             place.name,
                             label,
                             *place.tokens.borrow()
@@ -397,12 +397,12 @@ impl StateGraph {
                     *place.tokens.borrow_mut() -= label;
                 }
                 PetriNetNode::T(_) => {
-                    return Err("发现输入边连接到变迁节点".to_string());
+                    return Err("Found input edge connected to transition node".to_string());
                 }
             }
         }
 
-        // 将token添加到输出库所中
+        // Add tokens to output places
         log::debug!("add token to target node!");
         for edge in self
             .initial_net
@@ -447,19 +447,19 @@ impl StateGraph {
         Ok(new_state) // 返回新图和新状态
     }
 
-    /// 获取当前标识下所有使能的变迁
-    /// 1. 使用 `set_current_mark` 函数设置当前标识
-    /// 2. 遍历网络中的每个节点，检查其是否为变迁节点
-    /// 3. 对于每个变迁节点，检查其所有输入库所是否有足够的 token
-    /// 4. 如果所有输入库所的 token 数量均满足要求，则该变迁为使能状态
-    /// 5. 将所有使能的变迁节点索引添加到返回的向量中
+    /// Get all enabled transitions under current marking
+    /// 1. Use `set_current_mark` function to set current marking
+    /// 2. Traverse each node in the network to check if it's a transition node
+    /// 3. For each transition node, check if all its input places have sufficient tokens
+    /// 4. If all input places have sufficient tokens, the transition is enabled
+    /// 5. Add all enabled transition node indices to the returned vector
     pub fn get_enabled_transitions(&mut self, mark: &HashSet<(NodeIndex, u8)>) -> Vec<NodeIndex> {
         let mut sched_transiton = Vec::<NodeIndex>::new();
 
-        // 使用内联函数设置当前标识
+        // Set current marking using inline function
         self.set_current_mark(mark);
 
-        // 检查变迁使能的逻辑
+        // Logic to check transition enablement
         for node_index in self.initial_net.borrow().node_indices() {
             match self.initial_net.borrow().node_weight(node_index) {
                 Some(PetriNetNode::T(_)) => {

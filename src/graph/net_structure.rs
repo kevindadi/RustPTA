@@ -3,7 +3,6 @@ use crate::memory::pointsto::AliasId;
 
 use super::callgraph::InstanceId;
 use petgraph::graph::NodeIndex;
-use petgraph::Graph;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -25,8 +24,6 @@ pub struct Place {
     pub span: String,
     pub place_type: PlaceType,
 }
-
-type PetriNetGraph = Graph<PetriNetNode, PetriNetEdge>;
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PlaceType {

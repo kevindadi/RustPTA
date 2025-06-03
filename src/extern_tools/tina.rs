@@ -40,26 +40,26 @@ impl TinaAnalyzer {
     }
 
     // .net                    ::= (<trdesc>|<pldesc>|<lbdesc>|<prdesc>|<ntdesc>|<netdesc>)*
-    // netdesc                 ::= ’net’ <net>
-    // trdesc                  ::= ’tr’ <transition> {":" <label>} {<interval>} {<tinput> -> <toutput>}
-    // pldesc                  ::= ’pl’ <place> {":" <label>} {(<marking>)} {<pinput> -> <poutput>}
-    // ntdesc                  ::= ’nt’ <note> (’0’|’1’) <annotation>
-    // lbdesc                  ::= ’lb’ [<place>|<transition>] <label>
-    // prdesc                  ::= ’pr’ (<transition>)+ ("<"|">") (<transition>)+
-    // interval                        ::= (’[’|’]’)INT’,’INT(’[’|’]’) | (’[’|’]’)INT’,’w[’
+    // netdesc                 ::= 'net' <net>
+    // trdesc                  ::= 'tr' <transition> {":" <label>} {<interval>} {<tinput> -> <toutput>}
+    // pldesc                  ::= 'pl' <place> {":" <label>} {(<marking>)} {<pinput> -> <poutput>}
+    // ntdesc                  ::= 'nt' <note> (0|1) <annotation>
+    // lbdesc                  ::= 'lb' [<place>|<transition>] <label>
+    // prdesc                  ::= 'pr' (<transition>)+ ("<"|">") (<transition>)+
+    // interval                        ::= ('['|']')INT','INT('['|']') | ('['|']')INT','w['
     // tinput                  ::= <place>{<arc>}
     // toutput                 ::= <place>{<normal_arc>}
     // pinput                  ::= <transition>{<normal_arc>}
     // poutput                 ::= <transition>{arc}
     // arc                     ::= <normal_arc> | <test_arc> | <inhibitor_arc> |
     //                             <stopwatch_arc> | <stopwatch-inhibitor_arc>
-    // normal_arc              ::= ’*’<weight>
-    // test_arc                ::= ’?’<weight>
-    // inhibitor_arc           ::= ’?-’<weight>
-    // stopwatch_arc           ::= ’!’<weight>
-    // stopwatch-inhibitor_arc ::= ’!-’<weight>
-    // weight, marking         ::= INT{’K’|’M’|’G’|’T’|’P’|’E’}
-    // net, place, transition, label, note, annotation ::= ANAME | ’{’QNAME’}’
+    // normal_arc              ::= '*'<weight>
+    // test_arc                ::= '?'<weight>
+    // inhibitor_arc           ::= '?-'<weight>
+    // stopwatch_arc           ::= '!'<weight>
+    // stopwatch-inhibitor_arc ::= '!-'<weight>
+    // weight, marking         ::= INT{'K'|'M'|'G'|'T'|'P'|'E'}
+    // net, place, transition, label, note, annotation ::= ANAME | '{'QNAME'}'
     // INT                     ::= unsigned integer
     // ANAME                   ::= alphanumeric name, see Notes below
     // QNAME                   ::= arbitrary name, see Notes below
@@ -142,7 +142,7 @@ impl TinaAnalyzer {
     }
 
     pub fn analyze_petri_net(&self, petri_net: &PetriNet) -> io::Result<TinaResult> {
-        // 转换为 Tina 格式并保存到文件
+        // Convert to Tina format and save to file
         let content = self.convert_to_tina(petri_net);
         let net_file = self.output_directory.join("tina.net");
         let mut file = File::create(&net_file)?;
@@ -151,7 +151,7 @@ impl TinaAnalyzer {
         self.check_deadlock(&net_file)
     }
 
-    /// 检查 Tina 是否可用
+    /// Check if Tina is available
     pub fn check_tina_available(&self) -> bool {
         Command::new("/usr/local/tina/bin/tina")
             .arg("-h")
@@ -159,7 +159,7 @@ impl TinaAnalyzer {
             .is_ok()
     }
 
-    /// 检查死锁
+    /// Check deadlock
     pub fn check_deadlock(&self, net_file: &PathBuf) -> io::Result<TinaResult> {
         let output = Command::new("/usr/local/tina/bin/tina")
             .arg(net_file)
@@ -170,7 +170,7 @@ impl TinaAnalyzer {
 
         let output_text = if stdout.is_empty() { stderr } else { stdout };
 
-        // 保存完整输出到文件
+        // Save complete output to file
         let output_file = self.output_directory.join("tina_analysis.txt");
         std::fs::write(&output_file, output_text.as_bytes())?;
 
@@ -183,7 +183,7 @@ impl TinaAnalyzer {
             analysis_output: None,
         };
 
-        // 解析输出
+        // Parse output
         let mut in_liveness_section = false;
         let mut liveness_info = String::new();
         let mut analysis_summary = String::new();
@@ -206,7 +206,7 @@ impl TinaAnalyzer {
                 liveness_info.push('\n');
             }
 
-            // 解析状态空间信息
+            // Parse state space information
             if line.contains("states") && line.contains("transitions") {
                 if let Some(states) = line
                     .split_whitespace()
@@ -223,7 +223,7 @@ impl TinaAnalyzer {
                 }
             }
 
-            // 检查死锁状态
+            // Check deadlock states
             if line.contains("dead") {
                 result.has_deadlock = true;
                 if result.deadlock_states.is_none() {
@@ -235,7 +235,7 @@ impl TinaAnalyzer {
             }
         }
 
-        // 只保存活性分析和总结信息
+        // Only save liveness analysis and summary information
         result.analysis_output = Some(format!("{}\n{}", liveness_info, analysis_summary));
 
         Ok(result)
@@ -246,10 +246,10 @@ impl TinaAnalyzer {
             if let Some(output) = result.analysis_output {
                 Ok(output)
             } else {
-                Ok("分析执行失败: 没有输出".to_string())
+                Ok("Analysis execution failed: no output".to_string())
             }
         } else {
-            Ok("分析执行失败".to_string())
+            Ok("Analysis execution failed".to_string())
         }
     }
 
@@ -308,9 +308,9 @@ mod tests {
         );
 
         if analyzer.check_tina_available() {
-            // 测试代码
+            // Test code
         } else {
-            println!("Tina 工具不可用");
+            println!("Tina tool is not available");
         }
     }
 }

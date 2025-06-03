@@ -3,58 +3,58 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use std::collections::{HashMap, HashSet};
 
-/// 分析配置 - 决定中间表示包含哪些元素
+/// Analysis configuration - determines which elements are included in the intermediate representation
 #[derive(Debug, Clone)]
 pub struct AnalysisConfig {
-    /// 是否包含循环结构
+    /// Whether to include loop structures
     pub include_loops: bool,
-    /// 是否包含异步操作
+    /// Whether to include async operations
     pub include_async: bool,
-    /// 是否包含不安全操作
+    /// Whether to include unsafe operations
     pub include_unsafe: bool,
-    /// 是否包含数据依赖
+    /// Whether to include data dependencies
     pub include_data_deps: bool,
-    /// 是否包含线程同步
+    /// Whether to include thread synchronization
     pub include_thread_sync: bool,
-    /// 是否包含函数调用细节
+    /// Whether to include function call details
     pub include_call_details: bool,
-    /// 是否简化控制流（合并简单的顺序块）
+    /// Whether to simplify control flow (merge simple sequential blocks)
     pub simplify_control_flow: bool,
 }
 
 impl AnalysisConfig {
-    /// 死锁检测配置
+    /// Deadlock detection configuration
     pub fn deadlock_detection() -> Self {
         Self {
-            include_loops: false,        // 循环不影响死锁检测
-            include_async: false,        // 异步操作简化处理
-            include_unsafe: false,       // 不安全操作不影响死锁
-            include_data_deps: false,    // 数据依赖不影响死锁
-            include_thread_sync: true,   // 线程同步是关键
-            include_call_details: false, // 简化函数调用
-            simplify_control_flow: true, // 简化控制流
+            include_loops: false,        // Loops don't affect deadlock detection
+            include_async: false,        // Simplify async operations
+            include_unsafe: false,       // Unsafe operations don't affect deadlock
+            include_data_deps: false,    // Data dependencies don't affect deadlock
+            include_thread_sync: true,   // Thread synchronization is key
+            include_call_details: false, // Simplify function calls
+            simplify_control_flow: true, // Simplify control flow
         }
     }
 
-    /// 数据竞争检测配置
+    /// Data race detection configuration
     pub fn data_race_detection() -> Self {
         Self {
-            include_loops: true,          // 循环中的数据访问很重要
-            include_async: true,          // 异步操作可能导致数据竞争
-            include_unsafe: true,         // 不安全操作是重点
-            include_data_deps: true,      // 数据依赖是核心
-            include_thread_sync: true,    // 同步操作影响数据访问
-            include_call_details: true,   // 需要详细的调用信息
-            simplify_control_flow: false, // 保留完整控制流
+            include_loops: true,          // Data access in loops is important
+            include_async: true,          // Async operations may cause data races
+            include_unsafe: true,         // Unsafe operations are key
+            include_data_deps: true,      // Data dependencies are core
+            include_thread_sync: true,    // Sync operations affect data access
+            include_call_details: true,   // Need detailed call information
+            simplify_control_flow: false, // Keep complete control flow
         }
     }
 
-    /// 内存安全检测配置
+    /// Memory safety detection configuration
     pub fn memory_safety() -> Self {
         Self {
             include_loops: true,
             include_async: false,
-            include_unsafe: true, // 重点关注不安全操作
+            include_unsafe: true, // Focus on unsafe operations
             include_data_deps: true,
             include_thread_sync: false,
             include_call_details: true,
@@ -63,32 +63,32 @@ impl AnalysisConfig {
     }
 }
 
-/// 抽象的中间表示节点
+/// Abstract intermediate representation node
 #[derive(Debug, Clone)]
 pub enum AbstractNode {
-    /// 程序入口点
+    /// Program entry point
     Entry { id: String, metadata: NodeMetadata },
-    /// 程序出口点
+    /// Program exit point
     Exit { id: String, metadata: NodeMetadata },
-    /// 同步点（锁、条件变量等）
+    /// Synchronization point (locks, condition variables, etc.)
     SyncPoint {
         sync_id: String,
         sync_type: SyncType,
         metadata: NodeMetadata,
     },
-    /// 计算节点（抽象的计算单元）
+    /// Computation node (abstract computation unit)
     Computation {
         comp_id: String,
         comp_type: ComputationType,
         metadata: NodeMetadata,
     },
-    /// 决策点（分支、选择）
+    /// Decision point (branch, choice)
     Decision {
         decision_id: String,
         branches: Vec<String>,
         metadata: NodeMetadata,
     },
-    /// 资源节点（内存、文件等）
+    /// Resource node (memory, file, etc.)
     Resource {
         resource_id: String,
         resource_type: ResourceType,
@@ -96,77 +96,77 @@ pub enum AbstractNode {
     },
 }
 
-/// 节点元数据
+/// Node metadata
 #[derive(Debug, Clone)]
 pub struct NodeMetadata {
-    /// 源码位置
+    /// Source code location
     pub span: String,
-    /// 相关的DefId（如果有）
+    /// Related DefId (if any)
     pub def_id: Option<DefId>,
-    /// 基本块ID（如果有）
+    /// Basic block ID (if any)
     pub bb_id: Option<usize>,
-    /// 自定义属性
+    /// Custom attributes
     pub attributes: HashMap<String, String>,
 }
 
-/// 同步类型
+/// Synchronization type
 #[derive(Debug, Clone)]
 pub enum SyncType {
-    /// 互斥锁获取
+    /// Mutex acquire
     MutexAcquire,
-    /// 互斥锁释放
+    /// Mutex release
     MutexRelease,
-    /// 读写锁读取
+    /// Read-write lock read
     RwLockRead,
-    /// 读写锁写入
+    /// Read-write lock write
     RwLockWrite,
-    /// 读写锁释放
+    /// Read-write lock release
     RwLockRelease,
-    /// 条件变量等待
+    /// Condition variable wait
     CondVarWait,
-    /// 条件变量通知
+    /// Condition variable notify
     CondVarNotify,
-    /// 原子操作
+    /// Atomic operation
     AtomicOp(String),
-    /// 线程创建
+    /// Thread spawn
     ThreadSpawn,
-    /// 线程等待
+    /// Thread join
     ThreadJoin,
-    /// 通道发送
+    /// Channel send
     ChannelSend,
-    /// 通道接收
+    /// Channel receive
     ChannelRecv,
 }
 
-/// 计算类型
+/// Computation type
 #[derive(Debug, Clone)]
 pub enum ComputationType {
-    /// 普通计算
+    /// Normal computation
     Normal,
-    /// 函数调用
+    /// Function call
     FunctionCall(DefId),
-    /// 异步操作
+    /// Async operation
     AsyncOp(AsyncOpType),
-    /// 不安全操作
+    /// Unsafe operation
     UnsafeOp(UnsafeOpType),
-    /// 循环体
+    /// Loop body
     LoopBody,
 }
 
-/// 资源类型
+/// Resource type
 #[derive(Debug, Clone)]
 pub enum ResourceType {
-    /// 内存位置
+    /// Memory location
     Memory(String),
-    /// 文件句柄
+    /// File handle
     File(String),
-    /// 网络连接
+    /// Network connection
     Network(String),
-    /// 自定义资源
+    /// Custom resource
     Custom(String),
 }
 
-/// 异步操作类型
+/// Async operation type
 #[derive(Debug, Clone)]
 pub enum AsyncOpType {
     AsyncCall(DefId),
@@ -175,7 +175,7 @@ pub enum AsyncOpType {
     AsyncGen,
 }
 
-/// 不安全操作类型
+/// Unsafe operation type
 #[derive(Debug, Clone)]
 pub enum UnsafeOpType {
     UnsafeCall(DefId),
@@ -184,31 +184,31 @@ pub enum UnsafeOpType {
     FFICall,
 }
 
-/// 抽象的边类型
+/// Abstract edge type
 #[derive(Debug, Clone)]
 pub enum AbstractEdge {
-    /// 控制流边
+    /// Control flow edge
     ControlFlow { condition: Option<String> },
-    /// 同步边（表示同步依赖）
+    /// Synchronization edge (represents sync dependency)
     Synchronization {
         sync_type: SyncType,
         resource_id: String,
     },
-    /// 数据流边
+    /// Data flow edge
     DataFlow {
         var_id: String,
         access_type: AccessType,
     },
-    /// 调用边
+    /// Call edge
     Call { def_id: DefId, call_type: CallType },
-    /// 依赖边（抽象的依赖关系）
+    /// Dependency edge (abstract dependency relationship)
     Dependency {
         dep_type: DependencyType,
         strength: DependencyStrength,
     },
 }
 
-/// 访问类型
+/// Access type
 #[derive(Debug, Clone)]
 pub enum AccessType {
     Read,
@@ -216,7 +216,7 @@ pub enum AccessType {
     ReadWrite,
 }
 
-/// 调用类型
+/// Call type
 #[derive(Debug, Clone)]
 pub enum CallType {
     Normal,
@@ -226,45 +226,45 @@ pub enum CallType {
     Async,
 }
 
-/// 依赖类型
+/// Dependency type
 #[derive(Debug, Clone)]
 pub enum DependencyType {
-    /// 数据依赖
+    /// Data dependency
     Data,
-    /// 控制依赖
+    /// Control dependency
     Control,
-    /// 同步依赖
+    /// Synchronization dependency
     Sync,
-    /// 时序依赖
+    /// Temporal dependency
     Temporal,
 }
 
-/// 依赖强度
+/// Dependency strength
 #[derive(Debug, Clone)]
 pub enum DependencyStrength {
-    /// 强依赖（必须满足）
+    /// Strong dependency (must be satisfied)
     Strong,
-    /// 弱依赖（可能满足）
+    /// Weak dependency (may be satisfied)
     Weak,
-    /// 条件依赖（在某些条件下满足）
+    /// Conditional dependency (satisfied under certain conditions)
     Conditional(String),
 }
 
-/// 抽象中间表示图
+/// Abstract intermediate representation graph
 pub struct AbstractIR<'tcx> {
-    /// 图结构
+    /// Graph structure
     pub graph: Graph<AbstractNode, AbstractEdge>,
-    /// 类型上下文
+    /// Type context
     pub tcx: TyCtxt<'tcx>,
-    /// 分析配置
+    /// Analysis configuration
     pub config: AnalysisConfig,
-    /// 节点索引映射
+    /// Node index mapping
     pub node_map: HashMap<String, NodeIndex>,
-    /// 同步点映射
+    /// Synchronization point mapping
     pub sync_points: HashMap<String, NodeIndex>,
-    /// 资源映射
+    /// Resource mapping
     pub resources: HashMap<String, NodeIndex>,
-    /// 活跃的同步操作
+    /// Active synchronization operations
     pub active_syncs: HashSet<String>,
 }
 
