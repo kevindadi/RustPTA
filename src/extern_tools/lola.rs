@@ -97,9 +97,9 @@ impl LolaAnalyzer {
         )
     }
 
-    /// 分析 Petri 网
+    /// Analyze Petri net
     pub fn analyze_petri_net(&self, petri_net: &PetriNet) -> io::Result<LolaResult> {
-        // 转换为 LoLA 格式并保存到文件
+        // Convert to LoLA format and save to file
         let content = self.convert_to_lola(petri_net);
         let mut file = File::create(self.output_directory.join("pn.lola"))?;
         file.write_all(content.as_bytes())?;
@@ -107,7 +107,7 @@ impl LolaAnalyzer {
         self.check_deadlock()
     }
 
-    /// 检查 LoLA 是否可用
+    /// Check if LoLA is available
     pub fn check_lola_available(&self) -> bool {
         Command::new(&self.lola_path)
             .arg("--version")
@@ -225,15 +225,15 @@ mod tests {
         if analyzer.check_lola_available() {
             match analyzer.check_deadlock() {
                 Ok(result) => {
-                    println!("死锁检测结果: {}", result.has_deadlock);
+                    println!("Deadlock detection result: {}", result.has_deadlock);
                     if let Some(trace) = result.deadlock_trace {
-                        println!("死锁路径: {:?}", trace);
+                        println!("Deadlock path: {:?}", trace);
                     }
                 }
-                Err(e) => println!("执行错误: {}", e),
+                Err(e) => println!("Execution error: {}", e),
             }
         } else {
-            println!("LoLA 工具不可用");
+            println!("LoLA tool is not available");
         }
     }
 }

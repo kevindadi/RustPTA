@@ -3,5 +3,4 @@
 *.dot
 /toys
 **/tmp
-RustPetriNet.tar.gz
 example/rayon

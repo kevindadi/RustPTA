@@ -15,11 +15,11 @@ pub struct ActionDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataRaceReport {
-    pub filename: String,              // 发生数据竞争的文件名
-    pub line_number: usize,            // 发生数据竞争的行号 发生数据竞争的变量名
-    pub current_action: ActionDetail,  // 当前操作
-    pub previous_action: ActionDetail, // 之前操作
-    pub message: String,               // 详细描述或附加消息
+    pub filename: String,              // Filename where data race occurred
+    pub line_number: usize, // Line number where data race occurred  Variable name where data race occurred
+    pub current_action: ActionDetail, // Current operation
+    pub previous_action: ActionDetail, // Previous operation
+    pub message: String,    // Detailed description or additional message
 }
 
 impl fmt::Display for ActionDetail {
