@@ -1,3 +1,17 @@
+//! Atomic operations analysis module for Rust programs.
+//!
+//! This module provides functionality to find and classify atomic functions and operations
+//! in Rust code. It can distinguish between read, write, and read-write atomic operations,
+//! collect atomic variable information, and analyze their memory ordering constraints.
+//!
+//! The main components include:
+//! - AtomicCollector: Traverses the call graph to find atomic variables and operations
+//! - AtomicVisitor: Visits MIR to extract detailed atomic operation information
+//! - Various enums to classify atomic operations (AtomicApi, AtomicOrdering)
+//!
+//! This analysis is particularly useful for detecting atomicity violations and
+//! understanding concurrent memory access patterns in Rust programs.
+
 //! Find atomic functions and classify them into read, write, read-write.
 extern crate rustc_hash;
 extern crate rustc_hir;
@@ -129,7 +143,7 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
     }
 
     fn collect_atomic_vars(&mut self, instance: &Instance<'tcx>, body: &Body<'tcx>) {
-        // 收集atomic类型的局部变量
+        // Collect atomic type local variables
         for (local, local_decl) in body.local_decls.iter_enumerated() {
             let ty = local_decl.ty;
             if self.is_atomic_type(ty) && !ty.to_string().contains("Ordering") {
@@ -149,7 +163,7 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
             }
         }
 
-        // 遍历MIR收集操作
+        // Traverse MIR to collect operations
         let mut visitor = AtomicVisitor {
             instance: *instance,
             instance_id: self.callgraph.instance_to_index(instance).unwrap(),
@@ -213,7 +227,7 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
             if let TyKind::FnDef(def_id, _) = func_ty.kind() {
                 let fn_name = self.tcx.def_path_str(*def_id);
 
-                // 先判断是否是atomic操作
+                // First check if it's an atomic operation
                 let api = if fn_name.contains("::load") {
                     Some(AtomicApi::Read)
                 } else if fn_name.contains("::store") {
@@ -233,7 +247,7 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
 
                 if let Some(api) = api {
                     log::debug!("Found atomic operation: {:?} in {}", api, fn_name);
-                    // 获取atomic变量
+                    // Get atomic variable
                     if let Some(arg) = args.get(0) {
                         if let Operand::Move(first_place) | Operand::Copy(first_place) = &arg.node {
                             let var_name = format!(
@@ -245,10 +259,10 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
 
                             log::debug!("Processing atomic variable: {}", var_name.clone());
 
-                            // 获取ordering参数
-                            // 对于load, ordering参数在第二个位置
-                            // 对于store, ordering参数在第三个位置
-                            // 对于read-write, ordering参数在最后一个位置
+                            // Get ordering parameter
+                            // For load, ordering parameter is at the second position
+                            // For store, ordering parameter is at the third position
+                            // For read-write, ordering parameter is at the last position
                             let ordering_idx = match api {
                                 AtomicApi::Read => 1,
                                 AtomicApi::Write => 2,
@@ -292,7 +306,7 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
                                         let local_decl =
                                             &self.body.local_decls[ordering_place.local];
 
-                                        // 获取枚举变体的判别值
+                                        // Get enumeration variant discriminant value
                                         let mut ordering = AtomicOrdering::SeqCst;
                                         if let ty::TyKind::Adt(adt_def, _) = local_decl.ty.kind() {
                                             if adt_def.is_enum() {

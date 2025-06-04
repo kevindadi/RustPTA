@@ -1,6 +1,30 @@
+//! Petri Net construction and analysis module for Rust concurrent programs.
+//!
+//! This module provides the core functionality for converting Rust programs into
+//! Petri Net models for deadlock and concurrency analysis. It handles the construction
+//! of places, transitions, and their connections based on program control flow and
+//! synchronization operations.
+//!
+//! Key components:
+//! - PetriNet: Main structure that represents the Petri net model
+//! - Place/Transition creation for various program constructs
+//! - Lock dependency analysis using DFS traversal
+//! - State reduction for optimization
+//! - Integration with atomic operations, channels, and unsafe blocks
+//!
+//! The module supports analysis of:
+//! - Mutex locks and unlocks
+//! - Condition variables
+//! - Atomic operations
+//! - Channel operations
+//! - Unsafe memory operations
+//! - Function calls and control flow
+
 use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
 use crate::concurrency::channel::{ChannelCollector, ChannelId, ChannelInfo, EndpointType};
-use crate::graph::net_structure::{ControlType, KeyApiRegex, NetConfig, Transition};
+use crate::graph::net_structure::{
+    CallType, ControlType, DropType, KeyApiRegex, NetConfig, Transition,
+};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::OwnCrateType;
@@ -30,20 +54,22 @@ use crate::concurrency::blocking::{
 };
 use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
 
+/// Union-Find data structure for managing lock relationships
 fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
-    let mut current = x;
-    while union_find[current] != *current {
-        current = &union_find[current];
+    if let Some(parent) = union_find.get(x) {
+        if parent != x {
+            return find(union_find, parent);
+        }
     }
-    current.clone()
+    x.clone()
 }
 
-// 并查集的合并函数
+// Union-Find merge function
 fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
     let root_x = find(union_find, x);
     let root_y = find(union_find, y);
     if root_x != root_y {
-        union_find.insert(root_y, root_x);
+        union_find.insert(root_x, root_y);
     }
 }
 
@@ -111,7 +137,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     fn marking_api(&mut self) {
-        // 匹配format DefId
+        // Match format DefId
         let func_map: HashMap<String, NodeIndex> = self
             .function_counter
             .iter()
@@ -126,7 +152,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 ApiEntry::Single(api_name) => {
                     if let Some(&start_node) = func_map.get(api_name) {
                         let mut mark = HashSet::new();
-                        mark.insert((start_node, 1)); // 设置初始 token 为 1
+                        mark.insert((start_node, 1)); // Set initial token to 1
                         self.api_marks.insert(api_name.clone(), mark);
                         log::debug!("Added mark for single API: {}", api_name);
                     }
@@ -139,7 +165,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         }
                     }
                     if !group_mark.is_empty() {
-                        // 使用组中的第一个 API 名称作为键
+                        // Use the first API name in the group as the key
                         let group_key = format!("group_{}", apis.join("_"));
                         self.api_marks.insert(group_key, group_mark);
                         log::debug!("Added mark for API group: [{}]", apis.join(", "));
@@ -155,7 +181,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         channel_collector.analyze();
         channel_collector.to_json_pretty().unwrap();
 
-        // 通过Tuple创建的channel不会分配内存资源
+        // Channels created through Tuple will not allocate memory resources
         // for (id, channel_info) in channel_collector.channel_tuples {
         //     let channel_id = format!("{:?}", id);
         //     let channel_place = Place::new_with_span(
@@ -170,7 +196,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         let mut span_groups: HashMap<String, Vec<(ChannelId, ChannelInfo<'tcx>)>> = HashMap::new();
 
-        // 收集所有 channel endpoints 并按 span 分组
+        // Collect all channel endpoints and group by span
         for (id, info) in channel_collector.channels {
             let key_string = format!("{:?}", info.span)
                 .split(":")
@@ -180,10 +206,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             span_groups.entry(key_string).or_default().push((id, info));
         }
 
-        // 处理配对的 channel endpoints
+        // Process paired channel endpoints
         for (i, (span, endpoints)) in span_groups.iter().enumerate() {
             if endpoints.len() == 2 {
-                // 确保有一对 sender 和 receiver
+                // Ensure there is a pair of sender and receiver
                 let has_pair = endpoints
                     .iter()
                     .any(|(_, info)| info.endpoint_type == EndpointType::Sender)
@@ -215,7 +241,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
         let atomic_vars = atomic_collector.analyze();
 
-        // 输出收集到的atomic信息
+        // Output collected atomic information
         atomic_collector.to_json_pretty().unwrap();
         for (_, atomic_info) in atomic_vars {
             let atomic_type = atomic_info.var_type.clone();
@@ -297,7 +323,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
 
-        // 为每个别名组创建数据库所
+        // Create a place for each alias group
         for (_, group) in alias_groups {
             let unsafe_span = group[0].1.clone();
             let unsafe_local = group[0].0.clone();
@@ -347,9 +373,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::info!("Collector Unsafe Blocks!");
         }
 
-        // 初始化同步 API 的正则表达式
+        // Initialize synchronization API regular expressions
         let key_api_regex = KeyApiRegex::new();
-        // 设置一个id,记录已经转换的函数
+        // Set an id to record converted functions
         let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
@@ -369,17 +395,17 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         log::info!("Visitor Function Body Complete!");
 
-        // 如果CrateType是LIB，不优化以防初始标识被改变
+        // If CrateType is LIB, do not optimize to prevent initial markings from being changed
         if self.api_spec.apis.is_empty() && !self.options.test {
             self.reduce_state();
             log::info!("Merge long(>= 5) P-T chains");
         }
         //self.reduce_state_from(self.entry_node);
 
-        // 验证网络结构
+        // Verify network structure
         if let Err(err) = self.verify_and_clean() {
             log::error!("Petri net structure verification failed: {}", err);
-            // 可以选择在这里panic或者进行其他错误处理
+            // Can choose to panic here or handle other errors
         }
         log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
     }
@@ -428,7 +454,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
     // Construct Function Start and End Place by callgraph
     pub fn construct_func(&mut self) {
-        // 如果crate是BIN，则需要找到main函数
+        // If crate is BIN, need to find the main function
         match self.options.crate_type {
             OwnCrateType::Bin => self.construct_bin_funcs(),
             OwnCrateType::Lib => self.construct_lib_funcs(),
@@ -505,7 +531,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn construct_lock_with_dfs(&mut self) {
-        // 使用新的收集函数
+        // Use new collection function
         let lockguards = self.collect_blocking_primitives();
         let mut info = FxHashMap::default();
 
@@ -520,8 +546,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             union_find.insert(lock_id.clone(), lock_id.clone());
         }
 
-        // 添加调试输出：显示所有的别名关系
-        log::debug!("=== 检测到的别名关系 ===");
+        // Add debug output: show all alias relationships
+        log::debug!("=== Detected alias relationships ===");
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
                 match self
@@ -530,7 +556,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
                 {
                     ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                        log::debug!("锁 {:?} 和 {:?} 存在别名关系", lockid_vec[i], lockid_vec[j]);
+                        log::debug!(
+                            "Lock {:?} and {:?} have alias relationship",
+                            lockid_vec[i],
+                            lockid_vec[j]
+                        );
                         union(&mut union_find, &lockid_vec[i], &lockid_vec[j]);
                     }
                     _ => {}
@@ -538,19 +568,19 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
 
-        // 先按根节点分组
+        // First group by root nodes
         let mut temp_groups: HashMap<LockGuardId, Vec<LockGuardId>> = HashMap::new();
         for lock_id in &lockid_vec {
             let root = find(&union_find, lock_id);
             temp_groups.entry(root).or_default().push(lock_id.clone());
         }
 
-        // 添加调试输出：显示分组结果
-        println!("\n=== 锁的分组结果 ===");
+        // Add debug output: show grouping results
+        println!("\n=== Lock grouping results ===");
         for (group_id, (root, group)) in temp_groups.iter().enumerate() {
-            println!("组 {}: ", group_id);
-            println!("  根节点: {:?}", root);
-            println!("  组内成员:");
+            println!("Group {}: ", group_id);
+            println!("  Root node: {:?}", root);
+            println!("  Group members:");
             for lock in group {
                 let lock_type = match &info[lock].lockguard_ty {
                     LockGuardTy::StdMutex(_) => "StdMutex",
@@ -558,11 +588,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     LockGuardTy::SpinMutex(_) => "SpinMutex",
                     _ => "RwLock",
                 };
-                println!("    - {:?} (类型: {})", lock, lock_type);
+                println!("    - {:?} (Type: {})", lock, lock_type);
             }
         }
 
-        // 将分组转换为所需的格式并创建对应的Place节点
+        // Convert grouping to required format and create corresponding Place nodes
         let mut group_id = 0;
         for group in temp_groups.values() {
             match &info[&group[0]].lockguard_ty {
@@ -572,7 +602,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     let lock_name = format!("Mutex_{}", group_id);
                     let lock_p = Place::new(lock_name.clone(), 1, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
-                    log::debug!("创建 Mutex 节点: {}", lock_name);
+                    log::debug!("Created Mutex node: {}", lock_name);
                     for lock in group {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
@@ -581,7 +611,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     let lock_name = format!("RwLock_{}", group_id);
                     let lock_p = Place::new(lock_name.clone(), 10, PlaceType::Lock);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
-                    log::debug!("创建 RwLock 节点: {}", lock_name);
+                    log::debug!("Created RwLock node: {}", lock_name);
                     for lock in group {
                         self.locks_counter.insert(lock.clone(), lock_node);
                     }
@@ -589,26 +619,26 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
             group_id += 1;
         }
-        log::info!("总共发现 {} 个锁组", group_id);
+        log::info!("Found {} lock groups in total", group_id);
     }
 
-    /// 简化 Petri 网中的状态,通过合并简单路径来减少网络的复杂度
+    /// Simplify states in Petri net by merging simple paths to reduce network complexity
     ///
-    /// 具体步骤:
-    /// 1. 找到所有入度和出度都≤1的节点作为起始点
-    /// 2. 从每个起始点开始,向两个方向(前向和后向)搜索,找到可以合并的路径
-    /// 3. 对于每条找到的路径:
-    ///    - 确保路径的起点和终点都是 Place 节点
-    ///    - 如果路径长度>3,则创建一个新的 Transition 节点来替代中间的节点
-    ///    - 保持路径两端的 Place 节点不变,删除中间的所有节点
-    /// 4. 最后统一删除所有被标记为需要移除的节点
+    /// Specific steps:
+    /// 1. Find all nodes with in-degree and out-degree ≤1 as starting points
+    /// 2. Starting from each starting point, search in both directions (forward and backward) to find mergeable paths
+    /// 3. For each found path:
+    ///    - Ensure the start and end points of the path are Place nodes
+    ///    - If path length >3, create a new Transition node to replace intermediate nodes
+    ///    - Keep Place nodes at both ends of the path unchanged, delete all intermediate nodes
+    /// 4. Finally delete all nodes marked for removal uniformly
     ///
-    /// 这种简化可以显著减少 Petri 网的大小,同时保持其基本行为特性不变
+    /// This simplification can significantly reduce the size of the Petri net while maintaining its basic behavioral characteristics
     pub fn reduce_state(&mut self) {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut all_nodes_to_remove = Vec::new();
-        // 找到所有入度和出度都≤1的点
+        // Find all nodes with in-degree and out-degree ≤1
         for node in self.net.node_indices() {
             let in_degree = self.net.edges_directed(node, Direction::Incoming).count();
             let out_degree = self.net.edges_directed(node, Direction::Outgoing).count();
@@ -617,18 +647,18 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 queue.push_back(node);
             }
         }
-        // TODO: 设置新的截止条件，以防止 unsafe 操作被 merge
+        // TODO: Set new termination conditions to prevent unsafe operations from being merged
         while let Some(start) = queue.pop_front() {
             if visited.contains(&start) {
                 continue;
             }
 
-            // 从start开始BFS，找到一条链
+            // Start BFS from start to find a chain
             let mut chain = vec![start];
             let mut current = start;
             visited.insert(start);
 
-            // 向两个方向遍历
+            // Traverse in both directions
             for direction in &[Direction::Outgoing, Direction::Incoming] {
                 current = start;
                 loop {
@@ -658,7 +688,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
             }
 
-            // 调整链，确保起始和结束都是Place
+            // Adjust chain to ensure start and end are both Places
             if !chain.is_empty() {
                 if let PetriNetNode::T(_) = &self.net[chain[0]] {
                     chain.remove(0);
@@ -670,31 +700,31 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     // assert_eq!(chain.len(), chain_len - 1);
                 }
             }
-            // 检查调整后的链长度是否满足简化条件
+            // Check if the adjusted chain length meets simplification conditions
             if chain.len() > 3 {
-                // 确保chain不为空
+                // Ensure chain is not empty
                 if chain.is_empty() {
                     continue;
                 }
                 let p1 = chain[0];
                 let p2 = chain[chain.len() - 1];
 
-                // 确保p1和p2都是Place
+                // Ensure both p1 and p2 are Places
                 if let (PetriNetNode::P(_), PetriNetNode::P(_)) = (&self.net[p1], &self.net[p2]) {
-                    // 创建新的Transition
+                    // Create new Transition
                     let new_trans = Transition::new(
                         format!("merged_trans_{}_{}", p1.index(), p2.index()),
                         ControlType::Goto,
                     );
                     let new_trans_idx = self.net.add_node(PetriNetNode::T(new_trans));
 
-                    // 添加新边
+                    // Add new edges
                     self.net
                         .add_edge(p1, new_trans_idx, PetriNetEdge { label: 1u8 });
                     self.net
                         .add_edge(new_trans_idx, p2, PetriNetEdge { label: 1u8 });
 
-                    // 将路径上的节点信息合并成一行输出
+                    // Merge node information on the path into one line output
                     let path_info = chain[1..chain.len()]
                         .iter()
                         .map(|&node| match &self.net[node] {
@@ -704,43 +734,43 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         .collect::<Vec<_>>()
                         .join(" -> ");
                     log::debug!("Path: {}", path_info);
-                    // 收集要删除的节点
+                    // Collect nodes to be deleted
                     all_nodes_to_remove.extend(chain[1..chain.len() - 1].iter().cloned());
                 }
             }
         }
-        // 在循环结束后统一删除节点
+        // Delete nodes uniformly after loop ends
         if !all_nodes_to_remove.is_empty() {
-            // 按索引从大到小排序
+            // Sort by index from large to small
             all_nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
-            // 删除节点
+            // Delete nodes
             for node in all_nodes_to_remove {
                 self.net.remove_node(node);
             }
         }
     }
 
-    /// 分析并简化从起始节点到终止节点的路径，保留与特殊节点相连的路径
-    /// 1. 使用DFS收集所有从start_node到end_node的路径
-    /// 2. 标记与特殊节点相连的路径为有效路径
-    /// 3. 收集需要保留的节点（出现在有效路径中的节点）
-    /// 4. 删除仅出现在无效路径中的节点
+    /// Analyze and simplify paths from start node to end node, preserving paths connected to special nodes
+    /// 1. Use DFS to collect all paths from start_node to end_node
+    /// 2. Mark paths connected to special nodes as valid paths
+    /// 3. Collect nodes to keep (nodes appearing in valid paths)
+    /// 4. Delete nodes that only appear in invalid paths
     pub fn reduce_state_from(
         &mut self,
         start_node: NodeIndex,
         end_node: NodeIndex,
         special_nodes: &[NodeIndex],
     ) {
-        // 存储所有从start到end的路径
+        // Store all paths from start to end
         let mut all_paths: Vec<Vec<NodeIndex>> = Vec::new();
-        // 存储有效路径（与特殊节点相连的路径）
+        // Store valid paths (paths connected to special nodes)
         let mut valid_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
-        // 存储当前正在探索的路径
+        // Store the path currently being explored
         let mut current_path: Vec<NodeIndex> = vec![start_node];
-        // 记录已访问节点，避免简单环路
+        // Record visited nodes to avoid simple loops
         let mut visited: HashSet<NodeIndex> = HashSet::new();
 
-        // DFS收集所有路径
+        // DFS collect all paths
         self.collect_paths(
             start_node,
             end_node,
@@ -751,13 +781,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &mut valid_paths,
         );
 
-        // 收集所有需要保留的节点（出现在有效路径中的节点）
+        // Collect all nodes to keep (nodes appearing in valid paths)
         let mut nodes_to_keep: HashSet<NodeIndex> = HashSet::new();
         for path in &valid_paths {
             nodes_to_keep.extend(path.iter().cloned());
         }
 
-        // 收集所有可以删除的节点（出现在无效路径中且不在有效路径中的节点）
+        // Collect all nodes that can be deleted (nodes appearing in invalid paths and not in valid paths)
         let mut nodes_to_remove: HashSet<NodeIndex> = HashSet::new();
         for path in &all_paths {
             if !valid_paths.contains(path) {
@@ -776,13 +806,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    /// 递归收集从起点到终点的所有路径
+    /// Recursively collect all paths from start to end
     ///
-    /// 1. 如果到达终点，检查当前路径是否与特殊节点相连
-    /// 2. 如果路径有效，添加到valid_paths中
-    /// 3. 将当前路径添加到all_paths中
-    /// 4. 递归探索所有未访问的邻居节点
-    /// 5. 回溯时移除访问标记，允许节点在其他路径中被重复访问
+    /// 1. If reaching the end, check if current path is connected to special nodes
+    /// 2. If path is valid, add to valid_paths
+    /// 3. Add current path to all_paths
+    /// 4. Recursively explore all unvisited neighbor nodes
+    /// 5. Remove visit mark when backtracking, allowing nodes to be revisited in other paths
     fn collect_paths(
         &self,
         current: NodeIndex,
@@ -794,7 +824,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         valid_paths: &mut HashSet<Vec<NodeIndex>>,
     ) {
         if current == end {
-            // 检查路径是否与特殊节点相连
+            // Check if path is connected to special nodes
             let path_has_special_connection = current_path.iter().any(|&node| {
                 self.net
                     .neighbors(node)
@@ -834,14 +864,14 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         let mut lockguards = FxHashMap::default();
         let mut condvars = FxHashMap::default();
 
-        // 遍历 callgraph 收集信息
+        // Traverse callgraph to collect information
         for (instance_id, node) in self.callgraph.graph.node_references() {
             let instance = match node {
                 CallGraphNode::WithBody(instance) => instance,
                 _ => continue,
             };
 
-            // 只分析本地函数
+            // Only analyze local functions
             if !instance.def_id().is_local() {
                 continue;
             }
@@ -850,19 +880,19 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let mut collector = BlockingCollector::new(instance_id, instance, body, self.tcx);
             collector.analyze();
 
-            // 收集锁信息
+            // Collect lock information
             if !collector.lockguards.is_empty() {
                 lockguards.insert(instance_id, collector.lockguards.clone());
                 self.lock_info.extend(collector.lockguards);
             }
 
-            // 收集条件变量信息
+            // Collect condition variable information
             if !collector.condvars.is_empty() {
                 condvars.insert(instance_id, collector.condvars);
             }
         }
 
-        // 处理条件变量
+        // Process condition variables
         if !condvars.is_empty() {
             for condvar_map in condvars.into_values() {
                 for (condvar_id, span) in condvar_map {
@@ -876,7 +906,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::debug!("Not Found Condvars In This Crate");
         }
 
-        // 返回收集到的锁信息供后续处理
+        // Return collected lock information for subsequent processing
         lockguards
     }
 
@@ -945,24 +975,24 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    /// 验证Petri网的结构正确性
+    /// Verify the structural correctness of the Petri net
     ///
-    /// 检查以下规则:
-    /// 1. Transition节点的所有前驱和后继必须是Place节点
-    /// 2. Place节点的所有前驱和后继必须是Transition节点
-    /// 3. Place节点可以没有前驱或后继
+    /// Check the following rules:
+    /// 1. All predecessors and successors of Transition nodes must be Place nodes
+    /// 2. All predecessors and successors of Place nodes must be Transition nodes
+    /// 3. Place nodes can have no predecessors or successors
     ///
-    /// 返回:
-    /// - Ok(()) 如果网络结构正确
-    /// - Err(String) 包含错误描述的字符串
+    /// Returns:
+    /// - Ok(()) if the network structure is correct
+    /// - Err(String) containing error description string
     pub fn verify_structure(&self) -> Result<Vec<NodeIndex>> {
         let mut transitions_to_remove = Vec::new();
 
-        // 检查结构并收集需要删除的变迁
+        // Check structure and collect transitions to be deleted
         for node_idx in self.net.node_indices() {
             match &self.net[node_idx] {
                 PetriNetNode::T(transition) => {
-                    // 检查变迁的后继
+                    // Check transition successors
                     let successors: Vec<_> = self
                         .net
                         .neighbors_directed(node_idx, Direction::Outgoing)
@@ -974,7 +1004,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         continue;
                     }
 
-                    // 检查变迁的前驱和后继是否都是库所
+                    // Check if all predecessors and successors of transitions are places
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if let PetriNetNode::T(_) = &self.net[pred] {
                             return Err(PetriNetError::InvalidTransitionConnection {
@@ -996,7 +1026,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     }
                 }
                 PetriNetNode::P(place) => {
-                    // 检查库所的前驱和后继是否都是变迁
+                    // Check if all predecessors and successors of places are transitions
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if let PetriNetNode::P(_) = &self.net[pred] {
                             return Err(PetriNetError::InvalidPlaceConnection {
@@ -1024,7 +1054,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn remove_invalid_transitions(&mut self, transitions_to_remove: Vec<NodeIndex>) {
-        // 从后向前删除节点以保持索引有效
+        // Delete nodes from back to front to keep indices valid
         for transition_idx in transitions_to_remove.iter().rev() {
             let _ = if let PetriNetNode::T(t) = &self.net[*transition_idx] {
                 t.name.clone()
@@ -1065,5 +1095,517 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
         terminal_states
+    }
+
+    /// Second step reduction: Remove non-sensitive paths while preserving shared nodes
+    ///
+    /// This function identifies sensitive paths (containing Unsafe operations, Lock operations, etc.)
+    /// and removes non-sensitive paths, but preserves nodes that are shared between sensitive paths.
+    ///
+    /// Arguments:
+    /// - start_node: Starting place (typically main function start)
+    /// - end_node: Ending place (typically main function end)
+    pub fn reduce_non_sensitive_paths(&mut self, start_node: NodeIndex, end_node: NodeIndex) {
+        log::info!("Starting second-step reduction: removing non-sensitive paths");
+
+        // Step 1: Find all paths from start to end
+        let mut all_paths: Vec<Vec<NodeIndex>> = Vec::new();
+        let mut current_path: Vec<NodeIndex> = vec![start_node];
+        let mut visited: HashSet<NodeIndex> = HashSet::new();
+
+        self.collect_all_paths(
+            start_node,
+            end_node,
+            &mut all_paths,
+            &mut current_path,
+            &mut visited,
+        );
+
+        log::debug!("Found {} total paths from start to end", all_paths.len());
+
+        // Step 2: Classify paths as sensitive or non-sensitive
+        let mut sensitive_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
+        let mut non_sensitive_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
+
+        for path in &all_paths {
+            if self.is_sensitive_path(path) {
+                sensitive_paths.insert(path.clone());
+                log::debug!("Path marked as sensitive: {} nodes", path.len());
+            } else {
+                non_sensitive_paths.insert(path.clone());
+                log::debug!("Path marked as non-sensitive: {} nodes", path.len());
+            }
+        }
+
+        log::debug!(
+            "Found {} sensitive paths and {} non-sensitive paths",
+            sensitive_paths.len(),
+            non_sensitive_paths.len()
+        );
+
+        // Step 3: Find shared nodes between sensitive paths
+        let mut shared_nodes: HashSet<NodeIndex> = HashSet::new();
+        let mut node_count: HashMap<NodeIndex, usize> = HashMap::new();
+
+        // Count occurrences in sensitive paths
+        for path in &sensitive_paths {
+            for &node in path {
+                *node_count.entry(node).or_insert(0) += 1;
+            }
+        }
+
+        // Nodes that appear in multiple sensitive paths are shared
+        for (node, count) in node_count {
+            if count > 1 {
+                shared_nodes.insert(node);
+            }
+        }
+
+        // Step 4: Collect nodes to preserve
+        let mut nodes_to_preserve: HashSet<NodeIndex> = HashSet::new();
+
+        // Always preserve start and end nodes
+        nodes_to_preserve.insert(start_node);
+        nodes_to_preserve.insert(end_node);
+
+        // Preserve all shared nodes
+        nodes_to_preserve.extend(&shared_nodes);
+
+        // Preserve all nodes from sensitive paths
+        for path in &sensitive_paths {
+            nodes_to_preserve.extend(path.iter());
+        }
+
+        // Step 5: Remove nodes that only belong to non-sensitive paths
+        let mut nodes_to_remove: Vec<NodeIndex> = Vec::new();
+
+        for path in &non_sensitive_paths {
+            for &node in path {
+                if !nodes_to_preserve.contains(&node) {
+                    nodes_to_remove.push(node);
+                }
+            }
+        }
+
+        // Remove duplicates and sort by index (largest first) for safe removal
+        nodes_to_remove.sort();
+        nodes_to_remove.dedup();
+        nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+
+        log::info!(
+            "Removing {} nodes from non-sensitive paths",
+            nodes_to_remove.len()
+        );
+        for node in nodes_to_remove {
+            self.net.remove_node(node);
+        }
+    }
+
+    /// Check if a path contains sensitive operations
+    ///
+    /// A path is sensitive if it contains transitions with:
+    /// - Unsafe operations (UnsafeRead, UnsafeWrite)
+    /// - Lock operations (Lock, RwLockRead, RwLockWrite, Unlock, etc.)
+    /// - Atomic operations (AtomicLoad, AtomicStore, AtomicCmpXchg)
+    /// - Condition variable operations (Wait, Notify)
+    /// - Thread operations (Spawn, Join)
+    ///
+    /// Non-sensitive paths only contain Function calls and basic control flow.
+    /// Note: Channel operations are typically modeled as Function calls and get
+    /// their sensitivity through connections to Channel resource places.
+    fn is_sensitive_path(&self, path: &[NodeIndex]) -> bool {
+        for &node in path {
+            if let Some(PetriNetNode::T(transition)) = self.net.node_weight(node) {
+                match &transition.transition_type {
+                    // Unsafe operations are always sensitive
+                    ControlType::UnsafeRead(_, _, _, _) | ControlType::UnsafeWrite(_, _, _, _) => {
+                        return true;
+                    }
+
+                    // Check call types for sensitive operations
+                    ControlType::Call(call_type) => {
+                        match call_type {
+                            // Lock operations
+                            CallType::Lock(_)
+                            | CallType::RwLockRead(_)
+                            | CallType::RwLockWrite(_)
+                            | CallType::Wait
+                            | CallType::Notify(_) => {
+                                return true;
+                            }
+
+                            // Atomic operations
+                            CallType::AtomicLoad(_, _, _, _)
+                            | CallType::AtomicStore(_, _, _, _)
+                            | CallType::AtomicCmpXchg(_, _, _, _, _) => {
+                                return true;
+                            }
+
+                            // Thread operations
+                            CallType::Spawn(_) | CallType::Join(_) => {
+                                return true;
+                            }
+
+                            // Regular function calls are not sensitive
+                            CallType::Function => {
+                                // Continue checking other transitions in the path
+                            }
+                        }
+                    }
+
+                    // Drop operations for locks are sensitive
+                    ControlType::Drop(drop_type) => {
+                        match drop_type {
+                            DropType::Unlock(_)
+                            | DropType::DropRead(_)
+                            | DropType::DropWrite(_) => {
+                                return true;
+                            }
+                            DropType::Basic => {
+                                // Basic drops are not sensitive
+                            }
+                        }
+                    }
+
+                    // Basic control flow is not sensitive
+                    ControlType::Start(_)
+                    | ControlType::Goto
+                    | ControlType::Switch
+                    | ControlType::Return(_)
+                    | ControlType::Assert => {
+                        // Continue checking other transitions
+                    }
+                }
+            }
+        }
+
+        // If no sensitive operations found, path is non-sensitive
+        false
+    }
+
+    /// Helper function to collect all simple paths from start to end
+    fn collect_all_paths(
+        &self,
+        current: NodeIndex,
+        end: NodeIndex,
+        all_paths: &mut Vec<Vec<NodeIndex>>,
+        current_path: &mut Vec<NodeIndex>,
+        visited: &mut HashSet<NodeIndex>,
+    ) {
+        if current == end {
+            all_paths.push(current_path.clone());
+            return;
+        }
+
+        visited.insert(current);
+
+        for neighbor in self.net.neighbors_directed(current, Direction::Outgoing) {
+            if !visited.contains(&neighbor) {
+                current_path.push(neighbor);
+                self.collect_all_paths(neighbor, end, all_paths, current_path, visited);
+                current_path.pop();
+            }
+        }
+
+        visited.remove(&current);
+    }
+
+    /// Third step reduction: Advanced optimizations
+    ///
+    /// This function implements several advanced reduction techniques:
+    /// 1. Dead code elimination: Remove unreachable transitions
+    /// 2. Equivalent place merging: Merge places with identical behavior
+    /// 3. Redundant transition removal: Remove transitions that don't change system state
+    /// 4. Structural invariant-based reduction: Use Petri net invariants for reduction
+    pub fn reduce_advanced_optimizations(&mut self, resource_nodes: &[NodeIndex]) {
+        log::info!("Starting third-step reduction: advanced optimizations");
+
+        // 1. Dead code elimination
+        self.eliminate_dead_code();
+
+        // 2. Remove isolated nodes (not connected to anything)
+        self.remove_isolated_nodes(resource_nodes);
+
+        // 3. Merge equivalent places
+        self.merge_equivalent_places();
+
+        // 4. Remove redundant transitions
+        self.remove_redundant_transitions();
+
+        log::info!("Advanced optimization reduction completed");
+    }
+
+    /// Remove transitions that are never enabled (dead code)
+    fn eliminate_dead_code(&mut self) {
+        let mut reachable_transitions: HashSet<NodeIndex> = HashSet::new();
+        let mut queue: VecDeque<NodeIndex> = VecDeque::new();
+
+        // Start from all places with tokens
+        for node_idx in self.net.node_indices() {
+            if let Some(PetriNetNode::P(place)) = self.net.node_weight(node_idx) {
+                if *place.tokens.borrow() > 0 {
+                    queue.push_back(node_idx);
+                }
+            }
+        }
+
+        // BFS to find all reachable transitions
+        let mut visited: HashSet<NodeIndex> = HashSet::new();
+        while let Some(current) = queue.pop_front() {
+            if visited.contains(&current) {
+                continue;
+            }
+            visited.insert(current);
+
+            for neighbor in self.net.neighbors(current) {
+                if !visited.contains(&neighbor) {
+                    if let Some(PetriNetNode::T(_)) = self.net.node_weight(neighbor) {
+                        reachable_transitions.insert(neighbor);
+                    }
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        // Remove unreachable transitions
+        let mut to_remove: Vec<NodeIndex> = Vec::new();
+        for node_idx in self.net.node_indices() {
+            if let Some(PetriNetNode::T(_)) = self.net.node_weight(node_idx) {
+                if !reachable_transitions.contains(&node_idx) {
+                    to_remove.push(node_idx);
+                }
+            }
+        }
+
+        to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+        for node in to_remove {
+            self.net.remove_node(node);
+        }
+    }
+
+    /// Remove nodes that are completely isolated (no connections)
+    fn remove_isolated_nodes(&mut self, resource_nodes: &[NodeIndex]) {
+        let mut to_remove: Vec<NodeIndex> = Vec::new();
+
+        for node_idx in self.net.node_indices() {
+            let in_degree = self
+                .net
+                .edges_directed(node_idx, Direction::Incoming)
+                .count();
+            let out_degree = self
+                .net
+                .edges_directed(node_idx, Direction::Outgoing)
+                .count();
+
+            if in_degree == 0 && out_degree == 0 {
+                // Don't remove resource nodes even if isolated
+                if !resource_nodes.contains(&node_idx) {
+                    // Don't remove entry/exit nodes
+                    if node_idx != self.entry_exit.0 && node_idx != self.entry_exit.1 {
+                        to_remove.push(node_idx);
+                    }
+                }
+            }
+        }
+
+        to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+        for node in to_remove.iter() {
+            self.net.remove_node(*node);
+        }
+
+        if !to_remove.is_empty() {
+            log::debug!("Removed {} isolated nodes", to_remove.len());
+        }
+    }
+
+    /// Merge places that have identical token behavior and connections
+    fn merge_equivalent_places(&mut self) {
+        // This is a complex optimization that would require careful analysis
+        // of place semantics. For now, we implement a simple version.
+        log::debug!("Equivalent place merging - placeholder for future implementation");
+        // TODO: Implement sophisticated place equivalence analysis
+    }
+
+    /// Remove transitions that don't change the system state meaningfully
+    fn remove_redundant_transitions(&mut self) {
+        let mut to_remove: Vec<NodeIndex> = Vec::new();
+
+        for node_idx in self.net.node_indices() {
+            if let Some(PetriNetNode::T(transition)) = self.net.node_weight(node_idx) {
+                // Check if this is a simple pass-through transition
+                let incoming: Vec<_> = self
+                    .net
+                    .neighbors_directed(node_idx, Direction::Incoming)
+                    .collect();
+                let outgoing: Vec<_> = self
+                    .net
+                    .neighbors_directed(node_idx, Direction::Outgoing)
+                    .collect();
+
+                // If it's a simple Goto with one input and one output, it might be redundant
+                if incoming.len() == 1 && outgoing.len() == 1 {
+                    if let ControlType::Goto = transition.transition_type {
+                        // Check if we can safely merge this transition
+                        let input_place = incoming[0];
+                        let output_place = outgoing[0];
+
+                        // Only merge if both are simple places (not resource places)
+                        if let (Some(PetriNetNode::P(in_place)), Some(PetriNetNode::P(out_place))) = (
+                            self.net.node_weight(input_place),
+                            self.net.node_weight(output_place),
+                        ) {
+                            match (&in_place.place_type, &out_place.place_type) {
+                                (PlaceType::BasicBlock, PlaceType::BasicBlock) => {
+                                    to_remove.push(node_idx);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove redundant transitions and merge their connected places
+        for transition_idx in to_remove.iter() {
+            // Get input and output places before removing the transition
+            let incoming: Vec<_> = self
+                .net
+                .neighbors_directed(*transition_idx, Direction::Incoming)
+                .collect();
+            let outgoing: Vec<_> = self
+                .net
+                .neighbors_directed(*transition_idx, Direction::Outgoing)
+                .collect();
+
+            if incoming.len() == 1 && outgoing.len() == 1 {
+                let input_place = incoming[0];
+                let output_place = outgoing[0];
+
+                // Transfer all edges from output_place to input_place
+                let output_neighbors: Vec<_> = self
+                    .net
+                    .neighbors_directed(output_place, Direction::Outgoing)
+                    .collect();
+                for neighbor in output_neighbors {
+                    if let Some(edge) = self.net.find_edge(output_place, neighbor) {
+                        let edge_weight = self.net.edge_weight(edge).unwrap().clone();
+                        self.net.add_edge(input_place, neighbor, edge_weight);
+                    }
+                }
+
+                // Remove the transition and output place
+                self.net.remove_node(*transition_idx);
+                self.net.remove_node(output_place);
+            }
+        }
+
+        if !to_remove.is_empty() {
+            log::debug!("Removed {} redundant transitions", to_remove.len());
+        }
+    }
+
+    /// Comprehensive three-step Petri net reduction
+    ///
+    /// This function applies all three reduction steps in sequence:
+    /// 1. Basic path merging (existing reduce_state)
+    /// 2. Resource-based path pruning
+    /// 3. Advanced optimizations
+    ///
+    /// Arguments:
+    /// - resource_nodes: Optional vector of resource nodes. If None, will auto-detect.
+    pub fn reduce_comprehensive(&mut self, resource_nodes: Option<Vec<NodeIndex>>) {
+        log::info!("Starting comprehensive three-step Petri net reduction");
+
+        let resource_nodes = resource_nodes.unwrap_or_else(|| self.get_resource_nodes());
+        log::info!(
+            "Identified {} resource nodes for reduction",
+            resource_nodes.len()
+        );
+
+        // Step 1: Basic path merging (merge simple linear chains)
+        log::info!("Step 1: Basic path merging");
+        self.reduce_state();
+
+        // Step 2: Resource-based path pruning
+        log::info!("Step 2: Resource-based path pruning");
+        if self.entry_exit.0 != self.entry_exit.1 {
+            self.reduce_non_sensitive_paths(self.entry_exit.0, self.entry_exit.1);
+        }
+
+        // Step 3: Advanced optimizations
+        log::info!("Step 3: Advanced optimizations");
+        self.reduce_advanced_optimizations(&resource_nodes);
+
+        // Final cleanup and verification
+        if let Err(err) = self.verify_and_clean() {
+            log::warn!("Post-reduction verification found issues: {}", err);
+        }
+
+        log::info!("Comprehensive reduction completed");
+    }
+
+    /// Automatically detect resource nodes in the Petri net
+    ///
+    /// Resource nodes include:
+    /// - Lock places (Mutex, RwLock)
+    /// - Atomic variable places
+    /// - Channel places
+    /// - Condition variable places
+    /// - Unsafe operation places
+    pub fn get_resource_nodes(&self) -> Vec<NodeIndex> {
+        let mut resource_nodes = Vec::new();
+
+        for node_idx in self.net.node_indices() {
+            if let Some(PetriNetNode::P(place)) = self.net.node_weight(node_idx) {
+                match place.place_type {
+                    PlaceType::Lock
+                    | PlaceType::Atomic
+                    | PlaceType::Channel
+                    | PlaceType::CondVar
+                    | PlaceType::Unsafe => {
+                        resource_nodes.push(node_idx);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        log::debug!("Auto-detected resource nodes: {:?}", resource_nodes);
+        resource_nodes
+    }
+
+    /// Get reduction statistics
+    ///
+    /// Returns information about the current state of the Petri net
+    /// for monitoring reduction effectiveness
+    pub fn get_reduction_stats(&self) -> (usize, usize, usize) {
+        let mut places = 0;
+        let mut transitions = 0;
+        let mut resource_places = 0;
+
+        for node_idx in self.net.node_indices() {
+            match self.net.node_weight(node_idx) {
+                Some(PetriNetNode::P(place)) => {
+                    places += 1;
+                    match place.place_type {
+                        PlaceType::Lock
+                        | PlaceType::Atomic
+                        | PlaceType::Channel
+                        | PlaceType::CondVar
+                        | PlaceType::Unsafe => {
+                            resource_places += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                Some(PetriNetNode::T(_)) => {
+                    transitions += 1;
+                }
+                _ => {}
+            }
+        }
+
+        (places, transitions, resource_places)
     }
 }

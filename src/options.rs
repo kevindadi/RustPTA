@@ -24,7 +24,7 @@ pub enum DetectorKind {
     Deadlock,
     AtomicityViolation,
     DataRace,
-    FLML, // 新增FLML中间表示生成模式
+    FLML, // Added FLML intermediate representation generation mode
           // More to be supported.
 }
 
@@ -32,7 +32,7 @@ pub enum DetectorKind {
 pub enum AnalysisTool {
     LoLA,
     Tina,
-    RPN, // 默认使用 RPN
+    RPN, // Use RPN by default
 }
 
 impl Default for AnalysisTool {
@@ -73,7 +73,7 @@ fn make_options_parser() -> clap::Command {
                 .long("pn-analysis-dir")
                 .value_name("PATH")
                 .help("Directory for Petri net analysis outputs (default: ./tmp/<crate_name>)")
-                .default_value("/tmp"), // 改用相对路径作为默认值
+                .default_value("/tmp"), // Use relative path as default value
         )
         .arg(
             Arg::new("target_crate")
@@ -164,9 +164,9 @@ pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: Option<PathBuf>,
     pub crate_name: String,
-    pub crate_type: OwnCrateType,      // 区分 bin/lib lib 绑定libapis
-    pub lib_apis_path: Option<String>, // lib APIs 文件路径
-    pub dump_options: DumpOptions,     // dump 相关选项
+    pub crate_type: OwnCrateType, // Distinguish bin/lib, lib binding with libapis
+    pub lib_apis_path: Option<String>, // lib APIs file path
+    pub dump_options: DumpOptions, // dump related options
     pub analysis_tool: AnalysisTool,
     pub test: bool,
 }
@@ -217,22 +217,22 @@ impl Default for DumpOptions {
 
 impl Options {
     pub fn parse_from_str(&mut self, s: &str, handler: &EarlyDiagCtxt) -> Vec<String> {
-        // 使用 shellwords 解析字符串为参数列表
+        // Use shellwords to parse string into argument list
         let args = shellwords::split(s).unwrap_or_else(|e| {
             handler.early_fatal(format!("Cannot parse argument string: {e:?}"))
         });
-        // 调用 parse_from_args 进行进一步解析
+        // Call parse_from_args for further parsing
         self.parse_from_args(&args)
     }
 
     pub fn parse_from_args(&mut self, args: &[String]) -> Vec<String> {
-        // 分割 PN 和 rustc 参数
+        // Split PN and rustc arguments
         let (pn_args, rustc_args) = match args.iter().position(|s| s == "--") {
             Some(pos) => (&args[..pos], &args[pos + 1..]),
             None => (args, &[][..]),
         };
 
-        // 解析 PN 参数
+        // Parse PN arguments
         let matches = make_options_parser()
             .try_get_matches_from(pn_args.iter())
             .unwrap_or_else(|e| match e.kind() {
@@ -246,7 +246,7 @@ impl Options {
                 }
             });
 
-        // 更新 Options 结构体
+        // Update Options struct
         self.detector_kind = match matches.get_one::<String>("analysis_mode").unwrap().as_str() {
             "deadlock" => DetectorKind::Deadlock,
             "atomic" => DetectorKind::AtomicityViolation,
@@ -265,13 +265,13 @@ impl Options {
             .cloned()
             .map(PathBuf::from);
 
-        // 解析crate类型
+        // Parse crate type
         self.crate_type = match matches.get_one::<String>("crate_type").unwrap().as_str() {
             "library" => OwnCrateType::Lib,
             _ => OwnCrateType::Bin,
         };
 
-        // 验证库API的正确性
+        // Validate library API correctness
         match self.crate_type {
             OwnCrateType::Lib => {
                 self.lib_apis_path = Some(matches.get_one::<String>("api_spec").cloned().ok_or_else(|| {
@@ -291,7 +291,7 @@ impl Options {
             _ => AnalysisTool::RPN,
         };
 
-        // 更新可视化选项
+        // Update visualization options
         self.dump_options = DumpOptions {
             dump_call_graph: matches.get_flag("dump_callgraph"),
             dump_petri_net: matches.get_flag("dump_petrinet"),
@@ -302,7 +302,7 @@ impl Options {
         };
 
         self.test = matches.get_flag("petri_net_test");
-        // 返回 rustc 参数
+        // Return rustc arguments
         rustc_args.to_vec()
     }
 }

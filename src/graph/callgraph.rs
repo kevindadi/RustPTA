@@ -27,7 +27,7 @@ pub enum CallSiteLocation {
     // Indirect(Location),
     Spawn {
         location: Location,
-        destination: Local, // spawn 返回的 JoinHandle 存储位置
+        destination: Local, // spawn returned JoinHandle storage location
     },
     RayonJoin,
 }
@@ -109,10 +109,10 @@ impl<'tcx> CallGraphNode<'tcx> {
 /// denotes `Instance1` calls `Instance2` at locations `Callsite1` and `CallSite2`.
 pub struct CallGraph<'tcx> {
     pub graph: Graph<CallGraphNode<'tcx>, Vec<CallSiteLocation>, Directed>,
-    // key: 调用spawn的函数的DefId
-    // value: (spawn创建的闭包的DefId, spawn返回的JoinHandle存储位置)的集合
+    // key: DefId of the function calling spawn
+    // value: Set of (DefId of closure created by spawn, spawn returned JoinHandle storage location)
     // _0 = spawn::<{closure@src/main.rs:10:23: 10:30}, ()>(move _3)
-    // fix: 线程闭包可能不在函数本地调用,改为记录闭包结构
+    // fix: Thread closures may not be called locally in functions, changed to record closure structure
     pub spawn_calls: FxHashMap<DefId, FxHashSet<(DefId, Local)>>,
 }
 
@@ -125,17 +125,17 @@ impl<'tcx> CallGraph<'tcx> {
         }
     }
 
-    /// 格式化输出 spawn_calls
+    /// Format output spawn_calls
     pub fn format_spawn_calls(&self) -> String {
         let mut output = String::from("Spawn calls in functions:\n");
 
         for (caller_id, spawn_set) in &self.spawn_calls {
-            // 获取调用者函数的可读名称
+            // Get readable name of caller function
             let caller_name = FunctionNode::format_name(*caller_id);
             output.push_str(&format!("\nIn function {}:\n", caller_name));
 
             for (closure_id, destination) in spawn_set {
-                // 获取被spawn的闭包的可读名称
+                // Get readable name of spawned closure
                 let closure_name = FunctionNode::format_name(*closure_id);
                 output.push_str(&format!(
                     "  - Spawned closure {} (stored in _{})\n",
@@ -160,7 +160,7 @@ impl<'tcx> CallGraph<'tcx> {
         self.graph.node_weight(idx)
     }
 
-    /// 记录spawn调用
+    /// Record spawn call
     fn record_spawn_call(&mut self, caller: DefId, closure_idx: DefId, destination: Local) {
         self.spawn_calls
             .entry(caller)
@@ -168,7 +168,7 @@ impl<'tcx> CallGraph<'tcx> {
             .insert((closure_idx, destination));
     }
 
-    /// 获取指定函数的所有spawn调用
+    /// Get all spawn calls for specified function
     pub fn get_spawn_calls(&self, def_id: DefId) -> Option<&FxHashSet<(DefId, Local)>> {
         self.spawn_calls.get(&def_id)
     }
@@ -198,7 +198,7 @@ impl<'tcx> CallGraph<'tcx> {
                     self.graph.add_node(CallGraphNode::WithoutBody(callee))
                 };
 
-                // 记录spawn调用
+                // Record spawn call
                 if let CallSiteLocation::Spawn { destination, .. } = location {
                     self.record_spawn_call(caller.def_id(), callee.def_id(), destination);
                 }
@@ -291,7 +291,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
                 let fn_path = self.tcx.def_path_str(def_id);
                 if fn_path.contains("spawn") {
-                    // 获取第一个参数（闭包）
+                    // Get the first argument (closure)
                     if let Some(closure_arg) = args.first() {
                         let closure_ty = match closure_arg.node {
                             Operand::Move(place) | Operand::Copy(place) => {
@@ -375,7 +375,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                     return;
                 }
 
-                // 处理普通函数调用
+                // Handle regular function calls
                 if let Some(callee) = Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                     .ok()
                     .flatten()

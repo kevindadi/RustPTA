@@ -1,3 +1,31 @@
+//! Data race detection module for concurrent Rust programs.
+//!
+//! This module implements data race detection algorithms that identify potentially
+//! unsafe concurrent memory accesses in Rust programs. It analyzes unsafe memory
+//! operations and their synchronization patterns to detect race conditions.
+//!
+//! ## Detection Strategy
+//!
+//! The detector operates by:
+//! 1. **State Space Analysis**: Examines all reachable states in the Petri net model
+//! 2. **Unsafe Operation Tracking**: Identifies unsafe read/write operations on shared data
+//! 3. **Concurrency Analysis**: Detects when multiple threads can access the same memory location
+//! 4. **Race Condition Validation**: Determines if concurrent accesses constitute actual races
+//!
+//! ## Race Condition Criteria
+//!
+//! A data race is detected when:
+//! - Two or more threads access the same memory location concurrently
+//! - At least one access is a write operation
+//! - The accesses are not properly synchronized
+//! - The operations occur in the same program state
+//!
+//! ## Integration Features
+//! - Works with alias analysis to track memory relationships
+//! - Supports various unsafe operation patterns
+//! - Provides detailed reports with source code locations
+//! - Merges similar race conditions for cleaner output
+
 use crate::graph::net_structure::{ControlType, PetriNetNode};
 use crate::graph::state_graph::StateGraph;
 use crate::report::{RaceCondition, RaceOperation, RaceReport};
@@ -19,11 +47,11 @@ impl<'a> DataRaceDetector<'a> {
         let mut report = RaceReport::new("Data Race Detector".to_string());
         let mut race_infos = Vec::new();
 
-        // 遍历所有状态节点
+        // Traverse all state nodes
         for state in self.state_graph.graph.node_indices() {
             let mut state_transitions = Vec::new();
 
-            // 收集当前状态的所有不安全操作
+            // Collect all unsafe operations in the current state
             for edge in self.state_graph.graph.edges(state) {
                 let transition = edge.weight().transition;
                 if let Some(node) = self
@@ -63,11 +91,11 @@ impl<'a> DataRaceDetector<'a> {
 
             let state_node = self.state_graph.graph.node_weight(state).unwrap();
             let state_mark = state_node.mark.clone();
-            // 检查状态中的数据竞争
+            // Check for data races in the state
             self.check_race_in_state(&state_transitions, state_mark, &mut race_infos);
         }
 
-        // 合并相似的竞争条件
+        // Merge similar race conditions
         let race_conditions = self.merge_race_conditions(race_infos);
 
         if !race_conditions.is_empty() {
@@ -86,12 +114,12 @@ impl<'a> DataRaceDetector<'a> {
         state_marks: Vec<(usize, u8)>,
         race_infos: &mut Vec<RaceCondition>,
     ) {
-        // 遍历所有变迁对
+        // Traverse all transition pairs
         for (i, (node_idx1, span1, bb1, op_type1, data1_ty)) in transitions.iter().enumerate() {
             for (node_idx2, span2, bb2, op_type2, data2_ty) in transitions.iter().skip(i + 1) {
-                // 检查是否访问相同的变量（NodeIndex相同）
+                // Check if accessing the same variable (same NodeIndex)
                 if node_idx1 == node_idx2 {
-                    // 至少有一个是写操作时才构成竞争
+                    // Constitutes a race only when at least one is a write operation
                     if *op_type1 == "write" || *op_type2 == "write" {
                         let operations = vec![
                             RaceOperation {
@@ -132,7 +160,6 @@ impl<'a> DataRaceDetector<'a> {
             merged
                 .entry(key)
                 .and_modify(|existing: &mut RaceCondition| {
-                    // 合并操作，保留唯一的操作
                     for op in condition.clone().operations {
                         if !existing
                             .operations

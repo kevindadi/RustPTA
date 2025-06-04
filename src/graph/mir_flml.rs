@@ -454,25 +454,25 @@ impl<'tcx> MirToFLMLConverter<'tcx> {
             .map(|term| format!("{:?}", term.source_info.span))
             .unwrap_or_else(|| "unknown".to_string());
 
-        // 分析基本块中的语句
+        // Analyze statements in basic block
         let mut comp_type = ComputationType::Normal;
         let mut has_sync_ops = false;
 
-        // 检查语句中的特殊操作
+        // Check for special operations in statements
         for stmt in &bb_data.statements {
             if let rustc_middle::mir::StatementKind::Assign(box (_, rvalue)) = &stmt.kind {
                 match rvalue {
                     rustc_middle::mir::Rvalue::Use(_) => {
-                        // 普通使用
+                        // Normal use
                     }
                     _ => {
-                        // 其他复杂操作
+                        // Other complex operations
                     }
                 }
             }
         }
 
-        // 检查终止符
+        // Check terminator
         if let Some(terminator) = &bb_data.terminator {
             match &terminator.kind {
                 rustc_middle::mir::TerminatorKind::Call { func, .. } => {
@@ -480,7 +480,7 @@ impl<'tcx> MirToFLMLConverter<'tcx> {
                     if let rustc_middle::ty::TyKind::FnDef(callee_def_id, _) = func_ty.kind() {
                         let callee_name = self.tcx.def_path_str(*callee_def_id);
 
-                        // 检测同步操作
+                        // Detect synchronization operations
                         if callee_name.contains("lock") || callee_name.contains("mutex") {
                             has_sync_ops = true;
                         } else if callee_name.contains("spawn") || callee_name.contains("join") {
@@ -497,7 +497,7 @@ impl<'tcx> MirToFLMLConverter<'tcx> {
                     }
                 }
                 rustc_middle::mir::TerminatorKind::SwitchInt { .. } => {
-                    // 这是一个决策点
+                    // This is a decision point
                     return self.flml_ir.add_node(AbstractNode::Decision {
                         decision_id: format!("{}_bb{}_decision", func_name, bb_idx),
                         branches: vec!["true".to_string(), "false".to_string()],
@@ -513,11 +513,11 @@ impl<'tcx> MirToFLMLConverter<'tcx> {
             }
         }
 
-        // 如果有同步操作，创建同步点
+        // If there are synchronization operations, create a sync point
         if has_sync_ops {
             return self.flml_ir.add_node(AbstractNode::SyncPoint {
                 sync_id: format!("{}_bb{}_sync", func_name, bb_idx),
-                sync_type: SyncType::MutexAcquire, // 简化处理
+                sync_type: SyncType::MutexAcquire, // Simplified handling
                 metadata: NodeMetadata {
                     span,
                     def_id: None,
@@ -527,7 +527,7 @@ impl<'tcx> MirToFLMLConverter<'tcx> {
             });
         }
 
-        // 创建计算节点
+        // Create computation node
         self.flml_ir.add_node(AbstractNode::Computation {
             comp_id: format!("{}_bb{}_comp", func_name, bb_idx),
             comp_type,
@@ -540,7 +540,7 @@ impl<'tcx> MirToFLMLConverter<'tcx> {
         })
     }
 
-    /// 连接基本块之间的边
+    /// Connect edges between basic blocks
     fn connect_basic_block_edges(
         &mut self,
         current_bb: NodeIndex,
@@ -598,12 +598,12 @@ impl<'tcx> MirToFLMLConverter<'tcx> {
         }
     }
 
-    /// 获取生成的FLML IR
+    /// Get the generated FLML IR
     pub fn get_flml_ir(self) -> AbstractIR<'tcx> {
         self.flml_ir
     }
 
-    /// 导出为JSON格式
+    /// Export to JSON format
     pub fn export_to_json(&self) -> Result<String, serde_json::Error> {
         use serde_json::json;
 

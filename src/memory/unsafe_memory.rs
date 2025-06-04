@@ -1,3 +1,18 @@
+//! Unsafe memory operations analysis module for Rust programs.
+//!
+//! This module provides comprehensive analysis of unsafe memory operations in Rust code,
+//! including detection and tracking of unsafe blocks, unsafe function calls, raw pointer
+//! operations, and other potentially dangerous memory operations.
+//!
+//! Key components:
+//! - UnsafeInfo: Collects information about unsafe blocks and operations in functions
+//! - UnsafeCollector: Visitor that traverses MIR to identify unsafe operations
+//! - UnsafeAnalyzer: High-level analyzer that processes entire crates
+//! - Various data structures to represent unsafe operations and their locations
+//!
+//! This analysis is crucial for understanding memory safety guarantees and potential
+//! unsafe operation patterns that could lead to memory safety violations.
+
 use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::pointsto::AliasId;
 use crate::util::format_name;
