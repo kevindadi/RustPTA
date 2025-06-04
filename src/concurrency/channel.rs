@@ -1,3 +1,18 @@
+//! Channel analysis module for Rust concurrent programs.
+//!
+//! This module provides functionality to detect and analyze channel usage patterns
+//! in Rust programs, particularly focusing on std::sync::mpsc channels.
+//!
+//! Key features:
+//! - Detection of channel endpoints (senders and receivers)
+//! - Classification of channel types (bounded vs unbounded)
+//! - Tracking of channel pairs created by mpsc::channel()
+//! - Integration with call graph analysis for comprehensive coverage
+//!
+//! The main component is ChannelCollector which traverses the call graph
+//! to identify channel variables and their properties, supporting both
+//! individual endpoints and paired sender-receiver tuples.
+
 extern crate rustc_hash;
 extern crate rustc_middle;
 
@@ -53,6 +68,18 @@ impl<'tcx> ChannelId {
     //     }
     // }
 
+    /// 获取对应的别名ID，用于内存分析
+    /// 返回一个用于内存别名分析的标识符
+    ///
+    /// # 用途
+    /// 主要用于将channel端点与内存别名分析系统集成，
+    /// 使得可以追踪channel端点的别名关系和数据流
+    ///
+    /// # 示例
+    /// ```
+    /// let channel_id = ChannelId::new(instance_id, local);
+    /// let alias_id = channel_id.get_alias_id();
+    /// ```
     pub fn get_alias_id(&self) -> AliasId {
         AliasId::new(self.instance_id, self.local)
     }

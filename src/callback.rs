@@ -33,7 +33,7 @@ pub struct PTACallbacks {
 
 impl PTACallbacks {
     pub fn new(options: Options) -> Self {
-        // 构造默认的诊断输出路径
+        // Construct default diagnostic output path
         let diagnostics_output = if let Some(output) = options.output.clone() {
             let mut path = PathBuf::from(output);
             path.push(&options.crate_name);
@@ -44,7 +44,7 @@ impl PTACallbacks {
             path
         };
 
-        // 确保目录存在
+        // Ensure directory exists
         std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
             eprintln!("Warning: Failed to create output directory: {}", e);
         });
@@ -171,7 +171,7 @@ impl PTACallbacks {
                 terminal_states,
             );
             for (api_name, initial_mark) in pn.api_marks.iter() {
-                // TODO: API可达图重构
+                // TODO: API reachability graph refactoring
             }
 
             mem_watcher.stop();
@@ -179,17 +179,17 @@ impl PTACallbacks {
             return;
         }
 
-        //  TODO:  mode 作为网的参数
+        //  TODO: mode as a parameter for the network
         match &self.options.detector_kind {
             DetectorKind::FLML => {
-                // 生成FLML中间表示
+                // Generate FLML intermediate representation
                 log::info!("Generating FLML intermediate representation");
 
-                // 根据选项选择配置
+                // Choose configuration based on options
                 let config = AnalysisConfig::deadlock_detection(); // Use deadlock detection configuration by default
                 let mut converter = MirToFLMLConverter::new(tcx, config);
 
-                // 转换所有函数
+                // Convert all functions
                 for instance in instances.iter() {
                     if tcx.is_mir_available(instance.def_id()) {
                         let body = tcx.optimized_mir(instance.def_id());
@@ -201,7 +201,7 @@ impl PTACallbacks {
                     }
                 }
 
-                // 导出FLML IR
+                // Export FLML IR
                 if self.options.dump_options.dump_flml {
                     match converter.export_to_json() {
                         Ok(json_output) => {
@@ -257,7 +257,7 @@ impl PTACallbacks {
                 }
             }
             DetectorKind::AtomicityViolation => {
-                // 收集atomic变量和操作信息
+                // Collect atomic variable and operation information
                 log::debug!("Starting atomic operation collection");
                 let mut pn = PetriNet::new(
                     &self.options,

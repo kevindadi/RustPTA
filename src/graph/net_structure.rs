@@ -1,3 +1,38 @@
+//! Petri Net structure definitions and components.
+//!
+//! This module defines the core data structures used to represent Petri nets
+//! for modeling concurrent Rust programs. It includes definitions for places,
+//! transitions, edges, and various types of control flow and synchronization
+//! operations.
+//!
+//! ## Core Components
+//!
+//! ### Places (`Place`)
+//! - Represent program states, resources, or synchronization points
+//! - Hold tokens to represent resource availability or execution state
+//! - Support different types: Unsafe, Atomic, Lock, CondVar, Channel, etc.
+//!
+//! ### Transitions (`Transition`)
+//! - Represent program operations or state changes
+//! - Connect input places to output places
+//! - Encode different control types: function calls, atomic operations, etc.
+//!
+//! ### Edges (`PetriNetEdge`)
+//! - Connect places to transitions and transitions to places
+//! - Carry weight information indicating token consumption/production
+//!
+//! ## Operation Types
+//!
+//! The module supports various operation types including:
+//! - Basic control flow (goto, switch, return)
+//! - Synchronization operations (lock, unlock, wait, notify)
+//! - Atomic operations (load, store, compare-exchange)
+//! - Thread operations (spawn, join)
+//! - Unsafe memory operations (read, write)
+//!
+//! This provides a rich modeling framework for analyzing concurrent behavior
+//! and detecting various types of concurrency issues.
+
 use crate::concurrency::atomic::AtomicOrdering;
 use crate::memory::pointsto::AliasId;
 
@@ -68,7 +103,7 @@ impl Place {
         }
     }
 
-    // 创建一个无穷库所
+    // Create an infinite place
     pub fn new_indefinite(
         name: String,
         token: u8,
@@ -103,42 +138,42 @@ pub struct Transition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ControlType {
-    // 基本控制结构
+    // Basic control structures
     Start(InstanceId),
-    Goto,               // 直接跳转
-    Switch,             // 条件分支
-    Return(InstanceId), // 函数返回
-    Drop(DropType),     // 资源释放
+    Goto,
+    Switch,
+    Return(InstanceId),
+    Drop(DropType),
     Assert,
 
-    // 指向的 Unsafe 数据,源码位置,基本块 index,数据类型
+    // Pointed unsafe data, source location, basic block index, data type
     UnsafeRead(NodeIndex, String, usize, String),
     UnsafeWrite(NodeIndex, String, usize, String),
 
-    // 函数调用
+    // Function calls
     Call(CallType),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CallType {
-    // 同步原语调用
+    // Synchronization primitive calls
     Lock(NodeIndex),
     RwLockRead(NodeIndex),
     RwLockWrite(NodeIndex),
     Notify(NodeIndex),
     Wait,
 
-    // 原子操作
+    // Atomic operations
     AtomicLoad(AliasId, AtomicOrdering, String, InstanceId),
     AtomicStore(AliasId, AtomicOrdering, String, InstanceId),
     AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String, InstanceId),
 
-    // 线程操作-后续reduce网会改变NodeIndex
-    // 资源最先创建不因网结构改变
+    // Thread operations - subsequent network reduction will change NodeIndex
+    // Resources created first are not affected by network structure changes
     Spawn(String),
     Join(String),
 
-    // 普通函数调用
+    // Regular function calls
     Function,
 }
 
@@ -206,7 +241,7 @@ pub enum PetriNetError {
     #[error("Invalid Petri net structure: Transition '{transition_name}' has a Transition {connection_type}")]
     InvalidTransitionConnection {
         transition_name: String,
-        connection_type: &'static str, // "predecessor" 或 "successor"
+        connection_type: &'static str, // "predecessor" or "successor"
     },
 
     #[error("Invalid Petri net structure: Place '{place_name}' has a Place {connection_type}")]

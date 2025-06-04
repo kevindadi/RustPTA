@@ -1,3 +1,33 @@
+//! Atomicity violation detection module for concurrent Rust programs.
+//!
+//! This module implements detection algorithms for atomicity violations in concurrent
+//! programs using atomic operations. It identifies scenarios where atomic operations
+//! may not provide the expected atomicity guarantees due to interleaving with other
+//! operations or improper memory ordering constraints.
+//!
+//! ## Detection Strategy
+//!
+//! The detector operates by:
+//! 1. **Atomic Operation Collection**: Identifies all atomic load/store operations in the program
+//! 2. **State Space Traversal**: Analyzes execution states where atomic operations occur
+//! 3. **Violation Pattern Detection**: Looks for patterns where atomicity assumptions are violated
+//! 4. **Race Condition Analysis**: Identifies conflicting atomic operations on the same variables
+//!
+//! ## Atomicity Violation Patterns
+//!
+//! The detector identifies violations such as:
+//! - **Read-Write Conflicts**: Load operations that can be interfered with by concurrent stores
+//! - **Write-Write Conflicts**: Multiple concurrent store operations on the same atomic variable
+//! - **Ordering Violations**: Cases where relaxed memory ordering allows unexpected interleavings
+//! - **Cross-Thread Dependencies**: Atomic operations from different threads that conflict
+//!
+//! ## Key Features
+//! - Support for various atomic operation types (load, store, compare-exchange)
+//! - Memory ordering analysis (Relaxed, Acquire, Release, etc.)
+//! - Thread-aware violation detection
+//! - Integration with state graph exploration for comprehensive coverage
+//! - Detailed violation pattern reporting with source locations
+
 use crate::graph::callgraph::InstanceId;
 use crate::graph::net_structure::{CallType, ControlType, PetriNetEdge, PetriNetNode};
 use crate::graph::state_graph::{StateEdge, StateGraph, StateNode};
@@ -33,7 +63,7 @@ impl<'a> AtomicityViolationDetector<'a> {
         let start_time = Instant::now();
         let mut report = AtomicReport::new("Petri Net Atomicity Violation Detector".to_string());
 
-        // 找到所有的load 和 store 操作, 在State Reachable Graph上以某个load的发生变迁前序遍历
+        // Find all load and store operations, traverse in pre-order from the state preceding a load operation occurrence transition in the State Reachable Graph
         let (loads, stores) = self.collect_atomic_operations();
 
         let graph = Arc::new(RwLock::new(self.state_graph.graph.clone()));
@@ -240,8 +270,8 @@ impl<'a> AtomicityViolationDetector<'a> {
 
 #[derive(Debug, Clone)]
 pub struct AtomicRaceInfo {
-    pub state: Vec<(usize, u8)>,              // 发生竞争的状态
-    pub operations: Vec<AtomicRaceOperation>, // 冲突的操作
+    pub state: Vec<(usize, u8)>,              // State where the race occurs
+    pub operations: Vec<AtomicRaceOperation>, // Conflicting operations
 }
 
 #[derive(Debug, Clone)]

@@ -101,7 +101,7 @@ impl DeadlockReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        // 可选：同时保存JSON格式
+        // Optional: also save JSON format
         let json_path = format!("{}.json", path);
         std::fs::write(
             json_path,
@@ -199,7 +199,7 @@ impl AtomicReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        // 同时保存JSON格式
+        // Also save JSON format
         let json_path = format!("{}.json", path);
         std::fs::write(
             json_path,
@@ -255,8 +255,8 @@ impl fmt::Display for RaceReport {
                 writeln!(f, "\nRace #{}", i + 1)?;
                 writeln!(f, "Variable Information:")?;
                 writeln!(f, "  Name: {}", race.variable_info)?;
-                // writeln!(f, "  类型: {}", race.variable_info.data_type)?;
-                // writeln!(f, "  作用域: {}", race.variable_info.function_scope)?;
+                // writeln!(f, "  Type: {}", race.variable_info.data_type)?;
+                // writeln!(f, "  Scope: {}", race.variable_info.function_scope)?;
 
                 writeln!(f, "\nRelated Operations:")?;
                 for op in &race.operations {
@@ -297,7 +297,7 @@ impl RaceReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        // 同时保存JSON格式
+        // Also save JSON format
         let json_path = format!("{}.json", path);
         std::fs::write(
             json_path,

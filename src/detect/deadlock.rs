@@ -1,3 +1,27 @@
+//! Deadlock detection module for concurrent Rust programs.
+//!
+//! This module implements deadlock detection algorithms for multi-threaded Rust programs
+//! using Petri net-based state space exploration. It can detect various types of deadlocks
+//! including resource deadlocks, circular wait conditions, and other blocking scenarios.
+//!
+//! ## Detection Strategies
+//!
+//! ### Reachability-based Detection
+//! - Explores all reachable states in the Petri net model
+//! - Identifies terminal states that are not normal program termination
+//! - Detects states where threads are permanently blocked
+//!
+//! ### Cycle-based Detection  
+//! - Identifies strongly connected components in the state graph
+//! - Analyzes lock acquisition patterns within cycles
+//! - Validates whether cycles represent actual deadlock conditions
+//!
+//! ## Key Features
+//! - Support for various synchronization primitives (Mutex, RwLock, etc.)
+//! - Integration with alias analysis for precise lock relationship tracking
+//! - Detailed reporting with source code locations and execution traces
+//! - State space analysis for comprehensive coverage assessment
+
 use crate::graph::net_structure::PetriNetNode;
 use crate::graph::net_structure::{CallType, ControlType};
 use crate::graph::state_graph::StateGraph;
@@ -40,13 +64,13 @@ impl<'a> DeadlockDetector<'a> {
                 let state_info = self.format_deadlock_state(deadlock_state);
                 report.deadlock_states.push(state_info);
 
-                // 为每个死锁状态创建一个追踪路径
+                // Create a trace path for each deadlock state
                 let trace = self.create_deadlock_trace(deadlock_state);
                 report.traces.push(trace);
             }
         }
 
-        // 添加状态空间信息
+        // Add state space information
         report.state_space_info = Some(self.collect_state_space_info());
 
         report.analysis_time = start_time.elapsed();
@@ -253,6 +277,7 @@ impl<'a> DeadlockDetector<'a> {
     }
 
     /// 判断一个环路是否是死锁环路
+    #[allow(dead_code)]
     fn is_deadlock_cycle(&self, cycle: &[NodeIndex]) -> bool {
         // 1. 检查环路中是否包含终止状态
         let has_terminal_state = cycle.iter().any(|&node| {

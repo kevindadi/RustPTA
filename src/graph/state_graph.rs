@@ -1,3 +1,37 @@
+//! State graph generation and analysis for Petri net models.
+//!
+//! This module implements state space exploration algorithms for Petri net models
+//! of concurrent Rust programs. It generates reachable state graphs and provides
+//! analysis capabilities for detecting various concurrency issues.
+//!
+//! ## Key Components
+//!
+//! ### StateGraph
+//! - Represents the complete state space of a Petri net model
+//! - Nodes represent program states (markings)
+//! - Edges represent state transitions via firing transitions
+//!
+//! ### State Generation
+//! - Uses breadth-first search to explore all reachable states
+//! - Implements transition firing to generate successor states
+//! - Tracks visited states to avoid infinite loops
+//! - Supports parallel processing for scalability
+//!
+//! ### Analysis Features
+//! - Deadlock detection through terminal state analysis
+//! - Atomic race condition detection during state exploration
+//! - Integration with external model checkers (LoLA, Tina)
+//! - State space statistics and coverage information
+//!
+//! ## State Representation
+//!
+//! States are represented as markings - mappings from places to token counts.
+//! The module provides efficient state normalization and comparison operations
+//! to handle large state spaces effectively.
+//!
+//! This module is central to the analysis pipeline, providing the foundation
+//! for all reachability-based detection algorithms.
+
 use super::net_structure::{PetriNetEdge, PetriNetNode};
 use crate::detect::atomicity_violation::AtomicOpType;
 use crate::detect::atomicity_violation::AtomicRaceInfo;
@@ -78,7 +112,7 @@ impl StateNode {
     }
 }
 
-// 规范化状态表示
+// Normalize state representation
 pub fn normalize_state(mark: &HashSet<(NodeIndex, u8)>) -> Vec<(usize, u8)> {
     let mut state: Vec<(usize, u8)> = mark.iter().map(|(n, t)| (n.index(), *t)).collect();
     state.sort();
@@ -141,11 +175,11 @@ impl StateGraph {
         }
     }
 
-    /// 生成 Petri 网从初始状态可达的所有状态
+    /// Generate all reachable states from the initial state of the Petri net
     ///
-    /// 该函数使用广度优先搜索和并行处理的方式来探索所有可达状态。
-    /// 对于每个状态，计算其使能的变迁，并行地发生这些变迁以生成新状态，
-    /// 如果生成的新状态是唯一的，则将其添到状态图中。
+    /// This function uses breadth-first search and parallel processing to explore all reachable states.
+    /// For each state, it calculates enabled transitions, fires these transitions in parallel to generate new states,
+    /// and if the generated new states are unique, adds them to the state graph.
     pub fn generate_states(&mut self) {
         let mut queue = VecDeque::new();
         let mut state_index_map = HashMap::<StateNode, NodeIndex>::new();
@@ -224,7 +258,7 @@ impl StateGraph {
                         }
                     }
                     Err(e) => {
-                        log::debug!("跳过无效变迁: {}", e);
+                        log::debug!("Skipping invalid transition: {}", e);
                         continue;
                     }
                 }
