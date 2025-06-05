@@ -117,7 +117,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
 
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
-        let mut mem_watcher = MemoryWatcher::new();
+        let mut mem_watcher = MemoryWatcher::default();
         mem_watcher.start();
 
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
