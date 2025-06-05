@@ -152,16 +152,16 @@ impl PTACallbacks {
             );
             pn.construct();
             pn.save_petri_net_to_file();
-            let terminal_states = pn.get_terminal_states();
+            // let terminal_states = pn.get_terminal_states();
 
-            let mut state_graph = StateGraph::new(
-                pn.net.clone(),
-                pn.get_current_mark(),
-                pn.function_counter.clone(),
-                self.options.clone(),
-                terminal_states,
-            );
-            for (api_name, initial_mark) in pn.api_marks.iter() {}
+            // let mut state_graph = StateGraph::new(
+            //     pn.net.clone(),
+            //     pn.get_current_mark(),
+            //     pn.function_counter.clone(),
+            //     self.options.clone(),
+            //     terminal_states,
+            // );
+            // for (api_name, initial_mark) in pn.api_marks.iter() {}
 
             mem_watcher.stop();
 

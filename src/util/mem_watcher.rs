@@ -1,5 +1,4 @@
 use libc::pid_t;
-use log::error;
 use nom::bytes::streaming::tag;
 use nom::character::complete::digit1;
 use nom::combinator::map_res;
