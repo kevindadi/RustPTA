@@ -1,31 +1,31 @@
-//! A module providing a Segment Tree data structure for efficient range queries
-//! and updates. It supports operations like finding the minimum, maximum,
-//! and sum of segments in an array.
+
+
+
 
 use std::fmt::Debug;
 use std::ops::Range;
 
-/// Custom error types representing possible errors that can occur during operations on the `SegmentTree`.
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum SegmentTreeError {
-    /// Error indicating that an index is out of bounds.
+    
     IndexOutOfBounds,
-    /// Error indicating that a range provided for a query is invalid.
+    
     InvalidRange,
 }
 
-/// A structure representing a Segment Tree. This tree can be used to efficiently
-/// perform range queries and updates on an array of elements.
+
+
 pub struct SegmentTree<T, F>
 where
     T: Debug + Default + Ord + Copy,
     F: Fn(T, T) -> T,
 {
-    /// The length of the input array for which the segment tree is built.
+    
     size: usize,
-    /// A vector representing the segment tree.
+    
     nodes: Vec<T>,
-    /// A merging function defined as a closure or callable type.
+    
     merge_fn: F,
 }
 
@@ -34,21 +34,21 @@ where
     T: Debug + Default + Ord + Copy,
     F: Fn(T, T) -> T,
 {
-    /// Creates a new `SegmentTree` from the provided slice of elements.
-    ///
-    /// # Arguments
-    ///
-    /// * `arr`: A slice of elements of type `T` to initialize the segment tree.
-    /// * `merge`: A merging function that defines how to merge two elements of type `T`.
-    ///
-    /// # Returns
-    ///
-    /// A new `SegmentTree` instance populated with the given elements.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn from_vec(arr: &[T], merge: F) -> Self {
         let size = arr.len();
         let mut buffer: Vec<T> = vec![T::default(); 2 * size];
 
-        // Populate the leaves of the tree
+        
         buffer[size..(2 * size)].clone_from_slice(arr);
         for idx in (1..size).rev() {
             buffer[idx] = merge(buffer[2 * idx], buffer[2 * idx + 1]);
@@ -61,18 +61,18 @@ where
         }
     }
 
-    /// Queries the segment tree for the result of merging the elements in the given range.
-    ///
-    /// # Arguments
-    ///
-    /// * `range`: A range specified as `Range<usize>`, indicating the start (inclusive)
-    ///   and end (exclusive) indices of the segment to query.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Some(result))` if the query was successful and there are elements in the range,
-    /// * `Ok(None)` if the range is empty,
-    /// * `Err(SegmentTreeError::InvalidRange)` if the provided range is invalid.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn query(&self, range: Range<usize>) -> Result<Option<T>, SegmentTreeError> {
         if range.start >= self.size || range.end > self.size {
             return Err(SegmentTreeError::InvalidRange);
@@ -82,7 +82,7 @@ where
         let mut right = range.end + self.size;
         let mut result = None;
 
-        // Iterate through the segment tree to accumulate results
+        
         while left < right {
             if left % 2 == 1 {
                 result = Some(match result {
@@ -105,17 +105,17 @@ where
         Ok(result)
     }
 
-    /// Updates the value at the specified index in the segment tree.
-    ///
-    /// # Arguments
-    ///
-    /// * `idx`: The index (0-based) of the element to update.
-    /// * `val`: The new value of type `T` to set at the specified index.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` if the update was successful,
-    /// * `Err(SegmentTreeError::IndexOutOfBounds)` if the index is out of bounds.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn update(&mut self, idx: usize, val: T) -> Result<(), SegmentTreeError> {
         if idx >= self.size {
             return Err(SegmentTreeError::IndexOutOfBounds);

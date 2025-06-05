@@ -3,7 +3,7 @@ use std::convert::TryInto;
 
 /*
     Generates a list of perfect numbers till `num` using the Lucas Lehmer test algorithm.
-    url : https://en.wikipedia.org/wiki/Lucas%E2%80%93Lehmer_primality_test
+    url : https:
 */
 pub fn generate_perfect_numbers(num: usize) -> Vec<usize> {
     let mut results = Vec::new();
@@ -21,7 +21,7 @@ pub fn generate_perfect_numbers(num: usize) -> Vec<usize> {
     results.into_iter().filter(|x| *x <= num).collect()
 }
 
-// Gets an approximate limit for the generate_perfect_numbers function
+
 fn get_prime_limit(num: usize) -> usize {
     (((num * 8 + 1) as f64).log2() as usize) / 2_usize
 }

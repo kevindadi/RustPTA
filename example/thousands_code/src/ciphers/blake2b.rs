@@ -1,4 +1,4 @@
-// For specification go to https://www.rfc-editor.org/rfc/rfc7693
+
 
 use std::cmp::{max, min};
 use std::convert::{TryFrom, TryInto};
@@ -14,10 +14,10 @@ type Block = [Word; BB / U64BYTES];
 const KK_MAX: usize = 64;
 const NN_MAX: u8 = 64;
 
-// Array of round constants used in mixing function G
+
 const RC: [u32; 4] = [32, 24, 16, 63];
 
-// IV[i] = floor(2**64 * frac(sqrt(prime(i+1)))) where prime(i) is the ith prime number
+
 const IV: [Word; 8] = [
     0x6A09E667F3BCC908,
     0xBB67AE8584CAA73B,
@@ -47,7 +47,7 @@ const fn blank_block() -> Block {
     [0u64; BB / U64BYTES]
 }
 
-// Overflowing addition
+
 #[inline]
 fn add(a: &mut Word, b: Word) {
     *a = a.overflowing_add(b).0;
@@ -114,7 +114,7 @@ fn f(h: &mut [Word; 8], m: Block, t: u128, flag: bool) {
         };
 
         for j in 0..4 {
-            // Produces indeces for diagonals of a 4x4 matrix starting at 0,j
+            
             let idx: Vec<usize> = (0..4).map(|n| i1d(j + n, n) as usize).collect();
 
             g(
@@ -162,7 +162,7 @@ fn blake2(d: Vec<Block>, ll: u128, kk: Word, nn: Word) -> Vec<u8> {
         .collect()
 }
 
-// Take arbitrarily long slice of u8's and turn up to 8 bytes into u64
+
 fn bytes_to_word(bytes: &[u8]) -> Word {
     if let Ok(arr) = <[u8; U64BYTES]>::try_from(bytes) {
         Word::from_le_bytes(arr)
@@ -180,21 +180,21 @@ pub fn blake2b(m: &[u8], k: &[u8], nn: u8) -> Vec<u8> {
     let kk = min(k.len(), KK_MAX);
     let nn = min(nn, NN_MAX);
 
-    // Prevent user from giving a key that is too long
+    
     let k = &k[..kk];
 
     let dd = max(ceil(kk, BB) + ceil(m.len(), BB), 1);
 
     let mut blocks: Vec<Block> = vec![blank_block(); dd];
 
-    // Copy key into blocks
+    
     for (w, c) in blocks[0].iter_mut().zip(k.chunks(U64BYTES)) {
         *w = bytes_to_word(c);
     }
 
     let first_index = (kk > 0) as usize;
 
-    // Copy bytes from message into blocks
+    
     for (i, c) in m.chunks(U64BYTES).enumerate() {
         let block_index = first_index + (i / (BB / U64BYTES));
         let word_in_block = i % (BB / U64BYTES);

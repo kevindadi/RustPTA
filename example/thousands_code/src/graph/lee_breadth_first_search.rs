@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 
-// All four potential movements from a cell are listed here.
+
 
 fn validate(matrix: &[Vec<i32>], visited: &[Vec<bool>], row: isize, col: isize) -> bool {
-    // Check if it is possible to move to the position (row, col) from the current cell.
+    
     let (row, col) = (row as usize, col as usize);
     row < matrix.len() && col < matrix[0].len() && matrix[row][col] == 1 && !visited[row][col]
 }
@@ -14,7 +14,7 @@ pub fn lee(matrix: Vec<Vec<i32>>, source: (usize, usize), destination: (usize, u
     let (i, j) = source;
     let (x, y) = destination;
 
-    // Base case: invalid input
+    
     if matrix.is_empty() || matrix[i][j] == 0 || matrix[x][y] == 0 {
         return -1;
     }
@@ -26,20 +26,20 @@ pub fn lee(matrix: Vec<Vec<i32>>, source: (usize, usize), destination: (usize, u
     q.push_back((i, j, 0));
     let mut min_dist = isize::MAX;
 
-    // Loop until the queue is empty
+    
     while let Some((i, j, dist)) = q.pop_front() {
         if i == x && j == y {
-            // If the destination is found, update `min_dist` and stop
+            
             min_dist = dist;
             break;
         }
 
-        // Check for all four possible movements from the current cell
+        
         for k in 0..ROW.len() {
             let row = i as isize + ROW[k];
             let col = j as isize + COL[k];
             if validate(&matrix, &visited, row, col) {
-                // Mark the next cell as visited and enqueue it
+                
                 let (row, col) = (row as usize, col as usize);
                 visited[row][col] = true;
                 q.push_back((row, col, dist + 1));

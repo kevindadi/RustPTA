@@ -1,16 +1,16 @@
-//! This module provides a function to add two integers without using the `+` operator.
-//! It relies on bitwise operations (XOR and AND) to compute the sum, simulating the addition process.
 
-/// Adds two integers using bitwise operations.
-///
-/// # Arguments
-///
-/// * `a` - The first integer to be added.
-/// * `b` - The second integer to be added.
-///
-/// # Returns
-///
-/// * `isize` - The result of adding the two integers.
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn add_two_integers(mut a: isize, mut b: isize) -> isize {
     let mut carry;
 

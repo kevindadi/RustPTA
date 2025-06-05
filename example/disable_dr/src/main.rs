@@ -1,6 +1,6 @@
-//@compile-flags: -Zmiri-disable-data-race-detector
-// Avoid non-determinism
-//@compile-flags: -Zmiri-preemption-rate=0 -Zmiri-address-reuse-cross-thread-rate=0
+
+
+
 
 use std::thread::spawn;
 
@@ -16,13 +16,13 @@ pub fn main() {
     let c = EvilSend(b);
     unsafe {
         let j1 = spawn(move || {
-            let c = c; // avoid field capturing
+            let c = c; 
             *c.0 = 32;
         });
 
         let j2 = spawn(move || {
-            let c = c; // avoid field capturing
-            *c.0 = 64; // Data race (but not detected as the detector is disabled)
+            let c = c; 
+            *c.0 = 64; 
         });
 
         j1.join().unwrap();

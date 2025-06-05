@@ -1,7 +1,7 @@
-/// Factors are natural numbers which can divide a given natural number to give a remainder of zero
-/// Hence 1, 2, 3 and 6 are all factors of 6, as they divide the number 6 completely,
-/// leaving no remainder.
-/// This function is to list out all the factors of a given number 'n'
+
+
+
+
 
 pub fn factors(number: u64) -> Vec<u64> {
     let mut factors: Vec<u64> = Vec::new();

@@ -43,8 +43,8 @@
 
 pub fn moore_voting(arr: &[i32]) -> i32 {
     let n = arr.len();
-    let mut cnt = 0; // initializing cnt
-    let mut ele = 0; // initializing ele
+    let mut cnt = 0; 
+    let mut ele = 0; 
 
     for &item in arr.iter() {
         if cnt == 0 {

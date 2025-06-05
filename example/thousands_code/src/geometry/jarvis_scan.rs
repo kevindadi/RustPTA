@@ -1,8 +1,8 @@
 use crate::geometry::Point;
 use crate::geometry::Segment;
 
-// Returns a Vec of Points that make up the convex hull of `points`. Returns an empty Vec if there
-// is no convex hull.
+
+
 pub fn jarvis_march(points: Vec<Point>) -> Vec<Point> {
     if points.len() <= 2 {
         return vec![];
@@ -11,8 +11,8 @@ pub fn jarvis_march(points: Vec<Point>) -> Vec<Point> {
     let mut convex_hull = vec![];
     let mut left_point = 0;
     for i in 1..points.len() {
-        // Find the initial point, which is the leftmost point. In the case of a tie, we take the
-        // bottom-most point. This helps prevent adding colinear points on the last segment to the hull.
+        
+        
         if points[i].x < points[left_point].x
             || (points[i].x == points[left_point].x && points[i].y < points[left_point].y)
         {
@@ -23,7 +23,7 @@ pub fn jarvis_march(points: Vec<Point>) -> Vec<Point> {
 
     let mut p = left_point;
     loop {
-        // Find the next counter-clockwise point.
+        
         let mut next_p = (p + 1) % points.len();
         for i in 0..points.len() {
             let orientation = points[p].consecutive_orientation(&points[i], &points[next_p]);
@@ -33,7 +33,7 @@ pub fn jarvis_march(points: Vec<Point>) -> Vec<Point> {
         }
 
         if next_p == left_point {
-            // Completed constructing the hull. Exit the loop.
+            
             break;
         }
         p = next_p;
@@ -43,8 +43,8 @@ pub fn jarvis_march(points: Vec<Point>) -> Vec<Point> {
             && Segment::from_points(points[p].clone(), convex_hull[last - 1].clone())
                 .on_segment(&convex_hull[last])
         {
-            // If the last point lies on the segment with the new point and the second to last
-            // point, we can remove the last point from the hull.
+            
+            
             convex_hull[last] = points[p].clone();
         } else {
             convex_hull.push(points[p].clone());
@@ -58,8 +58,8 @@ pub fn jarvis_march(points: Vec<Point>) -> Vec<Point> {
     if Segment::from_points(convex_hull[0].clone(), convex_hull[last - 1].clone())
         .on_segment(&convex_hull[last])
     {
-        // Check for the edge case where the last point lies on the segment with the zero'th and
-        // second the last point. In this case, we remove the last point from the hull.
+        
+        
         convex_hull.pop();
         if convex_hull.len() == 2 {
             return vec![];
@@ -104,7 +104,7 @@ mod tests {
         let p3 = Point::new(3.0, 0.0);
         let p4 = Point::new(4.0, 0.0);
         let p5 = Point::new(5.0, 0.0);
-        // let p6 = Point::new(1.0, 1.0);
+        
         test_jarvis(vec![], vec![p1, p2, p3, p4, p5]);
     }
 
@@ -159,8 +159,8 @@ mod tests {
 
     #[test]
     fn star() {
-        // A single stroke star shape (kind of). Only the tips(p1-5) are part of the convex hull. The
-        // other points would create angles >180 degrees if they were part of the polygon.
+        
+        
         let p1 = Point::new(-5.0, 6.0);
         let p2 = Point::new(-11.0, 0.0);
         let p3 = Point::new(-9.0, -8.0);

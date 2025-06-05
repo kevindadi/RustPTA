@@ -216,7 +216,6 @@ impl<'a> AtomicityViolationDetector<'a> {
 
         let mut write_operations: Vec<_> = write_operations.into_iter().collect();
         if write_operations.len() >= 2 {
-            // 对 store 操作进行排序以保证相同集合有相同的顺序
             write_operations.sort_by(|a, b| a.location.cmp(&b.location));
 
             Some(AtomicViolation {
@@ -239,8 +238,8 @@ impl<'a> AtomicityViolationDetector<'a> {
 
 #[derive(Debug, Clone)]
 pub struct AtomicRaceInfo {
-    pub state: Vec<(usize, u8)>,              // 发生竞争的状态
-    pub operations: Vec<AtomicRaceOperation>, // 冲突的操作
+    pub state: Vec<(usize, u8)>,
+    pub operations: Vec<AtomicRaceOperation>,
 }
 
 #[derive(Debug, Clone)]

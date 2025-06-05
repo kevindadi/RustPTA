@@ -1,27 +1,27 @@
-//! This module provides an implementation of a ternary search algorithm that
-//! works for both ascending and descending ordered arrays. The ternary search
-//! function returns the index of the target element if it is found, or `None`
-//! if the target is not present in the array.
+
+
+
+
 
 use std::cmp::Ordering;
 
-/// Performs a ternary search for a specified item within a sorted array.
-///
-/// This function can handle both ascending and descending ordered arrays. It
-/// takes a reference to the item to search for and a slice of the array. If
-/// the item is found, it returns the index of the item within the array. If
-/// the item is not found, it returns `None`.
-///
-/// # Parameters
-///
-/// - `item`: A reference to the item to search for.
-/// - `arr`: A slice of the sorted array in which to search.
-///
-/// # Returns
-///
-/// An `Option<usize>` which is:
-/// - `Some(index)` if the item is found at the given index.
-/// - `None` if the item is not found in the array.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn ternary_search<T: Ord>(item: &T, arr: &[T]) -> Option<usize> {
     if arr.is_empty() {
         return None;
@@ -40,26 +40,26 @@ pub fn ternary_search<T: Ord>(item: &T, arr: &[T]) -> Option<usize> {
     None
 }
 
-/// Compares the item with two middle elements of the current search range and
-/// updates the search bounds accordingly. This function handles both ascending
-/// and descending ordered arrays. It calculates two middle indices of the
-/// current search range and compares the item with the elements at these
-/// indices. It then updates the search bounds (`left` and `right`) based on
-/// the result of these comparisons. If the item is found, it returns `true`.
-///
-/// # Parameters
-///
-/// - `item`: A reference to the item to search for.
-/// - `arr`: A slice of the array in which to search.
-/// - `left`: A mutable reference to the left bound of the search range.
-/// - `right`: A mutable reference to the right bound of the search range.
-/// - `is_asc`: A boolean indicating whether the array is sorted in ascending order.
-///
-/// # Returns
-///
-/// A `bool` indicating:
-/// - `true` if the item was found in the array.
-/// - `false` if the item was not found in the array.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn match_compare<T: Ord>(
     item: &T,
     arr: &[T],
@@ -70,7 +70,7 @@ fn match_compare<T: Ord>(
     let first_mid = *left + (*right - *left) / 3;
     let second_mid = *right - (*right - *left) / 3;
 
-    // Handling the edge case where the search narrows down to a single element
+    
     if first_mid == second_mid && first_mid == *left {
         return match &arr[*left] {
             x if x == item => true,
@@ -85,7 +85,7 @@ fn match_compare<T: Ord>(
     let cmp_second_mid = item.cmp(&arr[second_mid]);
 
     match (is_asc, cmp_first_mid, cmp_second_mid) {
-        // If the item matches either midpoint, it returns the index
+        
         (_, Ordering::Equal, _) => {
             *left = first_mid;
             return true;
@@ -94,15 +94,15 @@ fn match_compare<T: Ord>(
             *left = second_mid;
             return true;
         }
-        // If the item is smaller than the element at first_mid (in ascending order)
-        // or greater than it (in descending order), it narrows the search to the first third.
+        
+        
         (true, Ordering::Less, _) | (false, Ordering::Greater, _) => {
             *right = first_mid.saturating_sub(1)
         }
-        // If the item is greater than the element at second_mid (in ascending order)
-        // or smaller than it (in descending order), it narrows the search to the last third.
+        
+        
         (true, _, Ordering::Greater) | (false, _, Ordering::Less) => *left = second_mid + 1,
-        // Otherwise, it searches the middle third.
+        
         (_, _, _) => {
             *left = first_mid + 1;
             *right = second_mid - 1;
@@ -112,19 +112,19 @@ fn match_compare<T: Ord>(
     false
 }
 
-/// Determines if the given array is sorted in ascending order.
-///
-/// This helper function checks if the first element of the array is less than the
-/// last element, indicating an ascending order. It returns `false` if the array
-/// has fewer than two elements.
-///
-/// # Parameters
-///
-/// - `arr`: A slice of the array to check.
-///
-/// # Returns
-///
-/// A `bool` indicating whether the array is sorted in ascending order.
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn is_asc_arr<T: Ord>(arr: &[T]) -> bool {
     arr.len() > 1 && arr[0] < arr[arr.len() - 1]
 }

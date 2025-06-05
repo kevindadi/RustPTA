@@ -35,23 +35,20 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-/// 基于函数的控制流图(CFG)构建Petri网
-/// 该结构体负责将Rust MIR中的基本块(Basic Block)转换为Petri网表示
-/// 主要用于并发分析，处理锁、条件变量等同步原语
 pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    instance_id: InstanceId,              // 函数实例ID
-    instance: &'translate Instance<'tcx>, // 函数实例
-    body: &'translate Body<'tcx>,         // 函数体MIR
-    tcx: TyCtxt<'tcx>,                    // 类型上下文
+    instance_id: InstanceId,
+    instance: &'translate Instance<'tcx>,
+    body: &'translate Body<'tcx>,
+    tcx: TyCtxt<'tcx>,
     callgraph: &'translate CallGraph<'tcx>,
-    pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>, // Petri网图结构
-    alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>, // 别名分析
-    pub lockguards: LockGuardMap<'tcx>,                         // 锁Guard映射
-    function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>, // 函数节点映射
-    locks_counter: &'translate HashMap<LockGuardId, NodeIndex>, // 锁ID映射
-    bb_node_start_end: HashMap<BasicBlock, NodeIndex>,          // 基本块起始节点映射
-    bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,           // 基本块节点列表
-    condvar_id: &'translate HashMap<CondVarId, NodeIndex>,      // 条件变量ID映射
+    pub net: &'translate mut Graph<PetriNetNode, PetriNetEdge>,
+    alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>,
+    pub lockguards: LockGuardMap<'tcx>,
+    function_counter: &'translate HashMap<DefId, (NodeIndex, NodeIndex)>,
+    locks_counter: &'translate HashMap<LockGuardId, NodeIndex>,
+    bb_node_start_end: HashMap<BasicBlock, NodeIndex>,
+    bb_node_vec: HashMap<BasicBlock, Vec<NodeIndex>>,
+    condvar_id: &'translate HashMap<CondVarId, NodeIndex>,
     atomic_places: &'translate HashMap<AliasId, NodeIndex>,
     atomic_order_maps: &'translate HashMap<AliasId, AtomicOrdering>,
     pub exclude_bb: HashSet<usize>,
@@ -115,7 +112,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     fn init_basic_block(&mut self, body: &Body<'tcx>, body_name: &str) {
-        // TODO: loop循环后，线程不可join，其后代码不会执行，Petri网模型无法建模join
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
             if bb.is_cleanup || bb.is_empty_unreachable() {
                 self.exclude_bb.insert(bb_idx.index());
@@ -206,7 +202,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.handle_drop(&bb_idx, place, target, name, bb)
             }
             TerminatorKind::Unreachable => {
-                // 在Petri网中属于终止表示
                 todo!("unreachable")
             }
             _ => {}
@@ -237,7 +232,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn handle_switch(&mut self, bb_idx: BasicBlock, targets: &SwitchTargets, name: &str) {
         let mut t_num = 1u8;
         for t in targets.all_targets() {
-            // TODO: 测试 unreachable block 是否只在 switchInt 的target中
             if self.exclude_bb.contains(&t.index()) {
                 continue;
             }
@@ -265,7 +259,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .get(&self.instance.def_id())
             .unwrap()
             .1;
-        // 如果return_transition未初始化，则创建return_transition
+
         if self.return_transition.index() == 0 {
             let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "return");
             let bb_term_transition =
@@ -336,20 +330,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         lock_node: &NodeIndex,
         call_type: &CallType,
     ) {
-        // 1. 更新变迁类型
         if let Some(PetriNetNode::T(transition)) = self.net.node_weight_mut(bb_end) {
             transition.transition_type = ControlType::Call(call_type.clone());
         }
 
-        // 2. 根据不同的锁类型添加边
         match call_type {
             CallType::Lock(_) | CallType::RwLockRead(_) => {
-                // 互斥锁和读锁消耗一个token
                 self.net
                     .add_edge(*lock_node, bb_end, PetriNetEdge { label: 1u8 });
             }
             CallType::RwLockWrite(_) => {
-                // 写锁消耗全部token
                 self.net
                     .add_edge(*lock_node, bb_end, PetriNetEdge { label: 10u8 });
             }
@@ -462,7 +452,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end: NodeIndex,
         span: &str,
     ) {
-        // Scope 内部线程需等待,先创建返回变迁
         if self.return_transition.index() == 0 {
             let bb_term_name = format!("{}_{}_{}", callee_func_name, bb_idx.index(), "return");
             let bb_term_transition =
@@ -470,8 +459,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.return_transition = self.net.add_node(PetriNetNode::T(bb_term_transition));
         }
 
-        // 连接到对应的闭包
-        // eg. _5 = Scope::<'_, '_>::spawn::<{closure@src/main.rs:14:27: 14:29}, ()>(copy _2, move _6)
         if let Some(closure_arg) = args.get(1) {
             match &closure_arg.node {
                 Operand::Move(place) | Operand::Copy(place) => {
@@ -495,7 +482,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     let const_val = constant.const_;
                     match const_val {
                         Const::Unevaluated(unevaluated, _) => {
-                            // 直接从未求值的常量中获取 def_id
                             let closure_def_id = unevaluated.def;
                             self.net.add_edge(
                                 bb_end,
@@ -509,7 +495,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                             );
                         }
                         _ => {
-                            // 尝试从类型中获取
                             if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
                                 constant.ty().kind()
                             {
@@ -561,8 +546,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .add_edge(bb_wait, bb_join, PetriNetEdge { label: 1u8 });
 
         self.connect_to_target(bb_join, target);
-        // eg. _7 = rayon::join::<{closure@src/main.rs:12:9: 12:11}, {closure@src/main.rs:17:9: 17:11}, (), ()>(move _8, move _10)
-        // 遍历参数找到对应的闭包
+
         for arg in args {
             if let Operand::Move(place) | Operand::Copy(place) = &arg.node {
                 let place_ty = place.ty(self.body, self.tcx).ty;
@@ -609,35 +593,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 Operand::Constant(constant) => {
                     let const_val = constant.const_;
                     match const_val {
-                        // Const::Val(val, ty) => {
-                        //     // 首先尝试从类型中获取 def_id
-                        //     if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
-                        //         ty.kind()
-                        //     {
-                        //         self.net.add_edge(
-                        //             bb_end,
-                        //             self.function_counter.get(closure_def_id).unwrap().0,
-                        //             PetriNetEdge { label: 1u8 },
-                        //         );
-                        //     } else {
-                        //         // 如果类型中没有，尝试从值中获取
-                        //         if let ConstValue::Scalar(scalar) = val {
-                        //             let raw_id = scalar.to_u64().unwrap();
-
-                        //             if let Some(def_id) =
-                        //                 self.tcx.def_key(DefId::from_u32(raw_id as u32)).as_def_id()
-                        //             {
-                        //                 self.net.add_edge(
-                        //                     bb_end,
-                        //                     self.function_counter.get(&def_id).unwrap().0,
-                        //                     PetriNetEdge { label: 1u8 },
-                        //                 );
-                        //             }
-                        //         }
-                        //     }
-                        // }
                         Const::Unevaluated(unevaluated, _) => {
-                            // 直接从未求值的常量中获取 def_id
                             let closure_def_id = unevaluated.def;
                             self.net.add_edge(
                                 bb_end,
@@ -646,7 +602,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                             );
                         }
                         _ => {
-                            // 尝试从类型中获取
                             if let ty::Closure(closure_def_id, _) | ty::FnDef(closure_def_id, _) =
                                 constant.ty().kind()
                             {
@@ -680,13 +635,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         bb_end: NodeIndex,
     ) {
-        // 1. 获取join handle的ID
         let join_id = AliasId::new(
             self.instance_id,
             args.first().unwrap().node.place().unwrap().local,
         );
-
-        // 2. 获取spawn调用并查找匹配
 
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
             let spawn_def_id = spawn_calls
@@ -712,20 +664,18 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     None
                 });
 
-            // 3. 更新变迁类型并建立连接
             if let Some(PetriNetNode::T(transition)) = self.net.node_weight_mut(bb_end) {
                 transition.transition_type =
                     ControlType::Call(CallType::Join(callee_func_name.to_string()));
             }
 
-            // 4. 连接spawn结束到join
             self.net.add_edge(
                 self.function_counter.get(&spawn_def_id.unwrap()).unwrap().1,
                 bb_end,
                 PetriNetEdge { label: 1 },
             );
         }
-        // 5. 连接到目标基本块
+
         self.connect_to_target(bb_end, target);
     }
 
@@ -770,14 +720,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             return;
         } else {
-            // 记录闭包的隐式调用
-            // TODO: construct 网过程中不支持std,导致一些隐式调用无法连接到对应闭包,这里是一个例子
-            // eg. _7 = <std::ops::Range<i32> as Iterator>::next(copy _17) -> [return: bb5, unwind: bb26];
-            // let mut _17: &mut std::iter::Map<std::ops::Range<usize>, {closure@src/main.rs:4:30: 4:34}>;
-
-            // Rayon example
-            // _12 = {closure@src/main.rs:16:38: 16:41} { lock_clone: move _13 };
-            // _9 = <rayon::range::Iter<i32> as rayon::iter::ParallelIterator>::for_each::<{closure@src/main.rs:16:38: 16:41}>(move _10, move _12) -> [return: bb8, unwind: bb12];
             let name = self.tcx.def_path_str(callee_id);
 
             for arg in args {
@@ -833,23 +775,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                                 return;
                             }
                         }
-                        // ty::Ref(_, inner_ty, _) => match inner_ty.kind() {
-                        //     ty::Adt(adt_def, args) => {
-                        //         if let Some(closure_def_id) =
-                        //             adt_def.all_fields().find_map(|field| {
-                        //                 if let ty::Closure(closure_def_id, _)
-                        //                 | ty::FnDef(closure_def_id, _) =
-                        //                     field.ty(self.tcx, args).kind()
-                        //                 {
-                        //                     Some(closure_def_id)
-                        //                 } else {
-                        //                     None
-                        //                 }
-                        //             })
-                        //         {}
-                        //     }
-                        //     _ => {}
-                        // },
+
                         _ => {}
                     }
                 }
@@ -909,7 +835,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 continue;
             }
 
-            // 创建load操作的库所
             let atomic_load_place = Place::new_with_span(
                 format!(
                     "atomic_load_in_{:?}_{:?}",
@@ -924,7 +849,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net
                 .add_edge(bb_end, atomic_load_place_node, PetriNetEdge { label: 1 });
 
-            // 创建load操作的变迁
             if let Some(order) = self.atomic_order_maps.get(&current_id) {
                 let atomic_load_transition = Transition::new(
                     format!(
@@ -943,7 +867,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 let atomic_load_transition_node =
                     self.net.add_node(PetriNetNode::T(atomic_load_transition));
 
-                // 添加边
                 self.net.add_edge(
                     atomic_load_place_node,
                     atomic_load_transition_node,
@@ -995,7 +918,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 continue;
             }
 
-            // 创建store操作的库所
             let atomic_store_place = Place::new_with_span(
                 format!(
                     "atomic_store_in_{:?}_{:?}",
@@ -1010,7 +932,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net
                 .add_edge(bb_end, atomic_store_place_node, PetriNetEdge { label: 1 });
 
-            // 创建store操作的变迁
             if let Some(order) = self.atomic_order_maps.get(&current_id) {
                 let atomic_store_transition = Transition::new(
                     format!(
@@ -1029,7 +950,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 let atomic_store_transition_node =
                     self.net.add_node(PetriNetNode::T(atomic_store_transition));
 
-                // 添加边
                 self.net.add_edge(
                     atomic_store_place_node,
                     atomic_store_transition_node,
@@ -1084,7 +1004,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
             log::info!("atomic compare_exchange: {:?}", atomic_e.0);
 
-            // 创建compare_exchange操作的库所
             let atomic_cmpxchg_place = Place::new_with_span(
                 format!(
                     "atomic_cmpxchg_in_{:?}_{:?}",
@@ -1100,7 +1019,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net
                 .add_edge(bb_end, atomic_cmpxchg_place_node, PetriNetEdge { label: 1 });
 
-            // 创建success和failure的变迁
             if let (Some(success_order), Some(failure_order)) = (
                 self.atomic_order_maps.get(&current_id),
                 self.atomic_order_maps.get(&AliasId::new(
@@ -1127,7 +1045,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     .net
                     .add_node(PetriNetNode::T(atomic_cmpxchg_transition));
 
-                // 添加边
                 self.net.add_edge(
                     atomic_cmpxchg_place_node,
                     atomic_cmpxchg_transition_node,
@@ -1167,14 +1084,12 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        // 如果当前调用的是Condvar::notify, 则将当前BB的结束节点连接到Condvar的节点
         if self.key_api_regex.condvar_notify.is_match(callee_func_name) {
             let condvar_id = CondVarId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
             );
 
-            // 查找匹配的条件变量并建立连接
             for (id, node) in self.condvar_id.iter() {
                 match self
                     .alias
@@ -1195,8 +1110,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.connect_to_target(bb_end, target);
             true
         } else if self.key_api_regex.condvar_wait.is_match(callee_func_name) {
-            // 处理wait调用
-            // 1. 创建等待节点和变迁
             let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
             let bb_wait_place =
                 Place::new_with_span(bb_wait_name, 0, PlaceType::BasicBlock, span.to_string());
@@ -1206,13 +1119,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let bb_ret_transition = Transition::new(bb_ret_name, ControlType::Call(CallType::Wait));
             let bb_ret = self.net.add_node(PetriNetNode::T(bb_ret_transition));
 
-            // 2. 建立基本连接
             self.net
                 .add_edge(bb_end, bb_wait, PetriNetEdge { label: 1 });
             self.net
                 .add_edge(bb_wait, bb_ret, PetriNetEdge { label: 1 });
 
-            // 3. 处理条件变量连接
             let condvar_id = CondVarId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1241,7 +1152,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net
                 .add_edge(*lock_node, bb_ret, PetriNetEdge { label: 1 });
 
-            // 5. 连接到目标基本块
             self.connect_to_target(bb_ret, target);
             true
         } else {
@@ -1346,7 +1256,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         span: &str,
         unwind: &UnwindAction,
     ) {
-        // 只有continue当做return处理
         match (target, unwind) {
             (None, UnwindAction::Continue) => {
                 self.handle_unwind_continue(bb_idx, name);
@@ -1381,13 +1290,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let callee_func_name = format_name(callee_def_id);
 
         if self.net_config.enable_blocking {
-            // 1. 处理锁相关调用
             if let Some(_) = self.handle_lock_call(destination, target, bb_end) {
                 log::debug!("callee_func_name with lock: {:?}", callee_func_name);
                 return;
             }
 
-            // 2. 处理条件变量调用
             if self.handle_condvar_call(
                 &callee_func_name,
                 args,
@@ -1462,21 +1369,18 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
         }
 
-        // 3. 处理线程相关调用
         if self.handle_thread_call(&callee_func_name, args, target, bb_end, &bb_idx, span) {
             log::debug!("callee_func_name with thread: {:?}", callee_func_name);
             return;
         }
 
         if self.net_config.enable_atomic {
-            // 4. 处理原子操作调用
             if self.handle_atomic_call(&callee_func_name, args, bb_end, target, &bb_idx, span) {
                 log::debug!("callee_func_name with atomic: {:?}", callee_func_name);
                 return;
             }
         }
 
-        // 5. 处理普通函数调用
         log::debug!("callee_func_name with normal: {:?}", callee_func_name);
         if callee_func_name.contains("core::panic") {
             self.net
@@ -1505,9 +1409,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         );
 
         if !bb.is_cleanup && self.net_config.enable_blocking {
-            // bb不检测数据竞争，仅提取操作语义，若非Drop MutexGuard跳过
             let lockguard_id = LockGuardId::new(self.instance_id, place.local);
-            // local is lockguard
+
             if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
                 let lock_node = self.locks_counter.get(&lockguard_id).unwrap();
                 match &self.lockguards[&lockguard_id].lockguard_ty {
@@ -1542,7 +1445,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         );
     }
 
-    // 检查是否与unsafe数据存在别名关系
     fn has_unsafe_alias(&self, place_id: AliasId) -> (bool, NodeIndex, Option<AliasId>) {
         for (unsafe_place, node_index) in self.unsafe_places.iter() {
             match self
@@ -1564,15 +1466,12 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if let StatementKind::Assign(box (dest, rvalue)) = &statement.kind {
             let fn_name = self.tcx.def_path_str(self.instance.def_id());
 
-            // 先处理右值（读操作）
             self.process_rvalue_reads(rvalue, &fn_name, bb_idx, &span_str);
 
-            // 再处理左值（写操作）
             self.process_place_writes(dest, &fn_name, bb_idx, &span_str);
         }
     }
 
-    // 处理右值中的读操作
     fn process_rvalue_reads(
         &mut self,
         rvalue: &Rvalue<'tcx>,
@@ -1580,9 +1479,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: BasicBlock,
         span_str: &str,
     ) {
-        //let mut data_ops = Vec::new();
-        // 访问右值中的所有Place
-        // 根据不同的Rvalue类型获取所有相关的Place
         let places = match rvalue {
             Rvalue::Use(operand) => match operand {
                 Operand::Move(place) | Operand::Copy(place) => vec![place],
@@ -1611,18 +1507,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     _ => None,
                 })
                 .collect(),
-            // 其他类型的Rvalue根据需要添加
+
             _ => vec![],
         };
 
-        // 处理所有找到的Place
         for place in places {
             let place_id = AliasId::new(self.instance_id, place.local);
             let place_ty = format!("{:?}", place.ty(self.body, self.tcx));
-            // 检查是否与任何unsafe数据存在别名关系
+
             let alias_result = self.has_unsafe_alias(place_id);
             if alias_result.0 {
-                // 创建读操作
                 let transition_name =
                     format!("{}_read_{:?}_in:{}", fn_name, place_id.local, span_str);
                 let read_t = Transition::new(
@@ -1636,20 +1530,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 );
                 let unsafe_read_t = self.net.add_node(PetriNetNode::T(read_t));
 
-                // 链接bb的前一个库所
                 let bb_nodes = self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap();
                 self.net
                     .add_edge(*bb_nodes, unsafe_read_t, PetriNetEdge { label: 1 });
 
-                // 找到Unsafe的库所
-                // TODO: 是否不允许链接到 Unsafe 对应的库所?
                 let unsafe_place = alias_result.1;
                 self.net
                     .add_edge(unsafe_place, unsafe_read_t, PetriNetEdge { label: 1 });
                 self.net
                     .add_edge(unsafe_read_t, unsafe_place, PetriNetEdge { label: 1 });
 
-                // 建立库所，链接terminator
                 let place_name = format!("{}_rready", &transition_name.as_str());
                 let temp_place = Place::new_with_no_token(place_name, PlaceType::BasicBlock);
                 let temp_place_node = self.net.add_node(PetriNetNode::P(temp_place));
@@ -1668,7 +1558,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
     }
 
-    // 处理左值的写操作
     fn process_place_writes(
         &mut self,
         place: &rustc_middle::mir::Place<'tcx>,
@@ -1678,7 +1567,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     ) {
         let place_id = AliasId::new(self.instance_id, place.local);
         let place_ty = format!("{:?}", place.ty(self.body, self.tcx));
-        // 检查是否与任何unsafe数据存在别名关系
+
         let alias_result = self.has_unsafe_alias(place_id);
         if alias_result.0 {
             let transition_name = format!("{}_write_{:?}_in:{}", fn_name, place_id.local, span_str);
@@ -1693,19 +1582,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             );
             let unsafe_write_t = self.net.add_node(PetriNetNode::T(write_t));
 
-            // 链接bb的前一个库所
             let bb_nodes = self.bb_node_vec.get(&bb_idx).unwrap().last().unwrap();
             self.net
                 .add_edge(*bb_nodes, unsafe_write_t, PetriNetEdge { label: 1 });
 
-            // 找到Unsafe的库所，TODO:这里直接返回，需要优化Move和Drop的位置
             let unsafe_place = alias_result.1;
             self.net
                 .add_edge(unsafe_place, unsafe_write_t, PetriNetEdge { label: 1 });
             self.net
                 .add_edge(unsafe_write_t, unsafe_place, PetriNetEdge { label: 1 });
 
-            // 建立库所，链接terminator
             let place_name = format!("{}_wready", &transition_name.as_str());
             let temp_place = Place::new_with_no_token(place_name, PlaceType::BasicBlock);
             let temp_place_node = self.net.add_node(PetriNetNode::P(temp_place));
@@ -1730,7 +1616,6 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
 
         let fn_name = self.tcx.def_path_str(def_id);
 
-        // 跳过序列化/反序列化相关函数
         if fn_name.contains("::deserialize")
             || fn_name.contains("::serialize")
             || fn_name.contains("::visit_seq")
@@ -1740,22 +1625,15 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
             return;
         }
 
-        // 闭包中使用println！会导致promoted到一个独立MIR中
-        // fix: 若在闭包中只构建常量,则promoted块会占据一个Block导致错误
-        // eg.  let thread_id = id;   println!("id:{}", thread_id);
-        // 初始化基本块, 创建基本块的开始库所
         self.init_basic_block(body, &fn_name);
 
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
-            // 不检测cleanup的块，所有的unwind操作忽略
             if bb.is_cleanup || bb.is_empty_unreachable() {
                 continue;
             }
 
             if self.net_config.enable_unsafe {
-                // deal statement
                 for stmt in bb.statements.iter() {
-                    // 如果此基本块的Terminal是Assert, 则跳过
                     if let Some(ref term) = bb.terminator {
                         if let TerminatorKind::Assert { .. } = &term.kind {
                             break;
@@ -1769,7 +1647,6 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
                 self.handle_start_block(&fn_name, bb_idx, def_id);
             }
 
-            // 处理基本块的终止符
             if let Some(term) = &bb.terminator {
                 self.handle_terminator(term, bb_idx, &fn_name, bb);
             }

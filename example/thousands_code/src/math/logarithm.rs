@@ -1,13 +1,13 @@
 use std::f64::consts::E;
 
-/// Calculates the **log<sub>base</sub>(x)**
-///
-/// Parameters:
-///   <p>-> base: base of log
-///   <p>-> x: value for which log shall be evaluated
-///   <p>-> tol: tolerance; the precision of the approximation (submultiples of 10<sup>-1</sup>)
-///
-/// Advisable to use **std::f64::consts::*** for specific bases (like 'e')
+
+
+
+
+
+
+
+
 pub fn log<T: Into<f64>, U: Into<f64>>(base: U, x: T, tol: f64) -> f64 {
     let mut rez = 0f64;
     let mut argument: f64 = x.into();

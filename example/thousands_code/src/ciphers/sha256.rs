@@ -5,7 +5,7 @@
  * integer multiple of 8
  */
 
-// The constants are tested to make sure they are correct
+
 pub const H0: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
@@ -21,7 +21,7 @@ pub const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-// The following functions are implemented according to page 10 of RFC6234
+
 #[inline]
 fn ch(x: u32, y: u32, z: u32) -> u32 {
     (x & y) ^ ((!x) & z)
@@ -53,22 +53,22 @@ fn ssig1(x: u32) -> u32 {
 }
 
 pub struct SHA256 {
-    /// The current block to be processed, 512 bits long
+    
     buffer: [u32; 16],
-    /// Length (bits) of the message, should always be a multiple of 8
+    
     length: u64,
-    /// The current hash value. Note: this value is invalid unless `finalize`
-    /// is called
+    
+    
     pub h: [u32; 8],
-    /// Message schedule
+    
     w: [u32; 64],
     pub finalized: bool,
-    // Temporary values:
+    
     round: [u32; 8],
 }
 
 fn process_block(h: &mut [u32; 8], w: &mut [u32; 64], round: &mut [u32; 8], buf: &[u32; 16]) {
-    // Prepare the message schedule:
+    
     w[..buf.len()].copy_from_slice(&buf[..]);
     for i in buf.len()..w.len() {
         w[i] = ssig1(w[i - 2])
@@ -109,7 +109,7 @@ impl SHA256 {
             finalized: false,
         }
     }
-    /// Note: buffer should be empty before calling this!
+    
     pub fn process_block(&mut self, buf: &[u32; 16]) {
         process_block(&mut self.h, &mut self.w, &mut self.round, buf);
         self.length += 512;
@@ -156,9 +156,9 @@ impl SHA256 {
     }
 
     pub fn get_hash(&mut self) -> [u8; 32] {
-        // we should first add a `1` bit to the end of the buffer, then we will
-        // add enough 0s so that the length becomes (512k + 448). After that we
-        // will append the binary representation of length to the data
+        
+        
+        
         if !self.finalized {
             self.finalized = true;
             let clen = (self.length + 8) & 511;
@@ -211,7 +211,7 @@ pub mod tests {
     use crate::math::LinearSieve;
     use std::fmt::Write;
 
-    // Let's keep this utility function
+    
     pub fn get_hash_string(hash: &[u8; 32]) -> String {
         let mut result = String::new();
         result.reserve(64);
@@ -233,8 +233,8 @@ pub mod tests {
         for (pos, &k) in K.iter().enumerate() {
             let a: f64 = ls.primes[pos] as f64;
             let bits = a.cbrt().to_bits();
-            let exp = bits >> float_len; // The sign bit is already 0
-                                         //(exp - 1023) can be bigger than 0, we must include more bits.
+            let exp = bits >> float_len; 
+                                         
             let k_ref = ((bits & ((1_u64 << float_len) - 1))
                 >> (float_len - constant_len + 1023 - exp)) as u32;
             assert_eq!(k, k_ref);
@@ -250,9 +250,9 @@ pub mod tests {
         }
     }
 
-    // To test the hashes, you can use the following command on linux:
-    // echo -n 'STRING' | sha256sum
-    // the `-n` is because by default, echo adds a `\n` to its output
+    
+    
+    
 
     #[test]
     fn empty() {
@@ -293,7 +293,7 @@ pub mod tests {
                 0x86, 0x35, 0xFB, 0x6C
             ]
         );
-        // Test if finalization is not repeated twice
+        
         assert_eq!(
             res.get_hash(),
             [

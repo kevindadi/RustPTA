@@ -20,12 +20,10 @@ macro_rules! unrecoverable {
     );
 }
 
-/// Constructs a name for the crate that contains the given def_id.
 fn crate_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     tcx.crate_name(def_id.krate).as_str().to_string()
 }
 
-/// Extracts a function name from the DefId of a function.
 pub fn format_name(def_id: DefId) -> String {
     let tmp1 = format!("{def_id:?}");
     let tmp2: &str = tmp1.split("~ ").collect::<Vec<&str>>()[1];
@@ -63,7 +61,6 @@ pub fn def_id_as_qualified_name_str(tcx: TyCtxt<'_>, def_id: DefId) -> Rc<str> {
     Rc::from(name.as_str())
 }
 
-/// Dumps a human readable MIR redendering of the function with the given DefId to standard output.
 pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
     if !matches!(
         tcx.def_kind(def_id),
@@ -78,7 +75,6 @@ pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ApiSpec {
-    /// 单独的 API 路径列表
     pub apis: Vec<ApiEntry>,
 }
 
@@ -91,9 +87,8 @@ impl Default for ApiSpec {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum ApiEntry {
-    /// 单个 API 路径
     Single(String),
-    /// API 路径组（用于表示需要一起分析的 API）
+
     Group(Vec<String>),
 }
 
@@ -104,7 +99,6 @@ impl ApiSpec {
         Ok(spec)
     }
 
-    /// 获取所有单独的 API 路径
     pub fn get_single_apis(&self) -> Vec<String> {
         self.apis
             .iter()
@@ -115,7 +109,6 @@ impl ApiSpec {
             .collect()
     }
 
-    /// 获取所有 API 组
     pub fn get_api_groups(&self) -> Vec<Vec<String>> {
         self.apis
             .iter()
@@ -127,7 +120,6 @@ impl ApiSpec {
     }
 }
 
-// parse the api spec file
 pub(crate) fn parse_api_spec(api_spec_path: &str) -> Result<ApiSpec, Box<dyn std::error::Error>> {
     ApiSpec::parse(api_spec_path)
 }

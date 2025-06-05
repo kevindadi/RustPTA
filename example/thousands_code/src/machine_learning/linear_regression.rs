@@ -1,4 +1,4 @@
-/// Returns the parameters of the line after performing simple linear regression on the input data.
+
 pub fn linear_regression(data_points: Vec<(f64, f64)>) -> Option<(f64, f64)> {
     if data_points.is_empty() {
         return None;
@@ -22,9 +22,9 @@ pub fn linear_regression(data_points: Vec<(f64, f64)>) -> Option<(f64, f64)> {
     let std_dev_y = std_dev_sqr_y.sqrt();
     let std_dev_prod = std_dev_x * std_dev_y;
 
-    let pcc = covariance / std_dev_prod; //Pearson's correlation constant
-    let b = pcc * (std_dev_y / std_dev_x); //Slope of the line
-    let a = mean_y - b * mean_x; //Y-Intercept of the line
+    let pcc = covariance / std_dev_prod; 
+    let b = pcc * (std_dev_y / std_dev_x); 
+    let a = mean_y - b * mean_x; 
 
     Some((a, b))
 }

@@ -1,7 +1,7 @@
-// Gaussian Elimination of Quadratic Matrices
-// Takes an augmented matrix as input, returns vector of results
-// Wikipedia reference: augmented matrix: https://en.wikipedia.org/wiki/Augmented_matrix
-// Wikipedia reference: algorithm: https://en.wikipedia.org/wiki/Gaussian_elimination
+
+
+
+
 
 pub fn gaussian_elimination(matrix: &mut [Vec<f32>]) -> Vec<f32> {
     let size = matrix.len();
@@ -17,8 +17,8 @@ pub fn gaussian_elimination(matrix: &mut [Vec<f32>]) -> Vec<f32> {
         eliminate(matrix, i);
     }
 
-    // Disable cargo clippy warnings about needless range loops.
-    // Checking the diagonal like this is simpler than any alternative.
+    
+    
     #[allow(clippy::needless_range_loop)]
     for i in 0..size {
         if matrix[i][i] == 0f32 {

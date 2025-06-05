@@ -1,11 +1,11 @@
-//! The Ford-Fulkerson algorithm is a widely used algorithm to solve the maximum flow problem in a flow network.
-//!
-//! The maximum flow problem involves determining the maximum amount of flow that can be sent from a source vertex to a sink vertex
-//! in a directed weighted graph, subject to capacity constraints on the edges.
+
+
+
+
 
 use std::collections::VecDeque;
 
-/// Enum representing the possible errors that can occur when running the Ford-Fulkerson algorithm.
+
 #[derive(Debug, PartialEq)]
 pub enum FordFulkersonError {
     EmptyGraph,
@@ -14,19 +14,19 @@ pub enum FordFulkersonError {
     SinkOutOfBounds,
 }
 
-/// Performs a Breadth-First Search (BFS) on the residual graph to find an augmenting path
-/// from the source vertex `source` to the sink vertex `sink`.
-///
-/// # Arguments
-///
-/// * `graph` - A reference to the residual graph represented as an adjacency matrix.
-/// * `source` - The source vertex.
-/// * `sink` - The sink vertex.
-/// * `parent` - A mutable reference to the parent array used to store the augmenting path.
-///
-/// # Returns
-///
-/// Returns `true` if an augmenting path is found from `source` to `sink`, `false` otherwise.
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn bfs(graph: &[Vec<usize>], source: usize, sink: usize, parent: &mut [usize]) -> bool {
     let mut visited = vec![false; graph.len()];
     visited[source] = true;
@@ -51,23 +51,23 @@ fn bfs(graph: &[Vec<usize>], source: usize, sink: usize, parent: &mut [usize]) -
     false
 }
 
-/// Validates the input parameters for the Ford-Fulkerson algorithm.
-///
-/// This function checks if the provided graph, source vertex, and sink vertex
-/// meet the requirements for the Ford-Fulkerson algorithm. It ensures the graph
-/// is non-empty, square (each row has the same length as the number of rows), and
-/// that the source and sink vertices are within the valid range of vertex indices.
-///
-/// # Arguments
-///
-/// * `graph` - A reference to the flow network represented as an adjacency matrix.
-/// * `source` - The source vertex.
-/// * `sink` - The sink vertex.
-///
-/// # Returns
-///
-/// Returns `Ok(())` if the input parameters are valid, otherwise returns an appropriate
-/// `FordFulkersonError`.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn validate_ford_fulkerson_input(
     graph: &[Vec<usize>],
     source: usize,
@@ -92,18 +92,18 @@ fn validate_ford_fulkerson_input(
     Ok(())
 }
 
-/// Applies the Ford-Fulkerson algorithm to find the maximum flow in a flow network
-/// represented by a weighted directed graph.
-///
-/// # Arguments
-///
-/// * `graph` - A mutable reference to the flow network represented as an adjacency matrix.
-/// * `source` - The source vertex.
-/// * `sink` - The sink vertex.
-///
-/// # Returns
-///
-/// Returns the maximum flow and the residual graph
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn ford_fulkerson(
     graph: &[Vec<usize>],
     source: usize,

@@ -1,18 +1,18 @@
-//! This module contains the `egg_drop` function, which determines the minimum number of egg droppings
-//! required to find the highest floor from which an egg can be dropped without breaking. It also includes
-//! tests for the function using various test cases, including edge cases.
 
-/// Returns the least number of egg droppings required to determine the highest floor from which an egg will not break upon dropping.
-///
-/// # Arguments
-///
-/// * `eggs` - The number of eggs available.
-/// * `floors` - The number of floors in the building.
-///
-/// # Returns
-///
-/// * `Some(usize)` - The minimum number of drops required if the number of eggs is greater than 0.
-/// * `None` - If the number of eggs is 0.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn egg_drop(eggs: usize, floors: usize) -> Option<usize> {
     if eggs == 0 {
         return None;
@@ -22,20 +22,20 @@ pub fn egg_drop(eggs: usize, floors: usize) -> Option<usize> {
         return Some(floors);
     }
 
-    // Create a 2D vector to store solutions to subproblems
+    
     let mut egg_drops: Vec<Vec<usize>> = vec![vec![0; floors + 1]; eggs + 1];
 
-    // Base cases: 0 floors -> 0 drops, 1 floor -> 1 drop
+    
     (1..=eggs).for_each(|i| {
         egg_drops[i][1] = 1;
     });
 
-    // Base case: 1 egg -> k drops for k floors
+    
     (1..=floors).for_each(|j| {
         egg_drops[1][j] = j;
     });
 
-    // Fill the table using the optimal substructure property
+    
     (2..=eggs).for_each(|i| {
         (2..=floors).for_each(|j| {
             egg_drops[i][j] = (1..=j)

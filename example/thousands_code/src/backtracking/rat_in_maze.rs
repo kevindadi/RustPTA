@@ -1,45 +1,45 @@
-//! This module contains the implementation of the Rat in Maze problem.
-//!
-//! The Rat in Maze problem is a classic algorithmic problem where the
-//! objective is to find a path from the starting position to the exit
-//! position in a maze.
 
-/// Enum representing various errors that can occur while working with mazes.
+
+
+
+
+
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum MazeError {
-    /// Indicates that the maze is empty (zero rows).
+    
     EmptyMaze,
-    /// Indicates that the starting position is out of bounds.
+    
     OutOfBoundPos,
-    /// Indicates an improper representation of the maze (e.g., non-rectangular maze).
+    
     ImproperMazeRepr,
 }
 
-/// Finds a path through the maze starting from the specified position.
-///
-/// # Arguments
-///
-/// * `maze` - The maze represented as a vector of vectors where each
-/// inner vector represents a row in the maze grid.
-/// * `start_x` - The x-coordinate of the starting position.
-/// * `start_y` - The y-coordinate of the starting position.
-///
-/// # Returns
-///
-/// A `Result` where:
-/// - `Ok(Some(solution))` if a path is found and contains the solution matrix.
-/// - `Ok(None)` if no path is found.
-/// - `Err(MazeError)` for various error conditions such as out-of-bound start position or improper maze representation.
-///
-/// # Solution Selection
-///
-/// The function returns the first successful path it discovers based on the predefined order of moves.
-/// The order of moves is defined in the `MOVES` constant of the `Maze` struct.
-///
-/// The backtracking algorithm explores each direction in this order. If multiple solutions exist,
-/// the algorithm returns the first path it finds according to this sequence. It recursively explores
-/// each direction, marks valid moves, and backtracks if necessary, ensuring that the solution is found
-/// efficiently and consistently.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn find_path_in_maze(
     maze: &[Vec<bool>],
     start_x: usize,
@@ -49,71 +49,71 @@ pub fn find_path_in_maze(
         return Err(MazeError::EmptyMaze);
     }
 
-    // Validate start position
+    
     if start_x >= maze.len() || start_y >= maze[0].len() {
         return Err(MazeError::OutOfBoundPos);
     }
 
-    // Validate maze representation (if necessary)
+    
     if maze.iter().any(|row| row.len() != maze[0].len()) {
         return Err(MazeError::ImproperMazeRepr);
     }
 
-    // If validations pass, proceed with finding the path
+    
     let maze_instance = Maze::new(maze.to_owned());
     Ok(maze_instance.find_path(start_x, start_y))
 }
 
-/// Represents a maze.
+
 struct Maze {
     maze: Vec<Vec<bool>>,
 }
 
 impl Maze {
-    /// Represents possible moves in the maze.
+    
     const MOVES: [(isize, isize); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
 
-    /// Constructs a new Maze instance.
-    /// # Arguments
-    ///
-    /// * `maze` - The maze represented as a vector of vectors where each
-    /// inner vector represents a row in the maze grid.
-    ///
-    /// # Returns
-    ///
-    /// A new Maze instance.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn new(maze: Vec<Vec<bool>>) -> Self {
         Maze { maze }
     }
 
-    /// Returns the width of the maze.
-    ///
-    /// # Returns
-    ///
-    /// The width of the maze.
+    
+    
+    
+    
+    
     fn width(&self) -> usize {
         self.maze[0].len()
     }
 
-    /// Returns the height of the maze.
-    ///
-    /// # Returns
-    ///
-    /// The height of the maze.
+    
+    
+    
+    
+    
     fn height(&self) -> usize {
         self.maze.len()
     }
 
-    /// Finds a path through the maze starting from the specified position.
-    ///
-    /// # Arguments
-    ///
-    /// * `start_x` - The x-coordinate of the starting position.
-    /// * `start_y` - The y-coordinate of the starting position.
-    ///
-    /// # Returns
-    ///
-    /// A solution matrix if a path is found or None if not found.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn find_path(&self, start_x: usize, start_y: usize) -> Option<Vec<Vec<bool>>> {
         let mut solution = vec![vec![false; self.width()]; self.height()];
         if self.solve(start_x as isize, start_y as isize, &mut solution) {
@@ -123,17 +123,17 @@ impl Maze {
         }
     }
 
-    /// Recursively solves the Rat in Maze problem using backtracking.
-    ///
-    /// # Arguments
-    ///
-    /// * `x` - The current x-coordinate.
-    /// * `y` - The current y-coordinate.
-    /// * `solution` - The current solution matrix.
-    ///
-    /// # Returns
-    ///
-    /// A boolean indicating whether a solution was found.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn solve(&self, x: isize, y: isize, solution: &mut [Vec<bool>]) -> bool {
         if x == (self.height() as isize - 1) && y == (self.width() as isize - 1) {
             solution[x as usize][y as usize] = true;
@@ -149,24 +149,24 @@ impl Maze {
                 }
             }
 
-            // If none of the directions lead to the solution, backtrack
+            
             solution[x as usize][y as usize] = false;
             return false;
         }
         false
     }
 
-    /// Checks if a given position is valid in the maze.
-    ///
-    /// # Arguments
-    ///
-    /// * `x` - The x-coordinate of the position.
-    /// * `y` - The y-coordinate of the position.
-    /// * `solution` - The current solution matrix.
-    ///
-    /// # Returns
-    ///
-    /// A boolean indicating whether the position is valid.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn is_valid(&self, x: isize, y: isize, solution: &[Vec<bool>]) -> bool {
         x >= 0
             && y >= 0

@@ -44,8 +44,6 @@ impl fmt::Display for BuchiNode {
     }
 }
 
-///  generalized Büchi automaton (GBA) automaton.
-/// The difference with the Büchi automaton is its accepting condition, i.e., a set of sets of states.
 #[derive(Debug, Eq, PartialEq)]
 pub struct GeneralBuchi {
     pub states: Vec<String>,
@@ -111,8 +109,6 @@ impl GeneralBuchi {
     }
 }
 
-/// Büchi automaton is a type of ω-automaton, which extends
-/// a finite automaton to infinite inputs.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Buchi {
     pub states: Vec<String>,
@@ -176,7 +172,6 @@ fn extract_unitl_subf(
     }
 }
 
-/// LGBA construction from create_graph set Q result
 pub fn extract_buchi(result: Vec<Node>, f: LTLExpression) -> GeneralBuchi {
     let mut buchi = GeneralBuchi::new();
 
@@ -251,14 +246,6 @@ pub fn extract_buchi(result: Vec<Node>, f: LTLExpression) -> GeneralBuchi {
     buchi
 }
 
-/// Multiple sets of states in acceptance condition can be translated into one set of states
-/// by an automata construction, which is known as "counting construction".
-/// Let's say `A = (Q, Σ, ∆, q0, {F1,...,Fn})` is a GBA, where `F1,...,Fn` are sets of accepting states
-/// then the equivalent Büchi automaton is `A' = (Q', Σ, ∆',q'0,F')`, where
-/// * `Q' = Q × {1,...,n}`
-/// * `q'0 = ( q0,1 )`
-/// * `∆' = { ( (q,i), a, (q',j) ) | (q,a,q') ∈ ∆ and if q ∈ Fi then j=((i+1) mod n) else j=i }`
-/// * `F'=F1× {1}`
 impl From<GeneralBuchi> for Buchi {
     fn from(general_buchi: GeneralBuchi) -> Buchi {
         let mut ba = Buchi::new();
@@ -296,7 +283,7 @@ impl From<GeneralBuchi> for Buchi {
                 }
             }
         }
-        // q'0 = ( q0,1 ), here we start to count at 0
+
         let init_node = ba
             .get_node(format!("{}0", INIT_NODE_ID).as_str())
             .expect(&format!(
@@ -304,7 +291,7 @@ impl From<GeneralBuchi> for Buchi {
                 INIT_NODE_ID
             ));
         ba.init_states.push(init_node.clone());
-        // F'=F1 × {1}
+
         let f_1 = general_buchi.accepting_states.first().unwrap();
         for accepting_state in f_1.iter() {
             let node = ba
@@ -316,18 +303,6 @@ impl From<GeneralBuchi> for Buchi {
     }
 }
 
-/// Product of the program and the property
-/// Let `A1 = (S1 ,Σ1 , ∆1 ,I1 ,F1)`
-/// and  `A2 = (S2 ,Σ2 , ∆2 ,I2 ,F2 )` be two automata.
-///
-/// We define `A1 × A2` , as the quituple:
-/// `(S,Σ,∆,I,F) := (S1 × S2, Σ1 × Σ2, ∆1 × ∆2, I1 × I2, F1 × F2)`,
-///
-/// where where ∆ is a function from `S × Σ` to `P(S1) × P(S2) ⊆ P(S)`,
-///
-/// given by `∆((q1, q2), a, (q1', q2')) ∈ ∆`
-/// iff `(q1, a, q1') ∈ ∆1`
-/// and `(q2, a, q2') ∈ ∆2`
 pub fn product_automata(program: Buchi, property: Buchi) -> Buchi {
     let mut product_buchi = Buchi::new();
 
@@ -339,7 +314,6 @@ pub fn product_automata(program: Buchi, property: Buchi) -> Buchi {
         }
     }
 
-    // transition function ∆
     for bn1 in product_buchi.adj_list.clone().iter() {
         let names: Vec<&str> = bn1.id.split('_').collect();
         let q1 = program.get_node(names[0]).unwrap();
@@ -350,14 +324,11 @@ pub fn product_automata(program: Buchi, property: Buchi) -> Buchi {
             let q2 = program.get_node(names[0]).unwrap();
             let q2_prime = property.get_node(names[1]).unwrap();
 
-            // collect all labels
             let mut labels = HashSet::new();
             labels.extend(q1_prime.labels.iter());
             labels.extend(q2_prime.labels.iter());
 
             for label in labels {
-                // check if (q1, a, q1') ∈ ∆1
-                // and check if (q2, a, q2') ∈ ∆2
                 if q1
                     .adj
                     .iter()
@@ -377,7 +348,6 @@ pub fn product_automata(program: Buchi, property: Buchi) -> Buchi {
         }
     }
 
-    // F := { F1 x Q2, Q1 x F2 }
     for a in program.accepting_states.iter() {
         for adj in product_buchi.adj_list.iter() {
             let names: Vec<&str> = adj.id.split('_').collect();
@@ -396,7 +366,6 @@ pub fn product_automata(program: Buchi, property: Buchi) -> Buchi {
         }
     }
 
-    // I := I1 x I2
     if let Some(node) = product_buchi.get_node("INIT_INIT0") {
         product_buchi.init_states = vec![node];
     } else if let Some(node) = product_buchi.get_node("INIT_INIT") {

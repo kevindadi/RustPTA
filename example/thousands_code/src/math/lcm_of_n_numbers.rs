@@ -1,4 +1,4 @@
-// returns the least common multiple of n numbers
+
 
 pub fn lcm(nums: &[usize]) -> usize {
     if nums.len() == 1 {

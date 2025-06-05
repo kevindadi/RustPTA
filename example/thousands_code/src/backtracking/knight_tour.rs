@@ -1,22 +1,22 @@
-//! This module contains the implementation of the Knight's Tour problem.
-//!
-//! The Knight's Tour is a classic chess problem where the objective is to move a knight to every square on a chessboard exactly once.
 
-/// Finds the Knight's Tour starting from the specified position.
-///
-/// # Arguments
-///
-/// * `size_x` - The width of the chessboard.
-/// * `size_y` - The height of the chessboard.
-/// * `start_x` - The x-coordinate of the starting position.
-/// * `start_y` - The y-coordinate of the starting position.
-///
-/// # Returns
-///
-/// A tour matrix if the tour was found or None if not found.
-/// The tour matrix returned is essentially the board field of the `KnightTour`
-/// struct `Vec<Vec<usize>>`. It represents the sequence of moves made by the
-/// knight on the chessboard, with each cell containing the order in which the knight visited that square.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn find_knight_tour(
     size_x: usize,
     size_y: usize,
@@ -27,13 +27,13 @@ pub fn find_knight_tour(
     tour.find_tour(start_x, start_y)
 }
 
-/// Represents the KnightTour struct which implements the Knight's Tour problem.
+
 struct KnightTour {
     board: Vec<Vec<usize>>,
 }
 
 impl KnightTour {
-    /// Possible moves of the knight on the board
+    
     const MOVES: [(isize, isize); 8] = [
         (2, 1),
         (1, 2),
@@ -45,40 +45,40 @@ impl KnightTour {
         (2, -1),
     ];
 
-    /// Constructs a new KnightTour instance with the given board size.
-    /// # Arguments
-    ///
-    /// * `size_x` - The width of the chessboard.
-    /// * `size_y` - The height of the chessboard.
-    ///
-    /// # Returns
-    ///
-    /// A new KnightTour instance.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn new(size_x: usize, size_y: usize) -> Self {
         let board = vec![vec![0; size_x]; size_y];
         KnightTour { board }
     }
 
-    /// Returns the width of the chessboard.
+    
     fn size_x(&self) -> usize {
         self.board.len()
     }
 
-    /// Returns the height of the chessboard.
+    
     fn size_y(&self) -> usize {
         self.board[0].len()
     }
 
-    /// Checks if the given position is safe to move to.
-    ///
-    /// # Arguments
-    ///
-    /// * `x` - The x-coordinate of the position.
-    /// * `y` - The y-coordinate of the position.
-    ///
-    /// # Returns
-    ///
-    /// A boolean indicating whether the position is safe to move to.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn is_safe(&self, x: isize, y: isize) -> bool {
         x >= 0
             && y >= 0
@@ -87,17 +87,17 @@ impl KnightTour {
             && self.board[x as usize][y as usize] == 0
     }
 
-    /// Recursively solves the Knight's Tour problem.
-    ///
-    /// # Arguments
-    ///
-    /// * `x` - The current x-coordinate of the knight.
-    /// * `y` - The current y-coordinate of the knight.
-    /// * `move_count` - The current move count.
-    ///
-    /// # Returns
-    ///
-    /// A boolean indicating whether a solution was found.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn solve_tour(&mut self, x: isize, y: isize, move_count: usize) -> bool {
         if move_count == self.size_x() * self.size_y() {
             return true;
@@ -112,7 +112,7 @@ impl KnightTour {
                 if self.solve_tour(next_x, next_y, move_count + 1) {
                     return true;
                 }
-                // Backtrack
+                
                 self.board[next_x as usize][next_y as usize] = 0;
             }
         }
@@ -120,16 +120,16 @@ impl KnightTour {
         false
     }
 
-    /// Finds the Knight's Tour starting from the specified position.
-    ///
-    /// # Arguments
-    ///
-    /// * `start_x` - The x-coordinate of the starting position.
-    /// * `start_y` - The y-coordinate of the starting position.
-    ///
-    /// # Returns
-    ///
-    /// A tour matrix if the tour was found or None if not found.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn find_tour(&mut self, start_x: usize, start_y: usize) -> Option<Vec<Vec<usize>>> {
         if !self.is_safe(start_x as isize, start_y as isize) {
             return None;

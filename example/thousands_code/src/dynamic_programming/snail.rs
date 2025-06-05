@@ -1,9 +1,9 @@
-/// ## Spiral Sorting
-///
-/// Given an n x m array, return the array elements arranged from outermost elements
-/// to the middle element, traveling INWARD FROM TOP-LEFT, CLOCKWISE.
+
+
+
+
 pub fn snail<T: Copy>(matrix: &[Vec<T>]) -> Vec<T> {
-    // break on empty matrix
+    
     if matrix.is_empty() || matrix[0].is_empty() {
         return vec![];
     }
@@ -11,14 +11,14 @@ pub fn snail<T: Copy>(matrix: &[Vec<T>]) -> Vec<T> {
     let col_count = matrix[0].len();
     let row_count = matrix.len();
 
-    // Initial maximum/minimum indices
+    
     let mut max_col = col_count - 1;
     let mut min_col = 0;
     let mut max_row = row_count - 1;
     let mut min_row = 0;
 
-    // Initial direction is Right because
-    // we start from the top-left corner of the matrix at indices [0][0]
+    
+    
     let mut dir = Direction::Right;
     let mut row = 0;
     let mut col = 0;

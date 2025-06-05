@@ -3,11 +3,11 @@ use std::sync;
 fn std_mutex() {
     let mu1 = sync::Mutex::new(1);
     match *mu1.lock().ok().unwrap() {
-        //79 _4
+        
         1 => {}
         _ => {
             *mu1.lock().unwrap() += 1;
-        } // 79 _10
+        } 
     };
 }
 
@@ -17,7 +17,7 @@ fn std_rwlock() -> i32 {
     println!("first read ");
     match *rw1.read().unwrap() {
         1 => {
-            // *rw1.write().unwrap() += 1;
+            
             a = *rw1.read().unwrap();
             println!("second read ");
         }

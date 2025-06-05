@@ -1,5 +1,5 @@
 pub fn interpolation_search<Ordering>(nums: &[i32], item: &i32) -> Result<usize, usize> {
-    // early check
+    
     if nums.is_empty() {
         return Err(0);
     }

@@ -1,25 +1,25 @@
 use std::cmp::Ordering;
 
-/// Recursively performs a binary search for a specified item within a sorted array.
-///
-/// This function can handle both ascending and descending ordered arrays. It
-/// takes a reference to the item to search for and a slice of the array. If
-/// the item is found, it returns the index of the item within the array. If
-/// the item is not found, it returns `None`.
-///
-/// # Parameters
-///
-/// - `item`: A reference to the item to search for.
-/// - `arr`: A slice of the sorted array in which to search.
-/// - `left`: The left bound of the current search range.
-/// - `right`: The right bound of the current search range.
-/// - `is_asc`: A boolean indicating whether the array is sorted in ascending order.
-///
-/// # Returns
-///
-/// An `Option<usize>` which is:
-/// - `Some(index)` if the item is found at the given index.
-/// - `None` if the item is not found in the array.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn binary_search_rec<T: Ord>(item: &T, arr: &[T], left: usize, right: usize) -> Option<usize> {
     if left >= right {
         return None;

@@ -1,23 +1,23 @@
 use std::collections::HashSet;
 
-/// Represents possible errors that can occur when checking for lipograms.
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum LipogramError {
-    /// Indicates that a non-alphabetic character was found in the input.
+    
     NonAlphabeticCharacter,
-    /// Indicates that a missing character is not in lowercase.
+    
     NonLowercaseMissingChar,
 }
 
-/// Computes the set of missing alphabetic characters from the input string.
-///
-/// # Arguments
-///
-/// * `in_str` - A string slice that contains the input text.
-///
-/// # Returns
-///
-/// Returns a `HashSet<char>` containing the lowercase alphabetic characters that are not present in `in_str`.
+
+
+
+
+
+
+
+
+
 fn compute_missing(in_str: &str) -> HashSet<char> {
     let alphabet: HashSet<char> = ('a'..='z').collect();
 
@@ -30,17 +30,17 @@ fn compute_missing(in_str: &str) -> HashSet<char> {
     alphabet.difference(&letters_used).cloned().collect()
 }
 
-/// Checks if the provided string is a lipogram, meaning it is missing specific characters.
-///
-/// # Arguments
-///
-/// * `lipogram_str` - A string slice that contains the text to be checked for being a lipogram.
-/// * `missing_chars` - A reference to a `HashSet<char>` containing the expected missing characters.
-///
-/// # Returns
-///
-/// Returns `Ok(true)` if the string is a lipogram that matches the provided missing characters,
-/// `Ok(false)` if it does not match, or a `LipogramError` if the input contains invalid characters.
+
+
+
+
+
+
+
+
+
+
+
 pub fn is_lipogram(
     lipogram_str: &str,
     missing_chars: &HashSet<char>,

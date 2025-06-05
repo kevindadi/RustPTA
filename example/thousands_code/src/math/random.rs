@@ -1,6 +1,6 @@
 /*
 Permuted Congruential Generator
-https://en.wikipedia.org/wiki/Permuted_congruential_generator
+https:
 
 Note that this is _NOT_ intended for serious applications. Use this generator
 at your own risk and only use your own values instead of the default ones if
@@ -20,9 +20,9 @@ pub struct IterMut<'a> {
 }
 
 impl PCG32 {
-    /// `stream` should be less than 1 << 63
+    
     pub fn new(seed: u64, multiplier: u64, stream: u64) -> Self {
-        // We should make sure that increment is odd
+        
         let increment = (stream << 1) | 1;
         let mut pcg = PCG32 {
             state: seed.wrapping_add(increment),
@@ -51,8 +51,8 @@ impl PCG32 {
             .wrapping_add(self.increment);
     }
     #[inline]
-    /// Advance the PCG by `delta` steps in O(lg(`delta`)) time. By passing
-    /// a negative i64 as u64, it can go back too.
+    
+    
     pub fn advance(&mut self, mut delta: u64) {
         let mut acc_mult = 1u64;
         let mut acc_incr = 0u64;
@@ -120,13 +120,13 @@ mod tests {
 
     #[test]
     fn no_birthday() {
-        // If the distribution is not almost uniform, the probability of
-        // birthday paradox increases. For n=2^32 and k=1e5, the probability
-        // of not having a collision is about (1 - (k+1)/n) ^ (k/2) which is
-        // 0.3121 for this (n, k).
-        // So this test is a (dumb) test for distribution, and for speed. This
-        // is only basic sanity checking, as the actual algorithm was
-        // rigorously tested by others before.
+        
+        
+        
+        
+        
+        
+        
         let numbers = 1e5 as usize;
         let mut pcg = PCG32::new_default(314159);
         let mut pcg2 = PCG32::new_default(314159);

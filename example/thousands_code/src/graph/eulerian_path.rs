@@ -1,19 +1,19 @@
-//! This module provides functionality to find an Eulerian path in a directed graph.
-//! An Eulerian path visits every edge exactly once. The algorithm checks if an Eulerian
-//! path exists and, if so, constructs and returns the path.
+
+
+
 
 use std::collections::LinkedList;
 
-/// Finds an Eulerian path in a directed graph.
-///
-/// # Arguments
-///
-/// * `node_count` - The number of nodes in the graph.
-/// * `edge_list` - A vector of tuples representing directed edges, where each tuple is of the form `(start, end)`.
-///
-/// # Returns
-///
-/// An `Option<Vec<usize>>` containing the Eulerian path if it exists; otherwise, `None`.
+
+
+
+
+
+
+
+
+
+
 pub fn find_eulerian_path(node_count: usize, edge_list: Vec<(usize, usize)>) -> Option<Vec<usize>> {
     let mut adjacency_list = vec![Vec::new(); node_count];
     for (start, end) in edge_list {
@@ -24,7 +24,7 @@ pub fn find_eulerian_path(node_count: usize, edge_list: Vec<(usize, usize)>) -> 
     eulerian_solver.find_path()
 }
 
-/// Struct to represent the solver for finding an Eulerian path in a directed graph.
+
 pub struct EulerianPathSolver {
     node_count: usize,
     edge_count: usize,
@@ -35,15 +35,15 @@ pub struct EulerianPathSolver {
 }
 
 impl EulerianPathSolver {
-    /// Creates a new instance of `EulerianPathSolver`.
-    ///
-    /// # Arguments
-    ///
-    /// * `adjacency_list` - The graph represented as an adjacency list.
-    ///
-    /// # Returns
-    ///
-    /// A new instance of `EulerianPathSolver`.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn new(adjacency_list: Vec<Vec<usize>>) -> Self {
         Self {
             node_count: adjacency_list.len(),
@@ -55,13 +55,13 @@ impl EulerianPathSolver {
         }
     }
 
-    /// Find the Eulerian path if it exists.
-    ///
-    /// # Returns
-    ///
-    /// An `Option<Vec<usize>>` containing the Eulerian path if found; otherwise, `None`.
-    ///
-    /// If multiple Eulerian paths exist, the one found will be returned, but it may not be unique.
+    
+    
+    
+    
+    
+    
+    
     fn find_path(&mut self) -> Option<Vec<usize>> {
         self.initialize_degrees();
 
@@ -84,7 +84,7 @@ impl EulerianPathSolver {
         Some(path)
     }
 
-    /// Initializes in-degrees and out-degrees for each node and counts total edges.
+    
     fn initialize_degrees(&mut self) {
         for (start_node, neighbors) in self.adjacency_list.iter().enumerate() {
             for &end_node in neighbors {
@@ -95,11 +95,11 @@ impl EulerianPathSolver {
         }
     }
 
-    /// Checks if an Eulerian path exists in the graph.
-    ///
-    /// # Returns
-    ///
-    /// `true` if an Eulerian path exists; otherwise, `false`.
+    
+    
+    
+    
+    
     fn has_eulerian_path(&self) -> bool {
         if self.edge_count == 0 {
             return false;
@@ -120,11 +120,11 @@ impl EulerianPathSolver {
         (start_nodes == 0 && end_nodes == 0) || (start_nodes == 1 && end_nodes == 1)
     }
 
-    /// Finds the starting node for the Eulerian path.
-    ///
-    /// # Returns
-    ///
-    /// The index of the starting node.
+    
+    
+    
+    
+    
     fn get_start_node(&self) -> usize {
         for i in 0..self.node_count {
             if self.out_degrees[i] > self.in_degrees[i] {
@@ -136,11 +136,11 @@ impl EulerianPathSolver {
             .unwrap_or(0)
     }
 
-    /// Performs depth-first search to construct the Eulerian path.
-    ///
-    /// # Arguments
-    ///
-    /// * `curr_node` - The current node being visited in the DFS traversal.
+    
+    
+    
+    
+    
     fn depth_first_search(&mut self, curr_node: usize) {
         while self.out_degrees[curr_node] > 0 {
             let next_node = self.adjacency_list[curr_node][self.out_degrees[curr_node] - 1];

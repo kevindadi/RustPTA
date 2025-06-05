@@ -1,21 +1,21 @@
-//! This module implements Kruskal's algorithm to find the Minimum Spanning Tree (MST)
-//! of an undirected, weighted graph using a Disjoint Set Union (DSU) for cycle detection.
+
+
 
 use crate::graph::DisjointSetUnion;
 
-/// Represents an edge in the graph with a source, destination, and associated cost.
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Edge {
-    /// The starting vertex of the edge.
+    
     source: usize,
-    /// The ending vertex of the edge.
+    
     destination: usize,
-    /// The cost associated with the edge.
+    
     cost: usize,
 }
 
 impl Edge {
-    /// Creates a new edge with the specified source, destination, and cost.
+    
     pub fn new(source: usize, destination: usize, cost: usize) -> Self {
         Self {
             source,
@@ -25,31 +25,31 @@ impl Edge {
     }
 }
 
-/// Executes Kruskal's algorithm to compute the Minimum Spanning Tree (MST) of a graph.
-///
-/// # Parameters
-///
-/// - `edges`: A vector of `Edge` instances representing all edges in the graph.
-/// - `num_vertices`: The total number of vertices in the graph.
-///
-/// # Returns
-///
-/// An `Option` containing a tuple with:
-///
-/// - The total cost of the MST (usize).
-/// - A vector of edges that are included in the MST.
-///
-/// Returns `None` if the graph is disconnected.
-///
-/// # Complexity
-///
-/// The time complexity is O(E log E), where E is the number of edges.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn kruskal(mut edges: Vec<Edge>, num_vertices: usize) -> Option<(usize, Vec<Edge>)> {
     let mut dsu = DisjointSetUnion::new(num_vertices);
     let mut mst_cost: usize = 0;
     let mut mst_edges: Vec<Edge> = Vec::with_capacity(num_vertices - 1);
 
-    // Sort edges by cost in ascending order
+    
     edges.sort_unstable_by_key(|edge| edge.cost);
 
     for edge in edges {
@@ -57,14 +57,14 @@ pub fn kruskal(mut edges: Vec<Edge>, num_vertices: usize) -> Option<(usize, Vec<
             break;
         }
 
-        // Attempt to merge the sets containing the edge’s vertices
+        
         if dsu.merge(edge.source, edge.destination) != usize::MAX {
             mst_cost += edge.cost;
             mst_edges.push(edge);
         }
     }
 
-    // Return MST if it includes exactly num_vertices - 1 edges, otherwise None for disconnected graphs
+    
     (mst_edges.len() == num_vertices - 1).then_some((mst_cost, mst_edges))
 }
 

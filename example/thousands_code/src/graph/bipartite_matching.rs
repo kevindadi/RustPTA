@@ -1,4 +1,4 @@
-// Adjacency List
+
 use std::collections::VecDeque;
 type Graph = Vec<Vec<usize>>;
 
@@ -6,7 +6,7 @@ pub struct BipartiteMatching {
     pub adj: Graph,
     pub num_vertices_grp1: usize,
     pub num_vertices_grp2: usize,
-    // mt1[i] = v is the matching of i in grp1 to v in grp2
+    
     pub mt1: Vec<i32>,
     pub mt2: Vec<i32>,
     pub used: Vec<bool>,
@@ -23,7 +23,7 @@ impl BipartiteMatching {
         }
     }
     #[inline]
-    // Add an directed edge u->v in the graph
+    
     pub fn add_edge(&mut self, u: usize, v: usize) {
         self.adj[u].push(v);
     }
@@ -42,7 +42,7 @@ impl BipartiteMatching {
         }
         false
     }
-    // Note: It does not modify self.mt1, it only works on self.mt2
+    
     pub fn kuhn(&mut self) {
         self.mt2 = vec![-1; self.num_vertices_grp2 + 1];
         for v in 1..self.num_vertices_grp1 + 1 {
@@ -67,12 +67,12 @@ impl BipartiteMatching {
             .take(self.num_vertices_grp1)
         {
             if self.mt1[u] == 0 {
-                // u is not matched
+                
                 *d_i = 0;
                 q.push_back(u);
             } else {
-                // else set the vertex distance as infinite because it is matched
-                // this will be considered the next time
+                
+                
 
                 *d_i = i32::MAX;
             }
@@ -109,7 +109,7 @@ impl BipartiteMatching {
         false
     }
     pub fn hopcroft_karp(&mut self) -> i32 {
-        // NOTE: how to use: https://cses.fi/paste/7558dba8d00436a847eab8/
+        
         self.mt2 = vec![0; self.num_vertices_grp2 + 1];
         self.mt1 = vec![0; self.num_vertices_grp1 + 1];
         let mut dist = vec![i32::MAX; self.num_vertices_grp1 + 1];
@@ -121,7 +121,7 @@ impl BipartiteMatching {
                 }
             }
         }
-        // for x in self.mt2 change x to -1 if it is 0
+        
         for x in self.mt2.iter_mut() {
             if *x == 0 {
                 *x = -1;
@@ -143,11 +143,11 @@ mod tests {
         let n1 = 6;
         let n2 = 6;
         let mut g = BipartiteMatching::new(n1, n2);
-        // vertex 1 in grp1 to vertex 1 in grp 2
-        // denote the ith grp2 vertex as n1+i
+        
+        
         g.add_edge(1, 2);
         g.add_edge(1, 3);
-        // 2 is not connected to any vertex
+        
         g.add_edge(3, 4);
         g.add_edge(3, 1);
         g.add_edge(4, 3);
@@ -159,11 +159,11 @@ mod tests {
         let answer: Vec<i32> = vec![-1, 2, -1, 1, 3, 4, 6];
         for i in 1..g.mt2.len() {
             if g.mt2[i] == -1 {
-                // 5 in group2 has no pair
+                
                 assert_eq!(i, 5);
                 continue;
             }
-            // 2 in group1 has no pair
+            
             assert!(g.mt2[i] != 2);
             assert_eq!(i as i32, answer[g.mt2[i] as usize]);
         }
@@ -173,11 +173,11 @@ mod tests {
         let n1 = 6;
         let n2 = 6;
         let mut g = BipartiteMatching::new(n1, n2);
-        // vertex 1 in grp1 to vertex 1 in grp 2
-        // denote the ith grp2 vertex as n1+i
+        
+        
         g.add_edge(1, 2);
         g.add_edge(1, 3);
-        // 2 is not connected to any vertex
+        
         g.add_edge(3, 4);
         g.add_edge(3, 1);
         g.add_edge(4, 3);
@@ -190,11 +190,11 @@ mod tests {
         let answer: Vec<i32> = vec![-1, 2, -1, 1, 3, 4, 6];
         for i in 1..g.mt2.len() {
             if g.mt2[i] == -1 {
-                // 5 in group2 has no pair
+                
                 assert_eq!(i, 5);
                 continue;
             }
-            // 2 in group1 has no pair
+            
             assert!(g.mt2[i] != 2);
             assert_eq!(i as i32, answer[g.mt2[i] as usize]);
         }

@@ -1,14 +1,14 @@
-/// Performs a linear search on the given array, returning the index of the first occurrence of the item.
-///
-/// # Arguments
-///
-/// * `item` - A reference to the item to search for in the array.
-/// * `arr` - A slice of items to search within.
-///
-/// # Returns
-///
-/// * `Some(usize)` - The index of the first occurrence of the item, if found.
-/// * `None` - If the item is not found in the array.
+
+
+
+
+
+
+
+
+
+
+
 pub fn linear_search<T: Ord>(item: &T, arr: &[T]) -> Option<usize> {
     for (i, data) in arr.iter().enumerate() {
         if item == data {

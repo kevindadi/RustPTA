@@ -5,7 +5,7 @@ pub fn patience_sort<T: Ord + Copy>(arr: &mut [T]) {
         return;
     }
 
-    // collect piles from arr
+    
     let mut piles: Vec<Vec<T>> = Vec::new();
     for &card in arr.iter() {
         let mut left = 0usize;
@@ -27,7 +27,7 @@ pub fn patience_sort<T: Ord + Copy>(arr: &mut [T]) {
         }
     }
 
-    // merge the piles
+    
     let mut idx = 0usize;
     while let Some((min_id, pile)) = piles
         .iter()

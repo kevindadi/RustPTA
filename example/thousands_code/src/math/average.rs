@@ -4,7 +4,7 @@ The arithmetic mean is found by adding the numbers and dividing the sum by the n
 This is what is most often meant by an average. The median is the middle value in a list ordered from smallest to largest.
 The mode is the most frequently occurring value on the list.
 
-Reference: https://www.britannica.com/science/mean-median-and-mode
+Reference: https:
 
 This program approximates the mean, median and mode of a finite sequence.
 Note: Floats sequences are not allowed for `mode` function.
@@ -18,10 +18,10 @@ fn sum<T: Num + Copy>(sequence: Vec<T>) -> T {
     sequence.iter().fold(T::zero(), |acc, x| acc + *x)
 }
 
-/// # Argument
-///
-/// * `sequence` - A vector of numbers.
-/// Returns mean of `sequence`.
+
+
+
+
 pub fn mean<T: Num + Copy + num_traits::FromPrimitive>(sequence: Vec<T>) -> Option<T> {
     let len = sequence.len();
     if len == 0 {
@@ -34,10 +34,10 @@ fn mean_of_two<T: Num + Copy>(a: T, b: T) -> T {
     (a + b) / (T::one() + T::one())
 }
 
-/// # Argument
-///
-/// * `sequence` - A vector of numbers.
-/// Returns median of `sequence`.
+
+
+
+
 
 pub fn median<T: Num + Copy + PartialOrd>(mut sequence: Vec<T>) -> Option<T> {
     if sequence.is_empty() {
@@ -60,10 +60,10 @@ fn histogram<T: Eq + std::hash::Hash>(sequence: Vec<T>) -> HashMap<T, usize> {
     })
 }
 
-/// # Argument
-///
-/// * `sequence` - The input vector.
-/// Returns mode of `sequence`.
+
+
+
+
 pub fn mode<T: Eq + std::hash::Hash>(sequence: Vec<T>) -> Option<HashSet<T>> {
     if sequence.is_empty() {
         return None;

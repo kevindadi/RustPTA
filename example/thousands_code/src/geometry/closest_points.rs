@@ -13,8 +13,8 @@ fn f64_cmp(a: &f64, b: &f64) -> Ordering {
     a.partial_cmp(b).unwrap()
 }
 
-/// returns the two closest points
-/// or None if there are zero or one point
+
+
 pub fn closest_points(points: &[Point]) -> Option<(Point, Point)> {
     let mut points_x: Vec<Point> = points.to_vec();
     points_x.sort_by(cmp_x);
@@ -24,8 +24,8 @@ pub fn closest_points(points: &[Point]) -> Option<(Point, Point)> {
     closest_points_aux(&points_x, points_y, 0, points_x.len())
 }
 
-// We maintain two vectors with the same points, one sort by x coordinates and one sorted by y
-// coordinates.
+
+
 fn closest_points_aux(
     points_x: &[Point],
     points_y: Vec<Point>,
@@ -39,7 +39,7 @@ fn closest_points_aux(
     }
 
     if n <= 3 {
-        // bruteforce
+        
         let mut min = points_x[0].euclidean_distance(&points_x[1]);
         let mut pair = (points_x[0].clone(), points_x[1].clone());
 
@@ -58,8 +58,8 @@ fn closest_points_aux(
     let mid = start + (end - start) / 2;
     let mid_x = points_x[mid].x;
 
-    // Separate points into y_left and y_right vectors based on their x-coordinate. Since y is
-    // already sorted by y_axis, y_left and y_right will also be sorted.
+    
+    
     let mut y_left = vec![];
     let mut y_right = vec![];
     for point in &points_y {

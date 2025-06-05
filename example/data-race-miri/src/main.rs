@@ -1,4 +1,4 @@
-//@compile-flags: -Zmiri-disable-weak-memory-emulation -Zmiri-preemption-rate=0
+
 
 use std::sync::atomic::*;
 use std::thread::{self, spawn};
@@ -17,19 +17,19 @@ fn test_fence_sync() {
     let evil_ptr = EvilSend(ptr);
 
     let j1 = spawn(move || {
-        let evil_ptr = evil_ptr; // avoid field capturing
+        let evil_ptr = evil_ptr; 
         unsafe { *evil_ptr.0 = 1 };
         fence(Ordering::Release);
         SYNC.store(1, Ordering::Relaxed)
     });
 
     let j2 = spawn(move || {
-        let evil_ptr = evil_ptr; // avoid field capturing
+        let evil_ptr = evil_ptr; 
         if SYNC.load(Ordering::Relaxed) == 1 {
             fence(Ordering::Acquire);
             unsafe { *evil_ptr.0 }
         } else {
-            panic!(); // relies on thread 2 going last
+            panic!(); 
         }
     });
 
@@ -65,19 +65,19 @@ pub fn test_rmw_no_block() {
 
     unsafe {
         let j1 = spawn(move || {
-            let c = c; // avoid field capturing
+            let c = c; 
             *c.0 = 1;
             SYNC.store(1, Ordering::Release);
         });
 
         let j2 = spawn(move || {
             if SYNC.swap(2, Ordering::Relaxed) == 1 {
-                //No op, blocking store removed
+                
             }
         });
 
         let j3 = spawn(move || {
-            let c = c; // avoid field capturing
+            let c = c; 
             if SYNC.load(Ordering::Acquire) == 2 {
                 *c.0
             } else {
@@ -88,7 +88,7 @@ pub fn test_rmw_no_block() {
         j1.join().unwrap();
         j2.join().unwrap();
         let v = j3.join().unwrap();
-        assert!(v == 1 || v == 2); // relies on thread 3 going last
+        assert!(v == 1 || v == 2); 
     }
 }
 
@@ -101,13 +101,13 @@ pub fn test_simple_release() {
 
     unsafe {
         let j1 = spawn(move || {
-            let c = c; // avoid field capturing
+            let c = c; 
             *c.0 = 1;
             SYNC.store(1, Ordering::Release);
         });
 
         let j2 = spawn(move || {
-            let c = c; // avoid field capturing
+            let c = c; 
             if SYNC.load(Ordering::Acquire) == 1 {
                 *c.0
             } else {
@@ -116,15 +116,15 @@ pub fn test_simple_release() {
         });
 
         j1.join().unwrap();
-        assert_eq!(j2.join().unwrap(), 1); // relies on thread 2 going last
+        assert_eq!(j2.join().unwrap(), 1); 
     }
 }
 
 fn test_local_variable_lazy_write() {
     static P: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 
-    // Create the local variable, and initialize it.
-    // This write happens before the thread is spanwed, so there is no data race.
+    
+    
     let mut val: u8 = 0;
 
     let t1 = std::thread::spawn(|| {
@@ -132,26 +132,26 @@ fn test_local_variable_lazy_write() {
             std::hint::spin_loop();
         }
         unsafe {
-            // Initialize `*P`.
+            
             let ptr = P.load(Ordering::Relaxed);
             *ptr = 127;
         }
     });
 
-    // Actually generate memory for the local variable.
-    // This is the time its value is actually written to memory:
-    // that's *after* the thread above was spawned!
-    // This may hence look like a data race wrt the access in the thread above.
+    
+    
+    
+    
     P.store(std::ptr::addr_of_mut!(val), Ordering::Relaxed);
 
-    // Wait for the thread to be done.
+    
     t1.join().unwrap();
 
-    // Read initialized value.
+    
     assert_eq!(val, 127);
 }
 
-// This test coverse the case where the non-atomic access come first.
+
 fn test_read_read_race1() {
     let a = AtomicU16::new(0);
 
@@ -168,7 +168,7 @@ fn test_read_read_race1() {
     });
 }
 
-// This test coverse the case where the atomic access come first.
+
 fn test_read_read_race2() {
     let a = AtomicU16::new(0);
 
@@ -194,7 +194,7 @@ fn mixed_size_read_read() {
     let a16 = &a;
     let a8 = convert(a16);
 
-    // Just two different-sized atomic reads without any writes are fine.
+    
     thread::scope(|s| {
         s.spawn(|| {
             a16.load(Ordering::SeqCst);
@@ -209,13 +209,13 @@ fn failing_rmw_is_read() {
     let a = AtomicUsize::new(0);
     thread::scope(|s| {
         s.spawn(|| unsafe {
-            // Non-atomic read.
+            
             let _val = *(&a as *const AtomicUsize).cast::<usize>();
         });
 
         s.spawn(|| {
-            // RMW that will fail.
-            // This is not considered a write, so there is no data race here.
+            
+            
             a.compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst)
                 .unwrap_err();
         });

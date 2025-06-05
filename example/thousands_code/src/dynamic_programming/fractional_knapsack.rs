@@ -1,27 +1,27 @@
 pub fn fractional_knapsack(mut capacity: f64, weights: Vec<f64>, values: Vec<f64>) -> f64 {
-    // vector of tuple of weights and their value/weight ratio
+    
     let mut weights: Vec<(f64, f64)> = weights
         .iter()
         .zip(values.iter())
         .map(|(&w, &v)| (w, v / w))
         .collect();
 
-    // sort in decreasing order by value/weight ratio
+    
     weights.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).expect("Encountered NaN"));
     dbg!(&weights);
 
-    // value to compute
+    
     let mut knapsack_value: f64 = 0.0;
 
-    // iterate through our vector.
+    
     for w in weights {
-        // w.0 is weight and w.1 value/weight ratio
+        
         if w.0 < capacity {
-            capacity -= w.0; // our sack is filling
+            capacity -= w.0; 
             knapsack_value += w.0 * w.1;
             dbg!(&w.0, &knapsack_value);
         } else {
-            // Multiply with capacity and not w.0
+            
             dbg!(&w.0, &knapsack_value);
             knapsack_value += capacity * w.1;
             break;
@@ -90,7 +90,7 @@ mod tests {
     #[should_panic]
     fn test_nan() {
         let capacity = 36.0;
-        // 2nd element is NaN
+        
         let values = vec![25.0, f64::NAN, 25.0, 6.0, 2.0];
         let weights = vec![10.0, 10.0, 10.0, 4.0, 2.0];
         assert_eq!(fractional_knapsack(capacity, weights, values), 83.0);

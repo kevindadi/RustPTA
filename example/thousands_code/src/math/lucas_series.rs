@@ -1,7 +1,7 @@
-// Author : cyrixninja
-// Lucas Series : Function to get the Nth Lucas Number
-// Wikipedia Reference  :  https://en.wikipedia.org/wiki/Lucas_number
-// Other References     :  https://the-algorithms.com/algorithm/lucas-series?lang=python
+
+
+
+
 
 pub fn recursive_lucas_number(n: u32) -> u32 {
     match n {

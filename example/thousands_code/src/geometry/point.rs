@@ -11,7 +11,7 @@ impl Point {
         Point { x, y }
     }
 
-    // Returns the orientation of consecutive segments ab and bc.
+    
     pub fn consecutive_orientation(&self, b: &Point, c: &Point) -> f64 {
         let p1 = b - self;
         let p2 = c - self;

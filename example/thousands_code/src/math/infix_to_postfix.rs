@@ -4,12 +4,12 @@ pub enum InfixToPostfixError {
     UnmatchedParent,
 }
 
-/// Function to convert [infix expression](https://en.wikipedia.org/wiki/Infix_notation) to [postfix expression](https://en.wikipedia.org/wiki/Reverse_Polish_notation)
+
 pub fn infix_to_postfix(infix: &str) -> Result<String, InfixToPostfixError> {
     let mut postfix = String::new();
     let mut stack: Vec<char> = Vec::new();
 
-    // Define the precedence of operators
+    
     let precedence = |op: char| -> u8 {
         match op {
             '+' | '-' => 1,

@@ -1,50 +1,50 @@
-//! # Adam (Adaptive Moment Estimation) optimizer
-//!
-//! The `Adam (Adaptive Moment Estimation)` optimizer is an adaptive learning rate algorithm used
-//! in gradient descent and machine learning, such as for training neural networks to solve deep
-//! learning problems. Boasting memory-efficient fast convergence rates, it sets and iteratively
-//! updates learning rates individually for each model parameter based on the gradient history.
-//!
-//! ## Algorithm:
-//!
-//! Given:
-//!   - α is the learning rate
-//!   - (β_1, β_2) are the exponential decay rates for moment estimates
-//!   - ϵ is any small value to prevent division by zero
-//!   - g_t are the gradients at time step t
-//!   - m_t are the biased first moment estimates of the gradient at time step t
-//!   - v_t are the biased second raw moment estimates of the gradient at time step t
-//!   - θ_t are the model parameters at time step t
-//!   - t is the time step
-//!
-//! Required:
-//!   θ_0
-//!
-//! Initialize:
-//!   m_0 <- 0
-//!   v_0 <- 0
-//!   t <- 0
-//!
-//! while θ_t not converged do
-//!   m_t = β_1 * m_{t−1} + (1 − β_1) * g_t
-//!   v_t = β_2 * v_{t−1} + (1 − β_2) * g_t^2
-//!   m_hat_t = m_t / 1 - β_1^t
-//!   v_hat_t = v_t / 1 - β_2^t
-//!   θ_t = θ_{t-1} − α * m_hat_t / (sqrt(v_hat_t) + ϵ)
-//!
-//! ## Resources:
-//!   - Adam: A Method for Stochastic Optimization (by Diederik P. Kingma and Jimmy Ba):
-//!       - [https://arxiv.org/abs/1412.6980]
-//!   - PyTorch Adam optimizer:
-//!       - [https://pytorch.org/docs/stable/generated/torch.optim.Adam.html#torch.optim.Adam]
-//!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub struct Adam {
-    learning_rate: f64, // alpha: initial step size for iterative optimization
-    betas: (f64, f64),  // betas: exponential decay rates for moment estimates
-    epsilon: f64,       // epsilon: prevent division by zero
-    m: Vec<f64>,        // m: biased first moment estimate of the gradient vector
-    v: Vec<f64>,        // v: biased second raw moment estimate of the gradient vector
-    t: usize,           // t: time step
+    learning_rate: f64, 
+    betas: (f64, f64),  
+    epsilon: f64,       
+    m: Vec<f64>,        
+    v: Vec<f64>,        
+    t: usize,           
 }
 
 impl Adam {
@@ -55,12 +55,12 @@ impl Adam {
         params_len: usize,
     ) -> Self {
         Adam {
-            learning_rate: learning_rate.unwrap_or(1e-3), // typical good default lr
-            betas: betas.unwrap_or((0.9, 0.999)),         // typical good default decay rates
-            epsilon: epsilon.unwrap_or(1e-8),             // typical good default epsilon
-            m: vec![0.0; params_len], // first moment vector elements all initialized to zero
-            v: vec![0.0; params_len], // second moment vector elements all initialized to zero
-            t: 0,                     // time step initialized to zero
+            learning_rate: learning_rate.unwrap_or(1e-3), 
+            betas: betas.unwrap_or((0.9, 0.999)),         
+            epsilon: epsilon.unwrap_or(1e-8),             
+            m: vec![0.0; params_len], 
+            v: vec![0.0; params_len], 
+            t: 0,                     
         }
     }
 
@@ -69,18 +69,18 @@ impl Adam {
         self.t += 1;
 
         for i in 0..gradients.len() {
-            // update biased first moment estimate and second raw moment estimate
+            
             self.m[i] = self.betas.0 * self.m[i] + (1.0 - self.betas.0) * gradients[i];
             self.v[i] = self.betas.1 * self.v[i] + (1.0 - self.betas.1) * gradients[i].powf(2f64);
 
-            // compute bias-corrected first moment estimate and second raw moment estimate
+            
             let m_hat = self.m[i] / (1.0 - self.betas.0.powi(self.t as i32));
             let v_hat = self.v[i] / (1.0 - self.betas.1.powi(self.t as i32));
 
-            // update model parameters
+            
             model_params[i] -= self.learning_rate * m_hat / (v_hat.sqrt() + self.epsilon);
         }
-        model_params // return updated model parameters
+        model_params 
     }
 }
 

@@ -1,12 +1,12 @@
-/// Error type for Hamming distance calculation.
+
 #[derive(Debug, PartialEq)]
 pub enum HammingDistanceError {
     InputStringsHaveDifferentLength,
 }
 
-/// Calculates the Hamming distance between two strings.
-///
-/// The Hamming distance is defined as the number of positions at which the corresponding characters of the two strings are different.
+
+
+
 pub fn hamming_distance(string_a: &str, string_b: &str) -> Result<usize, HammingDistanceError> {
     if string_a.len() != string_b.len() {
         return Err(HammingDistanceError::InputStringsHaveDifferentLength);

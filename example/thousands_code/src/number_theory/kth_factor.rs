@@ -1,5 +1,5 @@
-// Kth Factor of N
-// The idea is to check for each number in the range [N, 1], and print the Kth number that divides N completely.
+
+
 
 pub fn kth_factor(n: i32, k: i32) -> i32 {
     let mut factors: Vec<i32> = Vec::new();

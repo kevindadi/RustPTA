@@ -1,16 +1,16 @@
-//! This module provides functions for solving the rod-cutting problem using dynamic programming.
+
 use std::cmp::max;
 
-/// Calculates the maximum possible profit from cutting a rod into pieces of varying lengths.
-///
-/// Returns the maximum profit achievable by cutting a rod into pieces such that the profit from each
-/// piece is determined by its length and predefined prices.
-///
-/// # Complexity
-/// - Time complexity: `O(n^2)`
-/// - Space complexity: `O(n)`
-///
-/// where `n` is the number of different rod lengths considered.
+
+
+
+
+
+
+
+
+
+
 pub fn rod_cut(prices: &[usize]) -> usize {
     if prices.is_empty() {
         return 0;

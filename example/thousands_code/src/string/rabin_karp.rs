@@ -1,18 +1,18 @@
-//! This module implements the Rabin-Karp string searching algorithm.
-//! It uses a rolling hash technique to find all occurrences of a pattern
-//! within a target string efficiently.
+
+
+
 
 const MOD: usize = 101;
 const RADIX: usize = 256;
 
-/// Finds all starting indices where the `pattern` appears in the `text`.
-///
-/// # Arguments
-/// * `text` - The string where the search is performed.
-/// * `pattern` - The substring pattern to search for.
-///
-/// # Returns
-/// A vector of starting indices where the pattern is found.
+
+
+
+
+
+
+
+
 pub fn rabin_karp(text: &str, pattern: &str) -> Vec<usize> {
     if text.is_empty() || pattern.is_empty() || pattern.len() > text.len() {
         return vec![];
@@ -21,7 +21,7 @@ pub fn rabin_karp(text: &str, pattern: &str) -> Vec<usize> {
     let pat_hash = compute_hash(pattern);
     let mut radix_pow = 1;
 
-    // Compute RADIX^(n-1) % MOD
+    
     for _ in 0..pattern.len() - 1 {
         radix_pow = (radix_pow * RADIX) % MOD;
     }
@@ -41,13 +41,13 @@ pub fn rabin_karp(text: &str, pattern: &str) -> Vec<usize> {
     result
 }
 
-/// Calculates the hash of a string using the Rabin-Karp formula.
-///
-/// # Arguments
-/// * `s` - The string to calculate the hash for.
-///
-/// # Returns
-/// The hash value of the string modulo `MOD`.
+
+
+
+
+
+
+
 fn compute_hash(s: &str) -> usize {
     let mut hash_val = 0;
     for &byte in s.as_bytes().iter() {
@@ -56,17 +56,17 @@ fn compute_hash(s: &str) -> usize {
     hash_val
 }
 
-/// Updates the rolling hash when shifting the search window.
-///
-/// # Arguments
-/// * `s` - The full text where the search is performed.
-/// * `old_idx` - The index of the character that is leaving the window.
-/// * `new_idx` - The index of the new character entering the window.
-/// * `old_hash` - The hash of the previous substring.
-/// * `radix_pow` - The precomputed value of RADIX^(n-1) % MOD.
-///
-/// # Returns
-/// The updated hash for the new substring.
+
+
+
+
+
+
+
+
+
+
+
 fn update_hash(
     s: &str,
     old_idx: usize,

@@ -1,4 +1,3 @@
-//! Find atomic functions and classify them into read, write, read-write.
 extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_middle;
@@ -142,11 +141,10 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
     }
 
     pub fn analyze(&mut self) -> AtomicVarMap {
-        // 遍历callgraph中的所有函数
         for node_ref in self.callgraph.graph.node_references() {
             if let CallGraphNode::WithBody(instance) = node_ref.weight() {
                 let def_id = instance.def_id();
-                // 只分析当前crate的函数
+
                 if def_id.is_local() && format_name(def_id).starts_with(&self.crate_name) {
                     if self.tcx.is_mir_available(def_id) {
                         let body = self.tcx.optimized_mir(def_id);
@@ -159,7 +157,6 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
     }
 
     fn collect_atomic_vars(&mut self, instance: &Instance<'tcx>, body: &Body<'tcx>) {
-        // 收集atomic类型的局部变量
         for (local, local_decl) in body.local_decls.iter_enumerated() {
             let ty = local_decl.ty;
             if self.is_atomic_type(ty) && !ty.to_string().contains("Ordering") {
@@ -179,7 +176,6 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
             }
         }
 
-        // 遍历MIR收集操作
         let mut visitor = AtomicVisitor {
             instance: *instance,
             instance_id: self.callgraph.instance_to_index(instance).unwrap(),
@@ -243,7 +239,6 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
             if let TyKind::FnDef(def_id, _) = func_ty.kind() {
                 let fn_name = self.tcx.def_path_str(*def_id);
 
-                // 先判断是否是atomic操作
                 let api = if fn_name.contains("::load") {
                     Some(AtomicApi::Read)
                 } else if fn_name.contains("::store") {
@@ -263,7 +258,7 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
 
                 if let Some(api) = api {
                     log::debug!("Found atomic operation: {:?} in {}", api, fn_name);
-                    // 获取atomic变量
+
                     if let Some(arg) = args.get(0) {
                         if let Operand::Move(first_place) | Operand::Copy(first_place) = &arg.node {
                             let var_name = format!(
@@ -275,10 +270,6 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
 
                             log::debug!("Processing atomic variable: {}", var_name.clone());
 
-                            // 获取ordering参数
-                            // 对于load, ordering参数在第二个位置
-                            // 对于store, ordering参数在第三个位置
-                            // 对于read-write, ordering参数在最后一个位置
                             let ordering_idx = match api {
                                 AtomicApi::Read => 1,
                                 AtomicApi::Write => 2,
@@ -322,7 +313,6 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
                                         let local_decl =
                                             &self.body.local_decls[ordering_place.local];
 
-                                        // 获取枚举变体的判别值
                                         let mut ordering = AtomicOrdering::SeqCst;
                                         if let ty::TyKind::Adt(adt_def, _) = local_decl.ty.kind() {
                                             if adt_def.is_enum() {

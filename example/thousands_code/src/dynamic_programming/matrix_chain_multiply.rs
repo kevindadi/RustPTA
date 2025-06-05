@@ -1,37 +1,37 @@
-//! This module implements a dynamic programming solution to find the minimum
-//! number of multiplications needed to multiply a chain of matrices with given dimensions.
-//!
-//! The algorithm uses a dynamic programming approach with tabulation to calculate the minimum
-//! number of multiplications required for matrix chain multiplication.
-//!
-//! # Time Complexity
-//!
-//! The algorithm runs in O(n^3) time complexity and O(n^2) space complexity, where n is the
-//! number of matrices.
 
-/// Custom error types for matrix chain multiplication
+
+
+
+
+
+
+
+
+
+
+
 #[derive(Debug, PartialEq)]
 pub enum MatrixChainMultiplicationError {
     EmptyDimensions,
     InsufficientDimensions,
 }
 
-/// Calculates the minimum number of scalar multiplications required to multiply a chain
-/// of matrices with given dimensions.
-///
-/// # Arguments
-///
-/// * `dimensions`: A vector where each element represents the dimensions of consecutive matrices
-///   in the chain. For example, [1, 2, 3, 4] represents matrices of dimensions (1x2), (2x3), and (3x4).
-///
-/// # Returns
-///
-/// The minimum number of scalar multiplications needed to compute the product of the matrices
-/// in the optimal order.
-///
-/// # Errors
-///
-/// Returns an error if the input is invalid (i.e., empty or length less than 2).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn matrix_chain_multiply(
     dimensions: Vec<usize>,
 ) -> Result<usize, MatrixChainMultiplicationError> {

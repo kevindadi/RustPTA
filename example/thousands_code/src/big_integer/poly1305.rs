@@ -18,7 +18,7 @@ pub struct Poly1305 {
     p: BigUint,
     r: BigUint,
     s: BigUint,
-    /// The accumulator
+    
     pub acc: BigUint,
 }
 
@@ -31,7 +31,7 @@ impl Default for Poly1305 {
 impl Poly1305 {
     pub fn new() -> Self {
         Poly1305 {
-            p: hex_uint!("3fffffffffffffffffffffffffffffffb"), // 2^130 - 5
+            p: hex_uint!("3fffffffffffffffffffffffffffffffb"), 
             r: Zero::zero(),
             s: Zero::zero(),
             acc: Zero::zero(),
@@ -45,9 +45,9 @@ impl Poly1305 {
         self.s = BigUint::from_bytes_le(&key[16..]);
         self.clamp_r();
     }
-    /// process a 16-byte-long message block. If message is not long enough,
-    /// fill the `msg` array with zeros, but set `msg_bytes` to the original
-    /// chunk length in bytes. See `basic_tv1` for example usage.
+    
+    
+    
     pub fn add_msg(&mut self, msg: &[u8; 16], msg_bytes: u64) {
         let mut n = BigUint::from_bytes_le(msg);
         n.set_bit(msg_bytes * 8, true);
@@ -55,7 +55,7 @@ impl Poly1305 {
         self.acc *= &self.r;
         self.acc %= &self.p;
     }
-    /// The result is guaranteed to be 16 bytes long
+    
     pub fn get_tag(&self) -> Vec<u8> {
         let result = &self.acc + &self.s;
         let mut bytes = result.to_bytes_le();

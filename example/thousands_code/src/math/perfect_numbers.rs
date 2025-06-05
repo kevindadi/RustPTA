@@ -13,7 +13,7 @@ pub fn is_perfect_number(num: usize) -> bool {
 pub fn perfect_numbers(max: usize) -> Vec<usize> {
     let mut result: Vec<usize> = Vec::new();
 
-    // It is not known if there are any odd perfect numbers, so we go around all the numbers.
+    
     for i in 1..max + 1 {
         if is_perfect_number(i) {
             result.push(i);

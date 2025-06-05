@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-// We assume that graph vertices are numbered from 1 to n.
 
-/// Adjacency matrix
+
+
 type Graph = Vec<Vec<usize>>;
 
-/// We assume that T::default() gives "zero" flow and T supports negative values
+
 pub struct FlowEdge<T> {
     pub sink: usize,
     pub capacity: T,
@@ -32,25 +32,25 @@ impl<T: Clone + Copy + Add + AddAssign + Sub<Output = T> + SubAssign + Ord + Neg
 }
 
 pub struct DinicMaxFlow<T> {
-    /// BFS Level of each vertex. starts from 1
+    
     level: Vec<usize>,
 
-    /// The index of the last visited edge connected to each vertex
+    
     pub last_edge: Vec<usize>,
 
-    /// Holds wether the solution has already been calculated
+    
     network_solved: bool,
 
     pub source: usize,
     pub sink: usize,
 
-    /// Number of edges added to the residual network
+    
     pub num_edges: usize,
     pub num_vertices: usize,
 
     pub adj: Graph,
 
-    /// The list of flow edges
+    
     pub edges: Vec<FlowEdge<T>>,
 }
 
@@ -73,9 +73,9 @@ impl<T: Clone + Copy + Add + AddAssign + Sub<Output = T> + SubAssign + Neg + Ord
     #[inline]
     pub fn add_edge(&mut self, source: usize, sink: usize, capacity: T) {
         self.edges.push(FlowEdge::new(sink, capacity));
-        // Add the reverse edge with zero capacity
+        
         self.edges.push(FlowEdge::new(source, T::default()));
-        // We inserted the m'th edge from source to sink
+        
         self.adj[source].push(self.num_edges);
         self.adj[sink].push(self.num_edges + 1);
         self.num_edges += 2;
@@ -104,7 +104,7 @@ impl<T: Clone + Copy + Add + AddAssign + Sub<Output = T> + SubAssign + Neg + Ord
     }
 
     fn dfs(&mut self, v: usize, pushed: T) -> T {
-        // We have pushed nothing, or we are at the sink
+        
         if v == self.sink {
             return pushed;
         }
@@ -137,8 +137,8 @@ impl<T: Clone + Copy + Add + AddAssign + Sub<Output = T> + SubAssign + Neg + Ord
         loop {
             self.level.fill(0);
             self.level[self.source] = 1;
-            // There is no longer a path from source to sink in the residual
-            // network
+            
+            
             if !self.bfs() {
                 break;
             }
@@ -160,8 +160,8 @@ impl<T: Clone + Copy + Add + AddAssign + Sub<Output = T> + SubAssign + Neg + Ord
         for v in 1..self.adj.len() {
             for &e_ind in self.adj[v].iter() {
                 let e = &self.edges[e_ind];
-                // Make sure that reverse edges from residual network are not
-                // included
+                
+                
                 if e.flow > T::default() {
                     result.push(FlowResultEdge {
                         source: v,

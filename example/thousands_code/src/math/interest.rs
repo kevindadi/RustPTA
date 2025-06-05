@@ -1,7 +1,7 @@
-// value of e
+
 use std::f64::consts::E;
 
-// function to calculate simple interest
+
 pub fn simple_interest(principal: f64, annual_rate: f64, years: f64) -> (f64, f64) {
     let interest = principal * annual_rate * years;
     let value = principal * (1.0 + (annual_rate * years));
@@ -12,15 +12,15 @@ pub fn simple_interest(principal: f64, annual_rate: f64, years: f64) -> (f64, f6
     (interest, value)
 }
 
-// function to calculate compound interest compounded over periods or continuously
+
 pub fn compound_interest(principal: f64, annual_rate: f64, years: f64, period: Option<f64>) -> f64 {
-    // checks if the period is None type, if so calculates continuous compounding interest
+    
     let value = if period.is_none() {
         principal * E.powf(annual_rate * years)
     } else {
-        // unwraps the option type or defaults to 0 if None type and assigns it to prim_period
+        
         let prim_period: f64 = period.unwrap_or(0.0);
-        // checks if the period is less than or equal to zero
+        
         if prim_period <= 0.0_f64 {
             return f64::NAN;
         }

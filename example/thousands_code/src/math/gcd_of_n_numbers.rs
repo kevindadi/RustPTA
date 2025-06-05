@@ -1,4 +1,4 @@
-/// returns the greatest common divisor of n numbers
+
 pub fn gcd(nums: &[usize]) -> usize {
     if nums.len() == 1 {
         return nums[0];

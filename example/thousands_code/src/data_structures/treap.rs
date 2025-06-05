@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// An internal node of an `Treap`.
+
 struct TreapNode<T: Ord> {
     value: T,
     priority: usize,
@@ -14,17 +14,17 @@ struct TreapNode<T: Ord> {
     right: Option<Box<TreapNode<T>>>,
 }
 
-/// A set based on a Treap (Randomized Binary Search Tree).
-///
-/// A Treap is a self-balancing binary search tree. It matains a priority value for each node, such
-/// that for every node, its children will have lower priority than itself. So, by just looking at
-/// the priority, it is like a heap, and this is where the name, Treap, comes from, Tree + Heap.
+
+
+
+
+
 pub struct Treap<T: Ord> {
     root: Option<Box<TreapNode<T>>>,
     length: usize,
 }
 
-/// Refers to the left or right subtree of a `Treap`.
+
 #[derive(Clone, Copy)]
 enum Side {
     Left,
@@ -39,7 +39,7 @@ impl<T: Ord> Treap<T> {
         }
     }
 
-    /// Returns `true` if the tree contains a value.
+    
     pub fn contains(&self, value: &T) -> bool {
         let mut current = &self.root;
         while let Some(node) = current {
@@ -52,9 +52,9 @@ impl<T: Ord> Treap<T> {
         false
     }
 
-    /// Adds a value to the tree
-    ///
-    /// Returns `true` if the tree did not yet contain the value.
+    
+    
+    
     pub fn insert(&mut self, value: T) -> bool {
         let inserted = insert(&mut self.root, value);
         if inserted {
@@ -63,9 +63,9 @@ impl<T: Ord> Treap<T> {
         inserted
     }
 
-    /// Removes a value from the tree.
-    ///
-    /// Returns `true` if the tree contained the value.
+    
+    
+    
     pub fn remove(&mut self, value: &T) -> bool {
         let removed = remove(&mut self.root, value);
         if removed {
@@ -74,20 +74,20 @@ impl<T: Ord> Treap<T> {
         removed
     }
 
-    /// Returns the number of values in the tree.
+    
     pub fn len(&self) -> usize {
         self.length
     }
 
-    /// Returns `true` if the tree contains no values.
+    
     pub fn is_empty(&self) -> bool {
         self.length == 0
     }
 
-    /// Returns an iterator that visits the nodes in the tree in order.
+    
     fn node_iter(&self) -> NodeIter<T> {
         let mut node_iter = NodeIter { stack: Vec::new() };
-        // Initialize stack with path to leftmost child
+        
         let mut child = &self.root;
         while let Some(node) = child {
             node_iter.stack.push(node.as_ref());
@@ -96,7 +96,7 @@ impl<T: Ord> Treap<T> {
         node_iter
     }
 
-    /// Returns an iterator that visits the values in the tree in ascending order.
+    
     pub fn iter(&self) -> Iter<T> {
         Iter {
             node_iter: self.node_iter(),
@@ -104,7 +104,7 @@ impl<T: Ord> Treap<T> {
     }
 }
 
-/// Generating random number, should use rand::Rng if possible.
+
 fn rand() -> usize {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -112,7 +112,7 @@ fn rand() -> usize {
         .subsec_nanos() as usize
 }
 
-/// Recursive helper function for `Treap` insertion.
+
 fn insert<T: Ord>(tree: &mut Option<Box<TreapNode<T>>>, value: T) -> bool {
     if let Some(node) = tree {
         let inserted = match value.cmp(&node.value) {
@@ -135,7 +135,7 @@ fn insert<T: Ord>(tree: &mut Option<Box<TreapNode<T>>>, value: T) -> bool {
     }
 }
 
-/// Recursive helper function for `Treap` deletion
+
 fn remove<T: Ord>(tree: &mut Option<Box<TreapNode<T>>>, value: &T) -> bool {
     if let Some(node) = tree {
         let removed = match value.cmp(&node.value) {
@@ -170,7 +170,7 @@ fn remove<T: Ord>(tree: &mut Option<Box<TreapNode<T>>>, value: &T) -> bool {
 }
 
 impl<T: Ord> TreapNode<T> {
-    /// Returns a reference to the left or right child.
+    
     fn child(&self, side: Side) -> &Option<Box<TreapNode<T>>> {
         match side {
             Side::Left => &self.left,
@@ -178,7 +178,7 @@ impl<T: Ord> TreapNode<T> {
         }
     }
 
-    /// Returns a mutable reference to the left or right child.
+    
     fn child_mut(&mut self, side: Side) -> &mut Option<Box<TreapNode<T>>> {
         match side {
             Side::Left => &mut self.left,
@@ -186,12 +186,12 @@ impl<T: Ord> TreapNode<T> {
         }
     }
 
-    /// Returns the priority of the left or right subtree.
+    
     fn priority(&self, side: Side) -> usize {
         self.child(side).as_ref().map_or(0, |n| n.priority)
     }
 
-    /// Performs a left or right rotation
+    
     fn rotate(&mut self, side: Side) {
         if self.child_mut(!side).is_none() {
             return;
@@ -199,13 +199,13 @@ impl<T: Ord> TreapNode<T> {
 
         let mut subtree = self.child_mut(!side).take().unwrap();
         *self.child_mut(!side) = subtree.child_mut(side).take();
-        // Swap root and child nodes in memory
+        
         mem::swap(self, subtree.as_mut());
-        // Set old root (subtree) as child of new root (self)
+        
         *self.child_mut(side) = Some(subtree);
     }
 
-    /// Performs left or right tree rotations to balance this node.
+    
     fn rebalance(&mut self) {
         match (
             self.priority,
@@ -251,9 +251,9 @@ impl<T: Ord> FromIterator<T> for Treap<T> {
     }
 }
 
-/// An iterator over the nodes of an `Treap`.
-///
-/// This struct is created by the `node_iter` method of `Treap`.
+
+
+
 struct NodeIter<'a, T: Ord> {
     stack: Vec<&'a TreapNode<T>>,
 }
@@ -263,7 +263,7 @@ impl<'a, T: Ord> Iterator for NodeIter<'a, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(node) = self.stack.pop() {
-            // Push left path of right subtree to stack
+            
             let mut child = &node.right;
             while let Some(subtree) = child {
                 self.stack.push(subtree.as_ref());
@@ -276,9 +276,9 @@ impl<'a, T: Ord> Iterator for NodeIter<'a, T> {
     }
 }
 
-/// An iterator over the items of an `Treap`.
-///
-/// This struct is created by the `iter` method of `Treap`.
+
+
+
 pub struct Iter<'a, T: Ord> {
     node_iter: NodeIter<'a, T>,
 }
@@ -298,7 +298,7 @@ impl<'a, T: Ord> Iterator for Iter<'a, T> {
 mod tests {
     use super::Treap;
 
-    /// Returns `true` if all nodes in the tree are valid.
+    
     fn is_valid<T: Ord>(tree: &Treap<T>) -> bool {
         tree.node_iter().all(|n| n.is_valid())
     }
@@ -319,18 +319,18 @@ mod tests {
     #[test]
     fn insert() {
         let mut tree = Treap::new();
-        // First insert succeeds
+        
         assert!(tree.insert(1));
-        // Second insert fails
+        
         assert!(!tree.insert(1));
     }
 
     #[test]
     fn remove() {
         let mut tree: Treap<_> = (1..8).collect();
-        // First remove succeeds
+        
         assert!(tree.remove(&4));
-        // Second remove fails
+        
         assert!(!tree.remove(&4));
     }
 

@@ -14,16 +14,13 @@ use crate::memory::pointsto::AliasId;
 
 use serde_json::json;
 
-/// 标识 channel 的类型
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelType {
-    /// 无界 channel
     Mpsc,
-    /// 有界 channel
-    Sync(usize), // 包含缓冲区信息->对应库所容量
+
+    Sync(usize),
 }
 
-/// Channel 端点的类型
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EndpointType {
     Sender,
@@ -41,18 +38,6 @@ impl<'tcx> ChannelId {
         Self { instance_id, local }
     }
 
-    // pub fn with_projection(
-    //     instance_id: InstanceId,
-    //     local: Local,
-    //     projection: Vec<PlaceElem<'tcx>>,
-    // ) -> Self {
-    //     Self {
-    //         instance_id,
-    //         local,
-    //         projection,
-    //     }
-    // }
-
     pub fn get_alias_id(&self) -> AliasId {
         AliasId::new(self.instance_id, self.local)
     }
@@ -60,16 +45,14 @@ impl<'tcx> ChannelId {
 
 #[derive(Debug)]
 pub enum ChannelResult<'tcx> {
-    // 单个channel端点
     Single(ChannelType, EndpointType, ty::Ty<'tcx>),
-    // 成对的sender和receiver
+
     Pair(
         (ChannelType, EndpointType, ty::Ty<'tcx>),
         (ChannelType, EndpointType, ty::Ty<'tcx>),
     ),
 }
 
-/// Channel 的详细信息
 #[derive(Debug, Clone)]
 pub struct ChannelInfo<'tcx> {
     pub instance: DefId,
@@ -100,7 +83,6 @@ impl<'tcx> ChannelInfo<'tcx> {
 pub type ChannelMap<'tcx> = FxHashMap<ChannelId, ChannelInfo<'tcx>>;
 pub type ChannelTuple<'tcx> = FxHashMap<ChannelId, (ChannelInfo<'tcx>, ChannelInfo<'tcx>)>;
 
-/// Channel 信息收集器
 pub struct ChannelCollector<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     callgraph: &'a CallGraph<'tcx>,
@@ -121,7 +103,6 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
     }
 
     pub fn analyze(&mut self) {
-        // 遍历callgraph中的所有函数
         for node_ref in self.callgraph.graph.node_references() {
             if let CallGraphNode::WithBody(instance) = node_ref.weight() {
                 let body = self.tcx.instance_mir(instance.def);
@@ -158,7 +139,6 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
                         self.channels.insert(channel_id, channel_info);
                     }
                     ChannelResult::Pair(sender_info, receiver_info) => {
-                        // 创建sender的channel信息
                         let channle_id = ChannelId::new(instance_id, local);
                         let sender_channel_info = ChannelInfo::new(
                             instance.def_id(),
@@ -176,7 +156,6 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
                             local_decl.source_info.span,
                         );
 
-                        // 保存配对信息
                         self.channel_tuples
                             .insert(channle_id, (sender_channel_info, receiver_channel_info));
                     }
@@ -213,7 +192,7 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
                     None
                 }
             }
-            // 处理元组类型，用于 mpsc::channel() 的返回值
+
             TyKind::Tuple(types) => {
                 if types.len() == 2 {
                     let sender_ty = types[0];
@@ -247,7 +226,6 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
         }
     }
 
-    /// 将收集到的 channel 信息格式化输出为 JSON 格式
     #[allow(dead_code)]
     pub fn to_json_pretty(&self) -> Result<(), serde_json::Error> {
         if self.channels.is_empty() {
@@ -320,7 +298,6 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
         Ok(())
     }
 
-    /// 打印收集到的channel信息
     pub fn print_debug_info(&self) {
         if self.channels.is_empty() && self.channel_tuples.is_empty() {
             log::debug!("No channels found in crate: {}", self.crate_name);
@@ -329,7 +306,6 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
 
         log::debug!("Channel analysis results for crate: {}", self.crate_name);
 
-        // 打印单独的channel信息
         if !self.channels.is_empty() {
             log::debug!("Individual channels:");
             for (channel_id, info) in self.channels.iter() {
@@ -343,7 +319,6 @@ impl<'a, 'tcx> ChannelCollector<'a, 'tcx> {
             }
         }
 
-        // 打印配对的channel信息
         if !self.channel_tuples.is_empty() {
             log::debug!("Channel pairs:");
             for (sender_id, (sender_info, receiver_info)) in self.channel_tuples.iter() {

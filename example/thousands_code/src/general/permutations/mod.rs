@@ -17,7 +17,7 @@ mod tests {
             return;
         }
         let n = original.len();
-        assert_eq!((1..=n).product::<usize>(), permutations.len()); // n!
+        assert_eq!((1..=n).product::<usize>(), permutations.len()); 
         for permut in permutations {
             assert_valid_permutation(original, permut);
         }
@@ -33,9 +33,9 @@ mod tests {
             let count = indices.get_mut(permut_value).unwrap_or_else(|| {
                 panic!("Value {permut_value} appears too many times in permutation")
             });
-            *count -= 1; // use this value
+            *count -= 1; 
             if *count == 0 {
-                indices.remove(permut_value); // so that we can simply check every value has been removed properly
+                indices.remove(permut_value); 
             }
         }
         assert!(indices.is_empty())
@@ -75,14 +75,14 @@ mod tests {
         assert_valid_permutation(&[1, 2, 3], &[1, 2, 2]);
     }
 
-    /// A Data Structure for testing permutations
-    /// Holds a Vec<i32> with just a few items, so that it's not too long to compute permutations
+    
+    
     #[derive(Debug, Clone)]
     pub struct NotTooBigVec {
-        pub(crate) inner: Vec<i32>, // opaque type alias so that we can implement Arbitrary
+        pub(crate) inner: Vec<i32>, 
     }
 
-    const MAX_SIZE: usize = 8; // 8! ~= 40k permutations already
+    const MAX_SIZE: usize = 8; 
     impl Arbitrary for NotTooBigVec {
         fn arbitrary(g: &mut Gen) -> Self {
             let size = usize::arbitrary(g) % MAX_SIZE;

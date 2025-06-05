@@ -1,22 +1,22 @@
-//! This module provides a function to find the length of the longest common substring
-//! between two strings using dynamic programming.
 
-/// Finds the length of the longest common substring between two strings using dynamic programming.
-///
-/// The algorithm uses a 2D dynamic programming table where each cell represents
-/// the length of the longest common substring ending at the corresponding indices in
-/// the two input strings. The maximum value in the DP table is the result, i.e., the
-/// length of the longest common substring.
-///
-/// The time complexity is `O(n * m)`, where `n` and `m` are the lengths of the two strings.
-/// # Arguments
-///
-/// * `s1` - The first input string.
-/// * `s2` - The second input string.
-///
-/// # Returns
-///
-/// Returns the length of the longest common substring between `s1` and `s2`.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn longest_common_substring(s1: &str, s2: &str) -> usize {
     let mut substr_len = vec![vec![0; s2.len() + 1]; s1.len() + 1];
     let mut max_len = 0;

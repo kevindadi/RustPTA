@@ -1,9 +1,9 @@
 use crate::sorting::partition;
 use std::cmp::{Ordering, PartialOrd};
 
-/// Returns k-th smallest element of an array, i.e. its order statistics.
-/// Time complexity is O(n^2) in the worst case, but only O(n) on average.
-/// It mutates the input, and therefore does not require additional space.
+
+
+
 pub fn kth_smallest<T>(input: &mut [T], k: usize) -> Option<T>
 where
     T: PartialOrd + Copy,
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn many_elements() {
-        // 0 1 3 4 5 7 8 9 9 10 12 13 16 17
+        
         let mut many = [9, 17, 3, 16, 13, 10, 1, 5, 7, 12, 4, 8, 9, 0];
 
         let first = kth_smallest(&mut many, 1);

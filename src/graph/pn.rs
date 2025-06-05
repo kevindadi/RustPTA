@@ -38,7 +38,6 @@ fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> Lock
     current.clone()
 }
 
-// 并查集的合并函数
 fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
     let root_x = find(union_find, x);
     let root_y = find(union_find, y);
@@ -58,7 +57,7 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
-    // all condvars
+
     condvars: HashMap<CondVarId, NodeIndex>,
     pub api_spec: ApiSpec,
     pub api_marks: HashMap<String, HashSet<(NodeIndex, u8)>>,
@@ -111,7 +110,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     fn marking_api(&mut self) {
-        // 匹配format DefId
         let func_map: HashMap<String, NodeIndex> = self
             .function_counter
             .iter()
@@ -126,7 +124,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 ApiEntry::Single(api_name) => {
                     if let Some(&start_node) = func_map.get(api_name) {
                         let mut mark = HashSet::new();
-                        mark.insert((start_node, 1)); // 设置初始 token 为 1
+                        mark.insert((start_node, 1));
                         self.api_marks.insert(api_name.clone(), mark);
                         log::debug!("Added mark for single API: {}", api_name);
                     }
@@ -139,7 +137,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         }
                     }
                     if !group_mark.is_empty() {
-                        // 使用组中的第一个 API 名称作为键
                         let group_key = format!("group_{}", apis.join("_"));
                         self.api_marks.insert(group_key, group_mark);
                         log::debug!("Added mark for API group: [{}]", apis.join(", "));
@@ -155,22 +152,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         channel_collector.analyze();
         channel_collector.to_json_pretty().unwrap();
 
-        // 通过Tuple创建的channel不会分配内存资源
-        // for (id, channel_info) in channel_collector.channel_tuples {
-        //     let channel_id = format!("{:?}", id);
-        //     let channel_place = Place::new_with_span(
-        //         channel_id,
-        //         1,
-        //         PlaceType::Channel,
-        //         format!("{:?}", channel_info.0.span),
-        //     );
-        //     let channel_node = self.net.add_node(PetriNetNode::P(channel_place));
-        //     self.channel_places.insert(id, channel_node);
-        // }
-
         let mut span_groups: HashMap<String, Vec<(ChannelId, ChannelInfo<'tcx>)>> = HashMap::new();
 
-        // 收集所有 channel endpoints 并按 span 分组
         for (id, info) in channel_collector.channels {
             let key_string = format!("{:?}", info.span)
                 .split(":")
@@ -180,10 +163,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             span_groups.entry(key_string).or_default().push((id, info));
         }
 
-        // 处理配对的 channel endpoints
         for (i, (span, endpoints)) in span_groups.iter().enumerate() {
             if endpoints.len() == 2 {
-                // 确保有一对 sender 和 receiver
                 let has_pair = endpoints
                     .iter()
                     .any(|(_, info)| info.endpoint_type == EndpointType::Sender)
@@ -193,8 +174,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
                 if has_pair {
                     let channel_id = format!("channel_{}", i);
-                    let channel_place =
-                        Place::new_indefinite(channel_id, 0, 100, PlaceType::Channel, span.clone());
+                    let channel_place = Place::new_indefinite(
+                        channel_id,
+                        0,
+                        100,
+                        PlaceType::Resources,
+                        span.clone(),
+                    );
                     let channel_node = self.net.add_node(PetriNetNode::P(channel_place));
 
                     for (id, _) in endpoints {
@@ -215,7 +201,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
         let atomic_vars = atomic_collector.analyze();
 
-        // 输出收集到的atomic信息
         atomic_collector.to_json_pretty().unwrap();
         for (_, atomic_info) in atomic_vars {
             let atomic_type = atomic_info.var_type.clone();
@@ -225,7 +210,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 let atomic_place = Place::new_with_span(
                     atomic_name,
                     1,
-                    PlaceType::Atomic,
+                    PlaceType::Resources,
                     atomic_info.span.clone(),
                 );
                 let atomic_node = self.net.add_node(PetriNetNode::P(atomic_place));
@@ -297,13 +282,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
 
-        // 为每个别名组创建数据库所
         for (_, group) in alias_groups {
             let unsafe_span = group[0].1.clone();
             let unsafe_local = group[0].0.clone();
             let unsafe_name = format!("{:?}", unsafe_local);
 
-            let place = Place::new_with_span(unsafe_name, 1, PlaceType::Unsafe, unsafe_span);
+            let place = Place::new_with_span(unsafe_name, 1, PlaceType::Resources, unsafe_span);
 
             let node = self.net.add_node(PetriNetNode::P(place));
             self.unsafe_places.insert(unsafe_local, node);
@@ -347,9 +331,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::info!("Collector Unsafe Blocks!");
         }
 
-        // 初始化同步 API 的正则表达式
         let key_api_regex = KeyApiRegex::new();
-        // 设置一个id,记录已经转换的函数
+
         let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
@@ -369,17 +352,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         log::info!("Visitor Function Body Complete!");
 
-        // 如果CrateType是LIB，不优化以防初始标识被改变
         if self.api_spec.apis.is_empty() && !self.options.test {
             self.reduce_state();
             log::info!("Merge long(>= 5) P-T chains");
         }
-        //self.reduce_state_from(self.entry_node);
 
-        // 验证网络结构
         if let Err(err) = self.verify_and_clean() {
             log::error!("Petri net structure verification failed: {}", err);
-            // 可以选择在这里panic或者进行其他错误处理
         }
         log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
     }
@@ -390,11 +369,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         caller: &CallGraphNode<'tcx>,
         key_api_regex: &KeyApiRegex,
         cons_config: &NetConfig,
-        //alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>,
     ) {
         let body = self.tcx.optimized_mir(caller.instance().def_id());
-        // let body = self.tcx.instance_mir(caller.instance().def);
-        // Skip promoted src
+
         if body.source.promoted.is_some() {
             return;
         }
@@ -405,15 +382,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             caller.instance(),
             body,
             self.tcx,
-            // self.param_env,
             &self.callgraph,
             &mut self.net,
             &mut self.alias,
             lock_infos,
             &self.function_counter,
             &self.locks_counter,
-            // &mut self.thread_id_handler,
-            // &mut self.handler_id,
             &self.condvars,
             &self.atomic_places,
             &self.atomic_order_maps,
@@ -426,9 +400,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         func_body.translate();
     }
 
-    // Construct Function Start and End Place by callgraph
     pub fn construct_func(&mut self) {
-        // 如果crate是BIN，则需要找到main函数
         match self.options.crate_type {
             OwnCrateType::Bin => self.construct_bin_funcs(),
             OwnCrateType::Lib => self.construct_lib_funcs(),
@@ -505,7 +477,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn construct_lock_with_dfs(&mut self) {
-        // 使用新的收集函数
         let lockguards = self.collect_blocking_primitives();
         let mut info = FxHashMap::default();
 
@@ -520,7 +491,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             union_find.insert(lock_id.clone(), lock_id.clone());
         }
 
-        // 添加调试输出：显示所有的别名关系
         log::debug!("=== 检测到的别名关系 ===");
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
@@ -538,14 +508,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
 
-        // 先按根节点分组
         let mut temp_groups: HashMap<LockGuardId, Vec<LockGuardId>> = HashMap::new();
         for lock_id in &lockid_vec {
             let root = find(&union_find, lock_id);
             temp_groups.entry(root).or_default().push(lock_id.clone());
         }
 
-        // 添加调试输出：显示分组结果
         println!("\n=== 锁的分组结果 ===");
         for (group_id, (root, group)) in temp_groups.iter().enumerate() {
             println!("组 {}: ", group_id);
@@ -562,7 +530,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
 
-        // 将分组转换为所需的格式并创建对应的Place节点
         let mut group_id = 0;
         for group in temp_groups.values() {
             match &info[&group[0]].lockguard_ty {
@@ -570,7 +537,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
                     let lock_name = format!("Mutex_{}", group_id);
-                    let lock_p = Place::new(lock_name.clone(), 1, PlaceType::Lock);
+                    let lock_p = Place::new(lock_name.clone(), 1, PlaceType::Resources);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     log::debug!("创建 Mutex 节点: {}", lock_name);
                     for lock in group {
@@ -579,7 +546,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
                 _ => {
                     let lock_name = format!("RwLock_{}", group_id);
-                    let lock_p = Place::new(lock_name.clone(), 10, PlaceType::Lock);
+                    let lock_p = Place::new(lock_name.clone(), 10, PlaceType::Resources);
                     let lock_node = self.net.add_node(PetriNetNode::P(lock_p));
                     log::debug!("创建 RwLock 节点: {}", lock_name);
                     for lock in group {
@@ -592,23 +559,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         log::info!("总共发现 {} 个锁组", group_id);
     }
 
-    /// 简化 Petri 网中的状态,通过合并简单路径来减少网络的复杂度
-    ///
-    /// 具体步骤:
-    /// 1. 找到所有入度和出度都≤1的节点作为起始点
-    /// 2. 从每个起始点开始,向两个方向(前向和后向)搜索,找到可以合并的路径
-    /// 3. 对于每条找到的路径:
-    ///    - 确保路径的起点和终点都是 Place 节点
-    ///    - 如果路径长度>3,则创建一个新的 Transition 节点来替代中间的节点
-    ///    - 保持路径两端的 Place 节点不变,删除中间的所有节点
-    /// 4. 最后统一删除所有被标记为需要移除的节点
-    ///
-    /// 这种简化可以显著减少 Petri 网的大小,同时保持其基本行为特性不变
     pub fn reduce_state(&mut self) {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut all_nodes_to_remove = Vec::new();
-        // 找到所有入度和出度都≤1的点
+
         for node in self.net.node_indices() {
             let in_degree = self.net.edges_directed(node, Direction::Incoming).count();
             let out_degree = self.net.edges_directed(node, Direction::Outgoing).count();
@@ -617,18 +572,16 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 queue.push_back(node);
             }
         }
-        // TODO: 设置新的截止条件，以防止 unsafe 操作被 merge
+
         while let Some(start) = queue.pop_front() {
             if visited.contains(&start) {
                 continue;
             }
 
-            // 从start开始BFS，找到一条链
             let mut chain = vec![start];
             let mut current = start;
             visited.insert(start);
 
-            // 向两个方向遍历
             for direction in &[Direction::Outgoing, Direction::Incoming] {
                 current = start;
                 loop {
@@ -658,7 +611,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 }
             }
 
-            // 调整链，确保起始和结束都是Place
             if !chain.is_empty() {
                 if let PetriNetNode::T(_) = &self.net[chain[0]] {
                     chain.remove(0);
@@ -667,34 +619,28 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             if !chain.is_empty() {
                 if let PetriNetNode::T(_) = &self.net[chain[chain.len() - 1]] {
                     chain.pop();
-                    // assert_eq!(chain.len(), chain_len - 1);
                 }
             }
-            // 检查调整后的链长度是否满足简化条件
+
             if chain.len() > 3 {
-                // 确保chain不为空
                 if chain.is_empty() {
                     continue;
                 }
                 let p1 = chain[0];
                 let p2 = chain[chain.len() - 1];
 
-                // 确保p1和p2都是Place
                 if let (PetriNetNode::P(_), PetriNetNode::P(_)) = (&self.net[p1], &self.net[p2]) {
-                    // 创建新的Transition
                     let new_trans = Transition::new(
                         format!("merged_trans_{}_{}", p1.index(), p2.index()),
                         ControlType::Goto,
                     );
                     let new_trans_idx = self.net.add_node(PetriNetNode::T(new_trans));
 
-                    // 添加新边
                     self.net
                         .add_edge(p1, new_trans_idx, PetriNetEdge { label: 1u8 });
                     self.net
                         .add_edge(new_trans_idx, p2, PetriNetEdge { label: 1u8 });
 
-                    // 将路径上的节点信息合并成一行输出
                     let path_info = chain[1..chain.len()]
                         .iter()
                         .map(|&node| match &self.net[node] {
@@ -704,43 +650,35 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         .collect::<Vec<_>>()
                         .join(" -> ");
                     log::debug!("Path: {}", path_info);
-                    // 收集要删除的节点
+
                     all_nodes_to_remove.extend(chain[1..chain.len() - 1].iter().cloned());
                 }
             }
         }
-        // 在循环结束后统一删除节点
+
         if !all_nodes_to_remove.is_empty() {
-            // 按索引从大到小排序
             all_nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
-            // 删除节点
+
             for node in all_nodes_to_remove {
                 self.net.remove_node(node);
             }
         }
     }
 
-    /// 分析并简化从起始节点到终止节点的路径，保留与特殊节点相连的路径
-    /// 1. 使用DFS收集所有从start_node到end_node的路径
-    /// 2. 标记与特殊节点相连的路径为有效路径
-    /// 3. 收集需要保留的节点（出现在有效路径中的节点）
-    /// 4. 删除仅出现在无效路径中的节点
     pub fn reduce_state_from(
         &mut self,
         start_node: NodeIndex,
         end_node: NodeIndex,
         special_nodes: &[NodeIndex],
     ) {
-        // 存储所有从start到end的路径
         let mut all_paths: Vec<Vec<NodeIndex>> = Vec::new();
-        // 存储有效路径（与特殊节点相连的路径）
+
         let mut valid_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
-        // 存储当前正在探索的路径
+
         let mut current_path: Vec<NodeIndex> = vec![start_node];
-        // 记录已访问节点，避免简单环路
+
         let mut visited: HashSet<NodeIndex> = HashSet::new();
 
-        // DFS收集所有路径
         self.collect_paths(
             start_node,
             end_node,
@@ -751,13 +689,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &mut valid_paths,
         );
 
-        // 收集所有需要保留的节点（出现在有效路径中的节点）
         let mut nodes_to_keep: HashSet<NodeIndex> = HashSet::new();
         for path in &valid_paths {
             nodes_to_keep.extend(path.iter().cloned());
         }
 
-        // 收集所有可以删除的节点（出现在无效路径中且不在有效路径中的节点）
         let mut nodes_to_remove: HashSet<NodeIndex> = HashSet::new();
         for path in &all_paths {
             if !valid_paths.contains(path) {
@@ -776,13 +712,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    /// 递归收集从起点到终点的所有路径
-    ///
-    /// 1. 如果到达终点，检查当前路径是否与特殊节点相连
-    /// 2. 如果路径有效，添加到valid_paths中
-    /// 3. 将当前路径添加到all_paths中
-    /// 4. 递归探索所有未访问的邻居节点
-    /// 5. 回溯时移除访问标记，允许节点在其他路径中被重复访问
     fn collect_paths(
         &self,
         current: NodeIndex,
@@ -794,7 +723,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         valid_paths: &mut HashSet<Vec<NodeIndex>>,
     ) {
         if current == end {
-            // 检查路径是否与特殊节点相连
             let path_has_special_connection = current_path.iter().any(|&node| {
                 self.net
                     .neighbors(node)
@@ -829,19 +757,16 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         visited.remove(&current);
     }
 
-    // Mapping JoinHandle To Thread DefId
     fn collect_blocking_primitives(&mut self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
         let mut lockguards = FxHashMap::default();
         let mut condvars = FxHashMap::default();
 
-        // 遍历 callgraph 收集信息
         for (instance_id, node) in self.callgraph.graph.node_references() {
             let instance = match node {
                 CallGraphNode::WithBody(instance) => instance,
                 _ => continue,
             };
 
-            // 只分析本地函数
             if !instance.def_id().is_local() {
                 continue;
             }
@@ -850,24 +775,21 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let mut collector = BlockingCollector::new(instance_id, instance, body, self.tcx);
             collector.analyze();
 
-            // 收集锁信息
             if !collector.lockguards.is_empty() {
                 lockguards.insert(instance_id, collector.lockguards.clone());
                 self.lock_info.extend(collector.lockguards);
             }
 
-            // 收集条件变量信息
             if !collector.condvars.is_empty() {
                 condvars.insert(instance_id, collector.condvars);
             }
         }
 
-        // 处理条件变量
         if !condvars.is_empty() {
             for condvar_map in condvars.into_values() {
                 for (condvar_id, span) in condvar_map {
                     let condvar_name = format!("Condvar:{}", span);
-                    let condvar_p = Place::new(condvar_name, 1, PlaceType::CondVar);
+                    let condvar_p = Place::new(condvar_name, 1, PlaceType::Resources);
                     let condvar_node = self.net.add_node(PetriNetNode::P(condvar_p));
                     self.condvars.insert(condvar_id, condvar_node);
                 }
@@ -876,7 +798,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::debug!("Not Found Condvars In This Crate");
         }
 
-        // 返回收集到的锁信息供后续处理
         lockguards
     }
 
@@ -945,24 +866,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
-    /// 验证Petri网的结构正确性
-    ///
-    /// 检查以下规则:
-    /// 1. Transition节点的所有前驱和后继必须是Place节点
-    /// 2. Place节点的所有前驱和后继必须是Transition节点
-    /// 3. Place节点可以没有前驱或后继
-    ///
-    /// 返回:
-    /// - Ok(()) 如果网络结构正确
-    /// - Err(String) 包含错误描述的字符串
     pub fn verify_structure(&self) -> Result<Vec<NodeIndex>> {
         let mut transitions_to_remove = Vec::new();
 
-        // 检查结构并收集需要删除的变迁
         for node_idx in self.net.node_indices() {
             match &self.net[node_idx] {
                 PetriNetNode::T(transition) => {
-                    // 检查变迁的后继
                     let successors: Vec<_> = self
                         .net
                         .neighbors_directed(node_idx, Direction::Outgoing)
@@ -974,7 +883,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                         continue;
                     }
 
-                    // 检查变迁的前驱和后继是否都是库所
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if let PetriNetNode::T(_) = &self.net[pred] {
                             return Err(PetriNetError::InvalidTransitionConnection {
@@ -996,7 +904,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                     }
                 }
                 PetriNetNode::P(place) => {
-                    // 检查库所的前驱和后继是否都是变迁
                     for pred in self.net.neighbors_directed(node_idx, Direction::Incoming) {
                         if let PetriNetNode::P(_) = &self.net[pred] {
                             return Err(PetriNetError::InvalidPlaceConnection {
@@ -1024,7 +931,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn remove_invalid_transitions(&mut self, transitions_to_remove: Vec<NodeIndex>) {
-        // 从后向前删除节点以保持索引有效
         for transition_idx in transitions_to_remove.iter().rev() {
             let _ = if let PetriNetNode::T(t) = &self.net[*transition_idx] {
                 t.name.clone()
@@ -1065,5 +971,98 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
         }
         terminal_states
+    }
+
+    pub fn reduce_resource_free_cycles(&mut self) {
+        let resource_places: HashSet<NodeIndex> = self
+            .net
+            .node_indices()
+            .filter(|&node| {
+                if let PetriNetNode::P(place) = &self.net[node] {
+                    place.place_type == PlaceType::Resources
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        if resource_places.is_empty() {
+            log::debug!("No resource places found in the net");
+            return;
+        }
+
+        let mut cycles = Vec::new();
+        let mut visited = HashSet::new();
+        let mut path = Vec::new();
+
+        for start_node in self.net.node_indices() {
+            self.find_cycles(start_node, start_node, &mut visited, &mut path, &mut cycles);
+        }
+
+        let mut cycles_to_remove = Vec::new();
+        for cycle in cycles {
+            if self.is_resource_free_cycle(&cycle, &resource_places) {
+                cycles_to_remove.push(cycle);
+            }
+        }
+
+        let mut nodes_to_remove = HashSet::new();
+        for cycle in cycles_to_remove {
+            nodes_to_remove.extend(cycle);
+        }
+
+        let mut nodes: Vec<_> = nodes_to_remove.into_iter().collect();
+        nodes.sort_by(|a, b| b.index().cmp(&a.index()));
+
+        let removed_count = nodes.len();
+        for node in nodes {
+            self.net.remove_node(node);
+        }
+
+        log::debug!("Removed {} nodes from resource-free cycles", removed_count);
+    }
+
+    fn find_cycles(
+        &self,
+        current: NodeIndex,
+        start: NodeIndex,
+        visited: &mut HashSet<NodeIndex>,
+        path: &mut Vec<NodeIndex>,
+        cycles: &mut Vec<Vec<NodeIndex>>,
+    ) {
+        if !path.is_empty() && current == start {
+            cycles.push(path.clone());
+            return;
+        }
+
+        if visited.contains(&current) {
+            return;
+        }
+
+        visited.insert(current);
+        path.push(current);
+
+        for neighbor in self.net.neighbors(current) {
+            self.find_cycles(neighbor, start, visited, path, cycles);
+        }
+
+        path.pop();
+        visited.remove(&current);
+    }
+
+    fn is_resource_free_cycle(
+        &self,
+        cycle: &[NodeIndex],
+        resource_places: &HashSet<NodeIndex>,
+    ) -> bool {
+        for &node in cycle {
+            if let PetriNetNode::T(_) = &self.net[node] {
+                let neighbors: HashSet<NodeIndex> = self.net.neighbors(node).collect();
+                if neighbors.intersection(resource_places).next().is_some() {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }

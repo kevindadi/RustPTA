@@ -1,17 +1,17 @@
-//! A module for checking if a given string is a palindrome.
 
-/// Checks if the given string is a palindrome.
-///
-/// A palindrome is a sequence that reads the same backward as forward.
-/// This function ignores non-alphanumeric characters and is case-insensitive.
-///
-/// # Arguments
-///
-/// * `s` - A string slice that represents the input to be checked.
-///
-/// # Returns
-///
-/// * `true` if the string is a palindrome; otherwise, `false`.
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn is_palindrome(s: &str) -> bool {
     let mut chars = s
         .chars()

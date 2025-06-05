@@ -29,15 +29,15 @@ impl Segment {
         self.a.x == self.b.x
     }
 
-    // returns (slope, y-intercept)
+    
     pub fn get_line_equation(&self) -> (f64, f64) {
         let slope = (self.a.y - self.b.y) / (self.a.x - self.b.x);
         let y_intercept = self.a.y - slope * self.a.x;
         (slope, y_intercept)
     }
 
-    // Compute the value of y at x. Uses the line equation, and assumes the segment
-    // has infinite length.
+    
+    
     pub fn compute_y_at_x(&self, x: f64) -> f64 {
         let (slope, y_intercept) = self.get_line_equation();
         slope * x + y_intercept
@@ -51,7 +51,7 @@ impl Segment {
         }
     }
 
-    // p must be colinear with the segment
+    
     pub fn colinear_point_on_segment(&self, p: &Point) -> bool {
         assert!(self.is_colinear(p), "p must be colinear!");
         let (low_x, high_x) = if self.a.x < self.b.x {
@@ -81,14 +81,14 @@ impl Segment {
         let direction3 = other.direction(&self.a);
         let direction4 = other.direction(&self.b);
 
-        // If the segments saddle each others' endpoints, they intersect
+        
         if ((direction1 > 0.0 && direction2 < 0.0) || (direction1 < 0.0 && direction2 > 0.0))
             && ((direction3 > 0.0 && direction4 < 0.0) || (direction3 < 0.0 && direction4 > 0.0))
         {
             return true;
         }
 
-        // Edge cases where an endpoint lies on a segment
+        
         (direction1 == 0.0 && self.colinear_point_on_segment(&other.a))
             || (direction2 == 0.0 && self.colinear_point_on_segment(&other.b))
             || (direction3 == 0.0 && other.colinear_point_on_segment(&self.a))

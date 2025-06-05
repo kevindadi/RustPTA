@@ -6,8 +6,8 @@ use std::rc::{Rc, Weak};
 #[derive(Default)]
 struct ACNode {
     trans: BTreeMap<char, Rc<RefCell<ACNode>>>,
-    suffix: Weak<RefCell<ACNode>>, // the suffix(fail) link
-    lengths: Vec<usize>,           // lengths of matched patterns ended at this node
+    suffix: Weak<RefCell<ACNode>>, 
+    lengths: Vec<usize>,           
 }
 
 #[derive(Default)]

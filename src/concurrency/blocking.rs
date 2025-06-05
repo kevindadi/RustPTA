@@ -12,7 +12,6 @@ use rustc_span::Span;
 
 use crate::graph::callgraph::InstanceId;
 
-/// Uniquely identify a LockGuard in a crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LockGuardId {
     pub instance_id: InstanceId,
@@ -39,7 +38,6 @@ impl CondVarId {
 
 pub type CondvarMap<'tcx> = HashMap<CondVarId, String>;
 
-/// LockGuardKind, DataTy
 #[derive(Clone, Debug)]
 pub enum LockGuardTy<'tcx> {
     StdMutex(ty::Ty<'tcx>),
@@ -57,7 +55,7 @@ impl<'tcx> LockGuardTy<'tcx> {
     pub fn from_local_ty(local_ty: ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
         if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() {
             let path = tcx.def_path_str(adt_def.did());
-            // quick fail
+
             if !path.contains("MutexGuard")
                 && !path.contains("RwLockReadGuard")
                 && !path.contains("RwLockWriteGuard")
@@ -71,14 +69,12 @@ impl<'tcx> LockGuardTy<'tcx> {
                     || first_part.contains("future")
                     || first_part.contains("loom")
                 {
-                    // Currentlly does not support async lock or loom
                     None
                 } else if first_part.contains("spin") {
                     Some(LockGuardTy::SpinMutex(substs.types().next()?))
                 } else if first_part.contains("lock_api") || first_part.contains("parking_lot") {
                     Some(LockGuardTy::ParkingLotMutex(substs.types().nth(1)?))
                 } else {
-                    // std::sync::Mutex or its wrapper by default
                     Some(LockGuardTy::StdMutex(substs.types().next()?))
                 }
             } else if first_part.contains("RwLockReadGuard") {
@@ -87,14 +83,12 @@ impl<'tcx> LockGuardTy<'tcx> {
                     || first_part.contains("future")
                     || first_part.contains("loom")
                 {
-                    // Currentlly does not support async lock or loom
                     None
                 } else if first_part.contains("spin") {
                     Some(LockGuardTy::SpinRead(substs.types().next()?))
                 } else if first_part.contains("lock_api") || first_part.contains("parking_lot") {
                     Some(LockGuardTy::ParkingLotRead(substs.types().nth(1)?))
                 } else {
-                    // std::sync::RwLockReadGuard or its wrapper by default
                     Some(LockGuardTy::StdRwLockRead(substs.types().next()?))
                 }
             } else if first_part.contains("RwLockWriteGuard") {
@@ -103,14 +97,12 @@ impl<'tcx> LockGuardTy<'tcx> {
                     || first_part.contains("future")
                     || first_part.contains("loom")
                 {
-                    // Currentlly does not support async lock or loom
                     None
                 } else if first_part.contains("spin") {
                     Some(LockGuardTy::SpinWrite(substs.types().next()?))
                 } else if first_part.contains("lock_api") || first_part.contains("parking_lot") {
                     Some(LockGuardTy::ParkingLotWrite(substs.types().nth(1)?))
                 } else {
-                    // std::sync::RwLockReadGuard or its wrapper by default
                     Some(LockGuardTy::StdRwLockWrite(substs.types().next()?))
                 }
             } else {
@@ -122,7 +114,6 @@ impl<'tcx> LockGuardTy<'tcx> {
     }
 }
 
-/// The lockguard info. `span` is for report.
 #[derive(Clone, Debug)]
 pub struct LockGuardInfo<'tcx> {
     pub lockguard_ty: LockGuardTy<'tcx>,
@@ -137,7 +128,6 @@ impl<'tcx> LockGuardInfo<'tcx> {
 
 pub type LockGuardMap<'tcx> = FxHashMap<LockGuardId, LockGuardInfo<'tcx>>;
 
-/// Collect lockguard info.
 pub struct BlockingCollector<'a, 'b, 'tcx> {
     instance_id: InstanceId,
     instance: &'a Instance<'tcx>,

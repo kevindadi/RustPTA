@@ -22,7 +22,7 @@ pub struct LinkedList<T> {
     pub length: u32,
     pub head: Option<NonNull<Node<T>>>,
     pub tail: Option<NonNull<Node<T>>>,
-    // Act like we own boxed nodes since we construct and leak them
+    
     marker: PhantomData<Box<Node<T>>>,
 }
 
@@ -109,8 +109,8 @@ impl<T> LinkedList<T> {
     }
 
     pub fn delete_head(&mut self) -> Option<T> {
-        // Safety: head_ptr points to a leaked boxed node managed by this list
-        // We reassign pointers that pointed to the head node
+        
+        
         if self.length == 0 {
             return None;
         }
@@ -125,12 +125,12 @@ impl<T> LinkedList<T> {
             self.length = self.length.checked_add_signed(-1).unwrap_or(0);
             old_head.val
         })
-        // None
+        
     }
 
     pub fn delete_tail(&mut self) -> Option<T> {
-        // Safety: tail_ptr points to a leaked boxed node managed by this list
-        // We reassign pointers that pointed to the tail node
+        
+        
         self.tail.map(|tail_ptr| unsafe {
             let old_tail = Box::from_raw(tail_ptr.as_ptr());
             match old_tail.prev {
@@ -200,7 +200,7 @@ impl<T> LinkedList<T> {
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
-        // Pop items until there are none left
+        
         while self.delete_head().is_some() {}
     }
 }
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn insert_at_ith_and_delete_at_ith_in_the_middle() {
-        // Insert and delete in the middle of the list to ensure pointers are updated correctly
+        
         let mut list = LinkedList::<i32>::new();
         let first_value = 0;
         let second_value = 1;
@@ -343,7 +343,7 @@ mod tests {
             list.insert_at_ith(i, i.try_into().unwrap());
         }
 
-        // Pop even numbers to 50
+        
         for i in 0..50 {
             println!("list.length {}", list.length);
             if i % 2 == 0 {
@@ -353,7 +353,7 @@ mod tests {
 
         assert_eq!(list.length, 75);
 
-        // Insert even numbers back
+        
         for i in 0..50 {
             if i % 2 == 0 {
                 list.insert_at_ith(i, i.try_into().unwrap());
@@ -362,7 +362,7 @@ mod tests {
 
         assert_eq!(list.length, 100);
 
-        // Ensure numbers were adderd back and we're able to traverse nodes
+        
         if let Some(val) = list.get(78) {
             assert_eq!(*val, 78);
         } else {

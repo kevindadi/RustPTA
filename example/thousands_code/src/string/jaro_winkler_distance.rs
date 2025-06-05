@@ -1,8 +1,8 @@
-// In computer science and statistics,
-// the Jaro–Winkler distance is a string metric measuring an edit distance
-// between two sequences.
-// It is a variant proposed in 1990 by William E. Winkler
-// of the Jaro distance metric (1989, Matthew A. Jaro).
+
+
+
+
+
 
 pub fn jaro_winkler_distance(str1: &str, str2: &str) -> f64 {
     if str1.is_empty() || str2.is_empty() {
@@ -29,7 +29,7 @@ pub fn jaro_winkler_distance(str1: &str, str2: &str) -> f64 {
     let matching_2 = get_matched_characters(str2, str1);
     let match_count = matching_1.len();
 
-    // transposition
+    
     let transpositions = {
         let mut count = 0;
         for (c1, c2) in matching_1.chars().zip(matching_2.chars()) {

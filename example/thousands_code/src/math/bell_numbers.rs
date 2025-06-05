@@ -2,7 +2,7 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use std::sync::RwLock;
 
-/// Returns the number of ways you can select r items given n options
+
 fn n_choose_r(n: u32, r: u32) -> BigUint {
     if r == n || r == 0 {
         return One::one();
@@ -12,8 +12,8 @@ fn n_choose_r(n: u32, r: u32) -> BigUint {
         return Zero::zero();
     }
 
-    // Any combination will only need to be computed once, thus giving no need to
-    // memoize this function
+    
+    
 
     let product: BigUint = (0..r).fold(BigUint::one(), |acc, x| {
         (acc * BigUint::from(n - x)) / BigUint::from(x + 1)
@@ -22,7 +22,7 @@ fn n_choose_r(n: u32, r: u32) -> BigUint {
     product
 }
 
-/// A memoization table for storing previous results
+
 struct MemTable {
     buffer: Vec<BigUint>,
 }
@@ -63,13 +63,13 @@ impl MemTable {
     }
 }
 
-// Implemented with RwLock so it is accessible across threads
+
 static LOOKUP_TABLE_LOCK: RwLock<MemTable> = RwLock::new(MemTable::new());
 
 pub fn bell_number(n: u32) -> BigUint {
     let needs_resize;
 
-    // Check if number is already in lookup table
+    
     {
         let lookup_table = LOOKUP_TABLE_LOCK.read().unwrap();
 
@@ -80,8 +80,8 @@ pub fn bell_number(n: u32) -> BigUint {
         needs_resize = (n + 1) as usize > lookup_table.capacity();
     }
 
-    // Resize table before recursion so that if more values need to be added during recursion the table isn't
-    // reallocated every single time
+    
+    
     if needs_resize {
         let mut lookup_table = LOOKUP_TABLE_LOCK.write().unwrap();
 
@@ -90,7 +90,7 @@ pub fn bell_number(n: u32) -> BigUint {
 
     let new_bell_number: BigUint = (0..n).map(|x| bell_number(x) * n_choose_r(n - 1, x)).sum();
 
-    // Add new number to lookup table
+    
     {
         let mut lookup_table = LOOKUP_TABLE_LOCK.write().unwrap();
 

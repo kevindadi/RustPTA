@@ -101,7 +101,7 @@ mod tests {
             let div = i / ls.minimum_prime_factor[i];
             assert_eq!(i % ls.minimum_prime_factor[i], 0);
             if div == 1 {
-                // Number must be prime
+                
                 assert!(ls.primes.binary_search(&i).is_ok());
             }
         }

@@ -6,23 +6,23 @@ use std::ops::{Add, Neg, Sub};
 use crate::math::field::{Field, PrimeField};
 use crate::math::quadratic_residue::legendre_symbol;
 
-/// Elliptic curve defined by `y^2 = x^3 + Ax + B` over a prime field `F` of
-/// characteristic != 2, 3
-///
-/// The coefficients of the elliptic curve are the constant parameters `A` and `B`.
-///
-/// Points form an abelian group with the neutral element [`EllipticCurve::infinity`]. The points
-/// are represented via affine coordinates ([`EllipticCurve::new`]) except for the points
-/// at infinity ([`EllipticCurve::infinity`]).
-///
-/// # Example
-///
-/// ```
-/// use the_algorithms_rust::math::{EllipticCurve, PrimeField};
-/// type E = EllipticCurve<PrimeField<7>, 1, 0>;
-/// let P = E::new(0, 0).expect("not on curve E");
-/// assert_eq!(P + P, E::infinity());
-/// ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #[derive(Clone, Copy)]
 pub struct EllipticCurve<F, const A: i64, const B: i64> {
     infinity: bool,
@@ -31,7 +31,7 @@ pub struct EllipticCurve<F, const A: i64, const B: i64> {
 }
 
 impl<F: Field, const A: i64, const B: i64> EllipticCurve<F, A, B> {
-    /// Point at infinity also the neutral element of the group
+    
     pub fn infinity() -> Self {
         Self::check_invariants();
         Self {
@@ -41,10 +41,10 @@ impl<F: Field, const A: i64, const B: i64> EllipticCurve<F, A, B> {
         }
     }
 
-    /// Affine point
-    ///
-    ///
-    /// Return `None` if the coordinates are not on the curve
+    
+    
+    
+    
     pub fn new(x: impl Into<F>, y: impl Into<F>) -> Option<Self> {
         Self::check_invariants();
         let x = x.into();
@@ -60,26 +60,26 @@ impl<F: Field, const A: i64, const B: i64> EllipticCurve<F, A, B> {
         }
     }
 
-    /// Return `true` if this is the point at infinity
+    
     pub fn is_infinity(&self) -> bool {
         self.infinity
     }
 
-    /// The affine x-coordinate of the point
+    
     pub fn x(&self) -> &F {
         &self.x
     }
 
-    /// The affine y-coordinate of the point
+    
     pub fn y(&self) -> &F {
         &self.y
     }
 
-    /// The discrimant of the elliptic curve
+    
     pub const fn discriminant() -> i64 {
-        // Note: we can't return an element of F here, because it is not
-        // possible to declare a trait function as const (cf.
-        // <https://doc.rust-lang.org/error_codes/E0379.html>)
+        
+        
+        
         (-16 * (4 * A * A * A + 27 * B * B)) % (F::CHARACTERISTIC as i64)
     }
 
@@ -94,10 +94,10 @@ impl<F: Field, const A: i64, const B: i64> EllipticCurve<F, A, B> {
     }
 }
 
-/// Elliptic curve methods over a prime field
+
 impl<const P: u64, const A: i64, const B: i64> EllipticCurve<PrimeField<P>, A, B> {
-    /// Naive calculation of points via enumeration
-    // TODO: Implement via generators
+    
+    
     pub fn points() -> impl Iterator<Item = Self> {
         std::iter::once(Self::infinity()).chain(
             PrimeField::elements()
@@ -105,21 +105,21 @@ impl<const P: u64, const A: i64, const B: i64> EllipticCurve<PrimeField<P>, A, B
         )
     }
 
-    /// Number of points on the elliptic curve over `F`, that is, `#E(F)`
+    
     pub fn cardinality() -> usize {
-        // TODO: implement counting for big P
+        
         Self::cardinality_counted_legendre()
     }
 
-    /// Number of points on the elliptic curve over `F`, that is, `#E(F)`
-    ///
-    /// We simply count the number of points for each x coordinate and sum them up.
-    /// For that, we first precompute the table of all squares in `F`.
-    ///
-    /// Time complexity: O(P) <br>
-    /// Space complexity: O(P)
-    ///
-    /// Only fast for small fields.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn cardinality_counted_table() -> usize {
         let squares: HashSet<_> = PrimeField::<P>::elements().map(|x| x * x).collect();
         1 + PrimeField::elements()
@@ -136,23 +136,23 @@ impl<const P: u64, const A: i64, const B: i64> EllipticCurve<PrimeField<P>, A, B
             .sum::<usize>()
     }
 
-    /// Number of points on the elliptic curve over `F`, that is, `#E(F)`
-    ///
-    /// We count the number of points for each x coordinate by using the [Legendre symbol] _(X |
-    /// P)_:
-    ///
-    /// _1 + (x^3 + Ax + B | P),_
-    ///
-    /// The total number of points is then:
-    ///
-    /// _#E(F) = 1 + P + Σ_x (x^3 + Ax + B | P)_ for _x_ in _F_.
-    ///
-    /// Time complexity: O(P) <br>
-    /// Space complexity: O(1)
-    ///
-    /// Only fast for small fields.
-    ///
-    /// [Legendre symbol]: https://en.wikipedia.org/wiki/Legendre_symbol
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn cardinality_counted_legendre() -> usize {
         let cardinality: i64 = 1
             + P as i64
@@ -169,7 +169,7 @@ impl<const P: u64, const A: i64, const B: i64> EllipticCurve<PrimeField<P>, A, B
     }
 }
 
-/// Group law
+
 impl<F: Field, const A: i64, const B: i64> Add for EllipticCurve<F, A, B> {
     type Output = Self;
 
@@ -179,7 +179,7 @@ impl<F: Field, const A: i64, const B: i64> Add for EllipticCurve<F, A, B> {
         } else if p.infinity {
             self
         } else if self.x == p.x && self.y == -p.y {
-            // mirrored
+            
             Self::infinity()
         } else {
             let slope = if self.x != p.x {
@@ -194,7 +194,7 @@ impl<F: Field, const A: i64, const B: i64> Add for EllipticCurve<F, A, B> {
     }
 }
 
-/// Inverse
+
 impl<F: Field, const A: i64, const B: i64> Neg for EllipticCurve<F, A, B> {
     type Output = Self;
 
@@ -207,7 +207,7 @@ impl<F: Field, const A: i64, const B: i64> Neg for EllipticCurve<F, A, B> {
     }
 }
 
-/// Difference
+
 impl<F: Field, const A: i64, const B: i64> Sub for EllipticCurve<F, A, B> {
     type Output = Self;
 
@@ -216,7 +216,7 @@ impl<F: Field, const A: i64, const B: i64> Sub for EllipticCurve<F, A, B> {
     }
 }
 
-/// Debug representation via projective coordinates
+
 impl<F: fmt::Debug, const A: i64, const B: i64> fmt::Debug for EllipticCurve<F, A, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.infinity {
@@ -227,7 +227,7 @@ impl<F: fmt::Debug, const A: i64, const B: i64> fmt::Debug for EllipticCurve<F, 
     }
 }
 
-/// Equality of the elliptic curve points (short-circuit at infinity)
+
 impl<F: Field, const A: i64, const B: i64> PartialEq for EllipticCurve<F, A, B> {
     fn eq(&self, other: &Self) -> bool {
         (self.infinity && other.infinity)
@@ -317,16 +317,16 @@ mod tests {
 
             let points: Vec<_> = E::points().collect();
             for &p in &points {
-                assert_eq!(p + (-p), o); // inverse
-                assert_eq!((-p) + p, o); // inverse
-                assert_eq!(p - p, o); //inverse
-                assert_eq!(p + o, p); // neutral
-                assert_eq!(o + p, p); //neutral
+                assert_eq!(p + (-p), o); 
+                assert_eq!((-p) + p, o); 
+                assert_eq!(p - p, o); 
+                assert_eq!(p + o, p); 
+                assert_eq!(o + p, p); 
 
                 for &q in &points {
-                    assert_eq!(p + q, q + p); // commutativity
+                    assert_eq!(p + q, q + p); 
 
-                    // associativity
+                    
                     for &s in &points {
                         assert_eq!((p + q) + s, p + (q + s));
                     }
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     #[ignore = "slow test showing that cadinality is not yet feasible to compute for a large prime"]
     fn cardinality_large_prime() {
-        const P: u64 = 2_u64.pow(63) - 25; // largest prime fitting into i64
+        const P: u64 = 2_u64.pow(63) - 25; 
         type E = EllipticCurve<PrimeField<P>, 1, 0>;
         const EXPECTED: usize = 9223372041295506260;
 

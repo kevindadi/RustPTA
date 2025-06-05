@@ -30,11 +30,7 @@ type PetriNetGraph = Graph<PetriNetNode, PetriNetEdge>;
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PlaceType {
-    Unsafe,
-    Atomic,
-    Lock,
-    CondVar,
-    Channel,
+    Resources,
     FunctionStart,
     FunctionEnd,
     BasicBlock,
@@ -71,7 +67,6 @@ impl Place {
         }
     }
 
-    // 创建一个无穷库所
     pub fn new_indefinite(
         name: String,
         token: u8,
@@ -106,42 +101,34 @@ pub struct Transition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ControlType {
-    // 基本控制结构
     Start(InstanceId),
-    Goto,               // 直接跳转
-    Switch,             // 条件分支
-    Return(InstanceId), // 函数返回
-    Drop(DropType),     // 资源释放
+    Goto,
+    Switch,
+    Return(InstanceId),
+    Drop(DropType),
     Assert,
 
-    // 指向的 Unsafe 数据,源码位置,基本块 index,数据类型
     UnsafeRead(NodeIndex, String, usize, String),
     UnsafeWrite(NodeIndex, String, usize, String),
 
-    // 函数调用
     Call(CallType),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CallType {
-    // 同步原语调用
     Lock(NodeIndex),
     RwLockRead(NodeIndex),
     RwLockWrite(NodeIndex),
     Notify(NodeIndex),
     Wait,
 
-    // 原子操作
     AtomicLoad(AliasId, AtomicOrdering, String, InstanceId),
     AtomicStore(AliasId, AtomicOrdering, String, InstanceId),
     AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String, InstanceId),
 
-    // 线程操作-后续reduce网会改变NodeIndex
-    // 资源最先创建不因网结构改变
     Spawn(String),
     Join(String),
 
-    // 普通函数调用
     Function,
 }
 
@@ -192,7 +179,7 @@ impl std::fmt::Display for PetriNetEdge {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Marking {
-    marks: HashMap<NodeIndex, usize>, // NodeIndex represents the place, usize represents token count
+    marks: HashMap<NodeIndex, usize>,
 }
 
 impl Hash for Marking {
@@ -209,7 +196,7 @@ pub enum PetriNetError {
     #[error("Invalid Petri net structure: Transition '{transition_name}' has a Transition {connection_type}")]
     InvalidTransitionConnection {
         transition_name: String,
-        connection_type: &'static str, // "predecessor" 或 "successor"
+        connection_type: &'static str,
     },
 
     #[error("Invalid Petri net structure: Place '{place_name}' has a Place {connection_type}")]
@@ -262,7 +249,6 @@ impl NetConfig {
 }
 
 pub struct KeyApiRegex {
-    // Std::thread
     pub thread_spawn: Regex,
     pub thread_join: Regex,
     pub scope_spwan: Regex,

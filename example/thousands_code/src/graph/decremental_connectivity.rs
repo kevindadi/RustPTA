@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 
-/// A data-structure that, given a forest, allows dynamic-connectivity queries.
-/// Meaning deletion of an edge (u,v) and checking whether two vertecies are still connected.
-///
-/// # Complexity
-/// The preprocessing phase runs in O(n) time, where n is the number of vertecies in the forest.
-/// Deletion runs in O(log n) and checking for connectivity runs in O(1) time.
-///
-/// # Sources
-/// used Wikipedia as reference: <https://en.wikipedia.org/wiki/Dynamic_connectivity>
+
+
+
+
+
+
+
+
+
 pub struct DecrementalConnectivity {
     adjacent: Vec<HashSet<usize>>,
     component: Vec<usize>,
@@ -17,7 +17,7 @@ pub struct DecrementalConnectivity {
     dfs_id: usize,
 }
 impl DecrementalConnectivity {
-    //expects the parent of a root to be itself
+    
     pub fn new(adjacent: Vec<HashSet<usize>>) -> Result<Self, String> {
         let n = adjacent.len();
         if !is_forest(&adjacent) {
@@ -101,7 +101,7 @@ impl DecrementalConnectivity {
         self.visited[u] = v_id;
         self.dfs_id += 1;
 
-        // parallel depth first search
+        
         while !u_queue.is_empty() && !v_queue.is_empty() {
             self.dfs_step(&mut u_queue, u_id);
             self.dfs_step(&mut v_queue, v_id);
@@ -121,8 +121,8 @@ impl DecrementalConnectivity {
     }
 }
 
-// checks whether the given graph is a forest
-// also checks for all adjacent vertices a,b if adjacent[a].contains(b) && adjacent[b].contains(a)
+
+
 fn is_forest(adjacent: &Vec<HashSet<usize>>) -> bool {
     let mut visited = vec![false; adjacent.len()];
     for node in 0..adjacent.len() {
@@ -162,14 +162,14 @@ fn has_cycle(
 mod tests {
     use std::collections::HashSet;
 
-    // test forest (remember the assumptoin that roots are adjacent to themselves)
-    //              _              _
-    //             \ /            \ /
-    //              0              7
-    //            / | \            |
-    //           1  2  3           8
-    //         /   / \
-    //        4   5   6
+    
+    
+    
+    
+    
+    
+    
+    
     #[test]
     fn construction_test() {
         let mut adjacent = vec![
@@ -186,7 +186,7 @@ mod tests {
         let dec_con = super::DecrementalConnectivity::new(adjacent.clone()).unwrap();
         assert_eq!(dec_con.component, vec![0, 0, 0, 0, 0, 0, 0, 1, 1]);
 
-        // add a cycle to the tree
+        
         adjacent[2].insert(4);
         adjacent[4].insert(2);
         assert!(super::DecrementalConnectivity::new(adjacent.clone()).is_err());
@@ -206,7 +206,7 @@ mod tests {
             HashSet::from([7]),
         ];
 
-        // should panic now since our graph is not bidirectional
+        
         super::DecrementalConnectivity::new(adjacent).unwrap();
     }
 

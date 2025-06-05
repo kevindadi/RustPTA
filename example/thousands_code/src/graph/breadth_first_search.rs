@@ -1,22 +1,22 @@
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
-/// Perform a breadth-first search on Graph `graph`.
-///
-/// # Parameters
-///
-/// - `graph`: The graph to search.
-/// - `root`: The starting node of the graph from which to begin searching.
-/// - `target`: The target node for the search.
-///
-/// # Returns
-///
-/// If the target is found, an Optional vector is returned with the history
-/// of nodes visited as its contents.
-///
-/// If the target is not found or there is no path from the root,
-/// `None` is returned.
-///
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn breadth_first_search(graph: &Graph, root: Node, target: Node) -> Option<Vec<u32>> {
     let mut visited: HashSet<Node> = HashSet::new();
     let mut history: Vec<u32> = Vec::new();
@@ -27,12 +27,12 @@ pub fn breadth_first_search(graph: &Graph, root: Node, target: Node) -> Option<V
     while let Some(currentnode) = queue.pop_front() {
         history.push(currentnode.value());
 
-        // If we reach the goal, return our travel history.
+        
         if currentnode == target {
             return Some(history);
         }
 
-        // Check the neighboring nodes for any that we've not visited yet.
+        
         for neighbor in currentnode.neighbors(graph) {
             if visited.insert(neighbor) {
                 queue.push_back(neighbor);
@@ -40,11 +40,11 @@ pub fn breadth_first_search(graph: &Graph, root: Node, target: Node) -> Option<V
         }
     }
 
-    // All nodes were visited, yet the target was not found.
+    
     None
 }
 
-// Data Structures
+
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(u32);

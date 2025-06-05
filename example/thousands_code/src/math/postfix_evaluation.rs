@@ -1,10 +1,10 @@
-//! This module provides a function to evaluate postfix (Reverse Polish Notation) expressions.
-//! Postfix notation is a mathematical notation in which every operator follows all of its operands.
-//!
-//! The evaluator supports the four basic arithmetic operations: addition, subtraction, multiplication, and division.
-//! It handles errors such as division by zero, invalid operators, insufficient operands, and invalid postfix expressions.
 
-/// Enumeration of errors that can occur when evaluating a postfix expression.
+
+
+
+
+
+
 #[derive(Debug, PartialEq)]
 pub enum PostfixError {
     DivisionByZero,
@@ -13,34 +13,34 @@ pub enum PostfixError {
     InvalidExpression,
 }
 
-/// Evaluates a postfix expression and returns the result or an error.
-///
-/// # Arguments
-///
-/// * `expression` - A string slice that contains the postfix expression to be evaluated.
-///                  The tokens (numbers and operators) should be separated by whitespace.
-///
-/// # Returns
-///
-/// * `Ok(isize)` if the expression is valid and evaluates to an integer.
-/// * `Err(PostfixError)` if the expression is invalid or encounters errors during evaluation.
-///
-/// # Errors
-///
-/// * `PostfixError::DivisionByZero` - If a division by zero is attempted.
-/// * `PostfixError::InvalidOperator` - If an unknown operator is encountered.
-/// * `PostfixError::InsufficientOperands` - If there are not enough operands for an operator.
-/// * `PostfixError::InvalidExpression` - If the expression is malformed (e.g., multiple values are left on the stack).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn evaluate_postfix(expression: &str) -> Result<isize, PostfixError> {
     let mut stack: Vec<isize> = Vec::new();
 
     for token in expression.split_whitespace() {
         if let Ok(number) = token.parse::<isize>() {
-            // If the token is a number, push it onto the stack.
+            
             stack.push(number);
         } else {
-            // If the token is an operator, pop the top two values from the stack,
-            // apply the operator, and push the result back onto the stack.
+            
+            
             if let (Some(b), Some(a)) = (stack.pop(), stack.pop()) {
                 match token {
                     "+" => stack.push(a + b),
@@ -59,7 +59,7 @@ pub fn evaluate_postfix(expression: &str) -> Result<isize, PostfixError> {
             }
         }
     }
-    // The final result should be the only element on the stack.
+    
     if stack.len() == 1 {
         Ok(stack[0])
     } else {

@@ -1,9 +1,9 @@
-/// Function that contains the similarities of the sine and cosine implementations
-///
-/// Both of them are calculated using their MacLaurin Series
-///
-/// Because there is just a '+1' that differs in their formula, this function has been
-/// created for not repeating
+
+
+
+
+
+
 fn template<T: Into<f64>>(x: T, tol: f64, kind: i32) -> f64 {
     use std::f64::consts::PI;
     const PERIOD: f64 = 2.0 * PI;
@@ -18,7 +18,7 @@ fn template<T: Into<f64>>(x: T, tol: f64, kind: i32) -> f64 {
         (x * multiplier).round() / multiplier
     }
 
-    let mut value: f64 = x.into(); //<-- This is the line for which the trait 'Into' is required
+    let mut value: f64 = x.into(); 
 
     /* Check for invalid arguments */
     if !value.is_finite() || value.is_nan() {
@@ -61,44 +61,44 @@ fn template<T: Into<f64>>(x: T, tol: f64, kind: i32) -> f64 {
     round_up_to_decimal(rez, 6)
 }
 
-/// Returns the value of sin(x), approximated with the given tolerance
-///
-/// This function supposes the argument is in radians
-///
-/// ### Example
-///
-/// sin(1) == sin(1 rad) == sin(π/180)
+
+
+
+
+
+
+
 pub fn sine<T: Into<f64>>(x: T, tol: f64) -> f64 {
     template(x, tol, 1)
 }
 
-/// Returns the value of cos, approximated with the given tolerance, for
-/// an angle 'x' in radians
+
+
 pub fn cosine<T: Into<f64>>(x: T, tol: f64) -> f64 {
     template(x, tol, 0)
 }
 
-/// Cosine of 'x' in degrees, with the given tolerance
+
 pub fn cosine_no_radian_arg<T: Into<f64>>(x: T, tol: f64) -> f64 {
     use std::f64::consts::PI;
     let val: f64 = x.into();
     cosine(val * PI / 180., tol)
 }
 
-/// Sine function for non radian angle
-///
-/// Interprets the argument in degrees, not in radians
-///
-/// ### Example
-///
-/// sin(1<sup>o</sup>) != \[ sin(1 rad) == sin(π/180) \]
+
+
+
+
+
+
+
 pub fn sine_no_radian_arg<T: Into<f64>>(x: T, tol: f64) -> f64 {
     use std::f64::consts::PI;
     let val: f64 = x.into();
     sine(val * PI / 180f64, tol)
 }
 
-/// Tangent of angle 'x' in radians, calculated with the given tolerance
+
 pub fn tan<T: Into<f64> + Copy>(x: T, tol: f64) -> f64 {
     let cos_val = cosine(x, tol);
 
@@ -111,7 +111,7 @@ pub fn tan<T: Into<f64> + Copy>(x: T, tol: f64) -> f64 {
     }
 }
 
-/// Cotangent of angle 'x' in radians, calculated with the given tolerance
+
 pub fn cotan<T: Into<f64> + Copy>(x: T, tol: f64) -> f64 {
     let sin_val = sine(x, tol);
 
@@ -124,7 +124,7 @@ pub fn cotan<T: Into<f64> + Copy>(x: T, tol: f64) -> f64 {
     }
 }
 
-/// Tangent of 'x' in degrees, approximated with the given tolerance
+
 pub fn tan_no_radian_arg<T: Into<f64> + Copy>(x: T, tol: f64) -> f64 {
     let angle: f64 = x.into();
 
@@ -132,7 +132,7 @@ pub fn tan_no_radian_arg<T: Into<f64> + Copy>(x: T, tol: f64) -> f64 {
     tan(angle * PI / 180., tol)
 }
 
-/// Cotangent of 'x' in degrees, approximated with the given tolerance
+
 pub fn cotan_no_radian_arg<T: Into<f64> + Copy>(x: T, tol: f64) -> f64 {
     let angle: f64 = x.into();
 

@@ -1,15 +1,15 @@
-//! This module provides functions for heap sort algorithm.
+
 
 use std::cmp::Ordering;
 
-/// Builds a heap from the provided array.
-///
-/// This function builds either a max heap or a min heap based on the `is_max_heap` parameter.
-///
-/// # Arguments
-///
-/// * `arr` - A mutable reference to the array to be sorted.
-/// * `is_max_heap` - A boolean indicating whether to build a max heap (`true`) or a min heap (`false`).
+
+
+
+
+
+
+
+
 fn build_heap<T: Ord>(arr: &mut [T], is_max_heap: bool) {
     let mut i = (arr.len() - 1) / 2;
     while i > 0 {
@@ -19,16 +19,16 @@ fn build_heap<T: Ord>(arr: &mut [T], is_max_heap: bool) {
     heapify(arr, 0, is_max_heap);
 }
 
-/// Fixes a heap violation starting at the given index.
-///
-/// This function adjusts the heap rooted at index `i` to fix the heap property violation.
-/// It assumes that the subtrees rooted at left and right children of `i` are already heaps.
-///
-/// # Arguments
-///
-/// * `arr` - A mutable reference to the array representing the heap.
-/// * `i` - The index to start fixing the heap violation.
-/// * `is_max_heap` - A boolean indicating whether to maintain a max heap or a min heap.
+
+
+
+
+
+
+
+
+
+
 fn heapify<T: Ord>(arr: &mut [T], i: usize, is_max_heap: bool) {
     let comparator: fn(&T, &T) -> Ordering = if !is_max_heap {
         |a, b| b.cmp(a)
@@ -54,20 +54,20 @@ fn heapify<T: Ord>(arr: &mut [T], i: usize, is_max_heap: bool) {
     }
 }
 
-/// Sorts the given array using heap sort algorithm.
-///
-/// This function sorts the array either in ascending or descending order based on the `ascending` parameter.
-///
-/// # Arguments
-///
-/// * `arr` - A mutable reference to the array to be sorted.
-/// * `ascending` - A boolean indicating whether to sort in ascending order (`true`) or descending order (`false`).
+
+
+
+
+
+
+
+
 pub fn heap_sort<T: Ord>(arr: &mut [T], ascending: bool) {
     if arr.len() <= 1 {
         return;
     }
 
-    // Build heap based on the order
+    
     build_heap(arr, ascending);
 
     let mut end = arr.len() - 1;

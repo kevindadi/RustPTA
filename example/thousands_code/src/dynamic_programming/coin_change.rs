@@ -1,28 +1,28 @@
-//! This module provides a solution to the coin change problem using dynamic programming.
-//! The `coin_change` function calculates the fewest number of coins required to make up
-//! a given amount using a specified set of coin denominations.
-//!
-//! The implementation leverages dynamic programming to build up solutions for smaller
-//! amounts and combines them to solve for larger amounts. It ensures optimal substructure
-//! and overlapping subproblems are efficiently utilized to achieve the solution.
 
-//! # Complexity
-//! - Time complexity: O(amount * coins.length)
-//! - Space complexity: O(amount)
 
-/// Returns the fewest number of coins needed to make up the given amount using the provided coin denominations.
-/// If the amount cannot be made up by any combination of the coins, returns `None`.
-///
-/// # Arguments
-/// * `coins` - A slice of coin denominations.
-/// * `amount` - The total amount of money to be made up.
-///
-/// # Returns
-/// * `Option<usize>` - The minimum number of coins required to make up the amount, or `None` if it's not possible.
-///
-/// # Complexity
-/// * Time complexity: O(amount * coins.length)
-/// * Space complexity: O(amount)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn coin_change(coins: &[usize], amount: usize) -> Option<usize> {
     let mut min_coins = vec![None; amount + 1];
     min_coins[0] = Some(0);

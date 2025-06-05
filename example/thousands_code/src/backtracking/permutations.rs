@@ -1,16 +1,16 @@
-//! This module provides a function to generate all possible distinct permutations
-//! of a given collection of integers using a backtracking algorithm.
 
-/// Generates all possible distinct permutations of a given vector of integers.
-///
-/// # Arguments
-///
-/// * `nums` - A vector of integers. The input vector is sorted before generating
-/// permutations to handle duplicates effectively.
-///
-/// # Returns
-///
-/// A vector containing all possible distinct permutations of the input vector.
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn permute(mut nums: Vec<isize>) -> Vec<Vec<isize>> {
     let mut permutations = Vec::new();
     let mut current = Vec::new();
@@ -22,14 +22,14 @@ pub fn permute(mut nums: Vec<isize>) -> Vec<Vec<isize>> {
     permutations
 }
 
-/// Helper function for the `permute` function to generate distinct permutations recursively.
-///
-/// # Arguments
-///
-/// * `nums` - A reference to the sorted slice of integers.
-/// * `current` - A mutable reference to the vector holding the current permutation.
-/// * `used` - A mutable reference to a vector tracking which elements are used.
-/// * `permutations` - A mutable reference to the vector holding all generated distinct permutations.
+
+
+
+
+
+
+
+
 fn generate(
     nums: &[isize],
     current: &mut Vec<isize>,

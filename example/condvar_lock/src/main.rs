@@ -15,7 +15,7 @@ fn incorrect_use_condvar() {
         let (lock, cvar) = &*pair1;
         let mut started = lock.lock().unwrap();
         while !*started {
-            //*started永远为false
+            
             started = cvar.wait(started).unwrap();
         }
     });

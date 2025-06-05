@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Find the maximum subarray sum using Kadane's algorithm.(https://en.wikipedia.org/wiki/Maximum_subarray_problem)
+ * @brief Find the maximum subarray sum using Kadane's algorithm.(https:
  *
  * @details
  * This program provides a function to find the maximum subarray sum in an array of integers
@@ -9,7 +9,7 @@
  * @param arr A slice of integers representing the array.
  * @return The maximum subarray sum.
  *
- * @author [Gyandeep] (https://github.com/Gyan172004)
+ * @author [Gyandeep] (https:
  * @see Wikipedia - Maximum subarray problem
  */
 

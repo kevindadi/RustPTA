@@ -3,7 +3,7 @@
     Written from scratch.
 */
 
-// The charset and padding used for en- and decoding.
+
 const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const PADDING: char = '=';
 
@@ -34,16 +34,16 @@ fn collect_six_bits(from: (u8, u8), offset: u8) -> u8 {
 pub fn base64_encode(data: &[u8]) -> String {
     let mut bits_encoded = 0usize;
     let mut encoded_string = String::new();
-    // Using modulo twice to prevent an underflow, Wolfram|Alpha says this is optimal
+    
     let padding_needed = ((6 - (data.len() * 8) % 6) / 2) % 3;
     loop {
-        let lower_byte_index_to_encode = bits_encoded / 8usize; // Integer division
+        let lower_byte_index_to_encode = bits_encoded / 8usize; 
         if lower_byte_index_to_encode == data.len() {
             break;
         }
         let lower_byte_to_encode = data[lower_byte_index_to_encode];
         let upper_byte_to_encode = if (lower_byte_index_to_encode + 1) == data.len() {
-            0u8 // Padding
+            0u8 
         } else {
             data[lower_byte_index_to_encode + 1]
         };
@@ -69,12 +69,12 @@ pub fn base64_decode(data: &str) -> Result<Vec<u8>, (&str, u8)> {
     'decodeloop: loop {
         while collected_bits < 8 {
             if let Some(nextbyte) = databytes.next() {
-                // Finds the first occurence of the latest byte
+                
                 if let Some(idx) = CHARSET.iter().position(|&x| x == nextbyte) {
                     byte_buffer |= ((idx & 0b00111111) as u16) << (10 - collected_bits);
                     collected_bits += 6;
                 } else if nextbyte == (PADDING as u8) {
-                    collected_bits -= 2; // Padding only comes at the end so this works
+                    collected_bits -= 2; 
                 } else {
                     return Err((
                         "Failed to decode base64: Expected byte from charset, found invalid byte.",

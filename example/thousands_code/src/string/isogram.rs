@@ -1,33 +1,33 @@
-//! This module provides functionality to check if a given string is an isogram.
-//! An isogram is a word or phrase in which no letter occurs more than once.
+
+
 
 use std::collections::HashMap;
 
-/// Enum representing possible errors that can occur while checking for isograms.
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum IsogramError {
-    /// Indicates that the input contains a non-alphabetic character.
+    
     NonAlphabeticCharacter,
 }
 
-/// Counts the occurrences of each alphabetic character in a given string.
-///
-/// This function takes a string slice as input. It counts how many times each alphabetic character
-/// appears in the input string and returns a hashmap where the keys are characters and the values
-/// are their respective counts.
-///
-/// # Arguments
-///
-/// * `s` - A string slice that contains the input to count characters from.
-///
-/// # Errors
-///
-/// Returns an error if the input contains non-alphabetic characters (excluding spaces).
-///
-/// # Note
-///
-/// This function treats uppercase and lowercase letters as equivalent (case-insensitive).
-/// Spaces are ignored and do not affect the character count.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn count_letters(s: &str) -> Result<HashMap<char, usize>, IsogramError> {
     let mut letter_counts = HashMap::new();
 
@@ -44,19 +44,19 @@ fn count_letters(s: &str) -> Result<HashMap<char, usize>, IsogramError> {
     Ok(letter_counts)
 }
 
-/// Checks if the given input string is an isogram.
-///
-/// This function takes a string slice as input. It counts the occurrences of each
-/// alphabetic character (ignoring case and spaces).
-///
-/// # Arguments
-///
-/// * `input` - A string slice that contains the input to check for isogram properties.
-///
-/// # Return
-///
-/// - `Ok(true)` if all characters appear only once, or `Ok(false)` if any character appears more than once.
-/// - `Err(IsogramError::NonAlphabeticCharacter) if the input contains any non-alphabetic characters.
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn is_isogram(s: &str) -> Result<bool, IsogramError> {
     let letter_counts = count_letters(s)?;
     Ok(letter_counts.values().all(|&count| count == 1))

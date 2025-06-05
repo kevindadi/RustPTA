@@ -1,9 +1,9 @@
-/// Signum function is a mathematical function that extracts
-/// the sign of a real number. It is also known as the sign function,
-/// and it is an odd piecewise function.
-/// If a number is negative, i.e. it is less than zero, then sgn(x) = -1
-/// If a number is zero, then sgn(0) = 0
-/// If a number is positive, i.e. it is greater than zero, then sgn(x) = 1
+
+
+
+
+
+
 
 pub fn signum(number: f64) -> i8 {
     if number == 0.0 {

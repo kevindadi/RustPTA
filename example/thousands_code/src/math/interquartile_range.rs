@@ -1,7 +1,7 @@
-// Author : cyrixninja
-// Interquartile Range  : An implementation of interquartile range (IQR) which is a measure of statistical
-//                        dispersion, which is the spread of the data.
-// Wikipedia Reference  : https://en.wikipedia.org/wiki/Interquartile_range
+
+
+
+
 
 use std::cmp::Ordering;
 

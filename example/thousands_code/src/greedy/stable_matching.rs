@@ -51,11 +51,11 @@ fn process_proposal(
     let next_woman_idx = next_proposal[man];
     let woman = &man_pref_list[next_woman_idx];
 
-    // Update man's next proposal index
+    
     next_proposal.insert(man.to_string(), next_woman_idx + 1);
 
     if let Some(current_man) = current_partner[woman].clone() {
-        // Woman is currently engaged, check if she prefers the new man
+        
         if woman_prefers_new_man(woman, man, &current_man, woman_ranks) {
             engage_man(
                 man,
@@ -66,11 +66,11 @@ fn process_proposal(
                 Some(current_man),
             );
         } else {
-            // Woman rejects the proposal, so the man remains free
+            
             free_men.push_back(man.to_string());
         }
     } else {
-        // Woman is not engaged, so engage her with this man
+        
         engage_man(man, woman, free_men, current_partner, man_engaged, None);
     }
 }
@@ -97,7 +97,7 @@ fn engage_man(
     current_partner.insert(woman.to_string(), Some(man.to_string()));
 
     if let Some(current_man) = current_man {
-        // The current man is now free
+        
         free_men.push_back(current_man);
     }
 }
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn test_stable_matching_duplicate_preferences() {
         let men_preferences = HashMap::from([
-            ("A".to_string(), vec!["X".to_string(), "X".to_string()]), // Man with duplicate preferences
+            ("A".to_string(), vec!["X".to_string(), "X".to_string()]), 
             ("B".to_string(), vec!["Y".to_string()]),
         ]);
 

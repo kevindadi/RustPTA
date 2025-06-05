@@ -1,6 +1,6 @@
 use std::ops::{Add, Mul, MulAssign, Sub};
 
-// f64 complex
+
 #[derive(Clone, Copy, Debug)]
 pub struct Complex64 {
     pub re: f64,
@@ -100,9 +100,9 @@ pub fn fast_fourier_transform_input_permutation(length: usize) -> Vec<usize> {
             bit >>= 1;
         }
         reverse ^= bit;
-        // This is equivalent to adding 1 to a reversed number
+        
         if position < reverse {
-            // Only swap each element once
+            
             result.swap(position, reverse);
         }
         position += 1;
@@ -203,9 +203,9 @@ mod tests {
     #[test]
     #[ignore]
     fn square_big_polynomial() {
-        // This test case takes ~1050ms on my machine in unoptimized mode,
-        // but it takes ~70ms in release mode.
-        let n = 1 << 17; // ~100_000
+        
+        
+        let n = 1 << 17; 
         let mut polynomial = vec![1.0f64; n];
         polynomial.append(&mut vec![0.0f64; n]);
         let permutation = fast_fourier_transform_input_permutation(polynomial.len());

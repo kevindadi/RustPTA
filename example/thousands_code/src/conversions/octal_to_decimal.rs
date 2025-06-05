@@ -1,8 +1,8 @@
-// Author: cyrixninja
-// Octal to Decimal Converter: Converts Octal to Decimal
-// Wikipedia References:
-// 1. https://en.wikipedia.org/wiki/Octal
-// 2. https://en.wikipedia.org/wiki/Decimal
+
+
+
+
+
 
 pub fn octal_to_decimal(octal_str: &str) -> Result<u64, &'static str> {
     let octal_str = octal_str.trim();
@@ -15,7 +15,7 @@ pub fn octal_to_decimal(octal_str: &str) -> Result<u64, &'static str> {
         return Err("Non-octal Value");
     }
 
-    // Convert octal to decimal and directly return the Result
+    
     u64::from_str_radix(octal_str, 8).map_err(|_| "Conversion error")
 }
 

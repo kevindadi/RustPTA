@@ -1,9 +1,9 @@
-// Author : cyrixninja
-// Sum of Harmonic Series :    Find the sum of n terms in an harmonic progression.  The calculation starts with the
-//                             first_term and loops adding the common difference of Arithmetic Progression by which
-//                             the given Harmonic Progression is linked.
-// Wikipedia Reference  :  https://en.wikipedia.org/wiki/Interquartile_range
-// Other References     :  https://the-algorithms.com/algorithm/sum-of-harmonic-series?lang=python
+
+
+
+
+
+
 
 pub fn sum_of_harmonic_progression(
     first_term: f64,

@@ -1,20 +1,20 @@
-/// Wave Sort Algorithm
-///
-/// Wave Sort is a sorting algorithm that works in O(n log n) time assuming
-/// the sort function used works in O(n log n) time.
-/// It arranges elements in an array into a sequence where every alternate
-/// element is either greater or smaller than its adjacent elements.
-///
-/// Reference:
-/// [Wave Sort Algorithm - GeeksforGeeks](https://www.geeksforgeeks.org/sort-array-wave-form-2/)
-///
-/// # Examples
-///
-/// use the_algorithms_rust::sorting::wave_sort;
-/// let array = vec![10, 90, 49, 2, 1, 5, 23];
-/// let result = wave_sort(array);
-/// // Result: [2, 1, 10, 5, 49, 23, 90]
-///
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn wave_sort<T: Ord>(arr: &mut [T]) {
     let n = arr.len();
     arr.sort();

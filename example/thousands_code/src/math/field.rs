@@ -2,9 +2,9 @@ use core::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
-/// A field
-///
-/// <https://en.wikipedia.org/wiki/Field_(mathematics)>
+
+
+
 pub trait Field:
     Neg<Output = Self>
     + Add<Output = Self>
@@ -19,33 +19,33 @@ pub trait Field:
     const ZERO: Self;
     const ONE: Self;
 
-    /// Multiplicative inverse
+    
     fn inverse(self) -> Self;
 
-    /// Z-mod structure
+    
     fn integer_mul(self, a: i64) -> Self;
     fn from_integer(a: i64) -> Self {
         Self::ONE.integer_mul(a)
     }
 
-    /// Iterate over all elements in this field
-    ///
-    /// The iterator finishes only for finite fields.
+    
+    
+    
     type ElementsIter: Iterator<Item = Self>;
     fn elements() -> Self::ElementsIter;
 }
 
-/// Prime field of order `P`, that is, finite field `GF(P) = ℤ/Pℤ`
-///
-/// Only primes `P` <= 2^63 - 25 are supported, because the field elements are represented by `i64`.
-// TODO: Extend field implementation for any prime `P` by e.g. using u32 blocks.
+
+
+
+
 #[derive(Clone, Copy)]
 pub struct PrimeField<const P: u64> {
     a: i64,
 }
 
 impl<const P: u64> PrimeField<P> {
-    /// Reduces the representation into the range [0, p)
+    
     fn reduce(self) -> Self {
         let Self { a } = self;
         let p: i64 = P.try_into().expect("module not fitting into signed 64 bit");
@@ -54,7 +54,7 @@ impl<const P: u64> PrimeField<P> {
         Self { a }
     }
 
-    /// Returns the positive integer in the range [0, p) representing this element
+    
     pub fn to_integer(&self) -> u64 {
         self.reduce().a as u64
     }
@@ -209,7 +209,7 @@ impl<const P: u64> Hash for PrimeField<P> {
     }
 }
 
-// TODO: should we use extended_euclidean_algorithm adjusted to i64?
+
 fn mod_inverse(mut a: i64, mut b: i64) -> i64 {
     let mut s = 1;
     let mut t = 0;
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn large_prime_field() {
-        const P: u64 = 2_u64.pow(63) - 25; // largest prime fitting into i64
+        const P: u64 = 2_u64.pow(63) - 25; 
         type F = PrimeField<P>;
         let x = F::from(P as i64 - 1);
         let y = x.inverse();
@@ -244,13 +244,13 @@ mod tests {
             for x in -7..7 {
                 let x = PrimeField::<P>::from(x);
                 if x != PrimeField::ZERO {
-                    // multiplicative
+                    
                     assert_eq!(x.inverse() * x, PrimeField::ONE);
                     assert_eq!(x * x.inverse(), PrimeField::ONE);
                     assert_eq!((x.inverse().a * x.a).rem_euclid(P as i64), 1);
                     assert_eq!(x / x, PrimeField::ONE);
                 }
-                // additive
+                
                 assert_eq!(x + (-x), PrimeField::ZERO);
                 assert_eq!((-x) + x, PrimeField::ZERO);
                 assert_eq!(x - x, PrimeField::ZERO);

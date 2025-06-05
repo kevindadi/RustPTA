@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn descending() {
-        //descending
+        
         let mut ve1 = vec![6, 5, 4, 3, 2, 1];
         let cloned = ve1.clone();
         comb_sort(&mut ve1);
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn ascending() {
-        //pre-sorted
+        
         let mut ve2 = vec![1, 2, 3, 4, 5, 6];
         let cloned = ve2.clone();
         comb_sort(&mut ve2);
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn duplicates() {
-        //pre-sorted
+        
         let mut ve3 = vec![2, 2, 2, 2, 2, 1];
         let cloned = ve3.clone();
         comb_sort(&mut ve3);

@@ -1,10 +1,3 @@
-// Copyright (c) 2024 <Wei Li>.
-//
-// This source code is licensed under the GNU license found in the
-// LICENSE file in the root directory of this source tree.
-
-//! Memory usage monitoring. Currently only supported on Linux.
-
 use libc::pid_t;
 use log::error;
 use nom::bytes::streaming::tag;
@@ -19,22 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::{fs::File, io::Read};
 
-/// Memory usage information prcessed from `/proc/[pid]/statm`.
-///
-/// All values are in units of pages.
-///
-/// See `man 5 proc` and `Linux/fs/proc/array.c`.
 #[derive(Debug, Default, PartialEq, Eq, Hash)]
 pub struct Statm {
-    /// Total virtual memory size.
     pub size: usize,
-    /// Resident non-swapped memory.
+
     pub resident: usize,
-    /// Shared memory.
+
     pub share: usize,
-    /// Resident executable memory.
+
     pub text: usize,
-    /// Resident data and stack memory.
+
     pub data: usize,
 }
 
@@ -78,7 +65,6 @@ impl MemoryWatcher {
                 }
             }
 
-            // Sleep for a while before checking again
             thread::sleep(std::time::Duration::from_millis(100));
         }));
     }
@@ -112,8 +98,6 @@ fn rss_in_gigabytes(rss_pages: usize) -> usize {
     rss_pages * 4 / 1024 / 1024
 }
 
-/// Transforms a `nom` parse result into a io result.
-/// The parser must completely consume the input.
 pub fn map_result<T>(result: IResult<&str, T>) -> Result<T> {
     match result {
         IResult::Ok((remaining, val)) => {
@@ -137,9 +121,6 @@ fn parse_usize(input: &str) -> IResult<&str, usize> {
     map_res(digit1, |s: &str| s.parse::<usize>()).parse(input)
 }
 
-/// Parses the statm file format.
-///
-/// The columns in the statm file include: size resident shared text lib data dt
 fn parse_statm(input: &str) -> IResult<&str, Statm> {
     (count(terminated(parse_usize, tag(" ")), 6), parse_usize)
         .parse(input)
@@ -155,7 +136,6 @@ fn parse_statm(input: &str) -> IResult<&str, Statm> {
         })
 }
 
-/// Parses the provided statm file.
 fn statm_file(file: &mut File) -> Result<Statm> {
     let mut buf = String::new();
     file.read_to_string(&mut buf)
@@ -163,17 +143,14 @@ fn statm_file(file: &mut File) -> Result<Statm> {
     map_result(parse_statm(&buf.trim()))
 }
 
-/// Returns memory status information for the process with the provided pid.
 pub fn statm(pid: pid_t) -> Result<Statm> {
     statm_file(&mut File::open(&format!("/proc/{}/statm", pid))?)
 }
 
-/// Returns memory status information for the current process.
 pub fn statm_self() -> Result<Statm> {
     statm_file(&mut File::open("/proc/self/statm")?)
 }
 
-/// Returns memory status information from the thread with the provided parent process ID and thread ID.
 pub fn statm_task(process_id: pid_t, thread_id: pid_t) -> Result<Statm> {
     statm_file(&mut File::open(&format!(
         "/proc/{}/task/{}/statm",

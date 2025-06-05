@@ -1,32 +1,32 @@
-// Totient function for
-// all numbers smaller than
-// or equal to n.
 
-// Computes and prints
-// totient of all numbers
-// smaller than or equal to n
+
+
+
+
+
+
 
 use std::vec;
 
 pub fn compute_totient(n: i32) -> vec::Vec<i32> {
     let mut phi: Vec<i32> = Vec::new();
 
-    // initialize phi[i] = i
+    
     for i in 0..=n {
         phi.push(i);
     }
 
-    // Compute other Phi values
+    
     for p in 2..n + 1 {
-        // If phi[p] is not computed already,
-        // then number p is prime
+        
+        
         if phi[(p) as usize] == p {
-            // Phi of a prime number p is
-            // always equal to p-1.
+            
+            
             phi[(p) as usize] = p - 1;
 
-            // Update phi values of all
-            // multiples of p
+            
+            
             for i in ((2 * p)..n + 1).step_by(p as usize) {
                 phi[(i) as usize] = (phi[i as usize] / p) * (p - 1);
             }

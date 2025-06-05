@@ -5,12 +5,12 @@ use std::ops::Neg;
 
 type Graph<V, E> = BTreeMap<V, BTreeMap<V, E>>;
 
-// performs the Bellman-Ford algorithm on the given graph from the given start
-// the graph is an undirected graph
-//
-// if there is a negative weighted loop it returns None
-// else it returns a map that for each reachable vertex associates the distance and the predecessor
-// since the start has no predecessor but is reachable, map[start] will be None
+
+
+
+
+
+
 pub fn bellman_ford<
     V: Ord + Copy,
     E: Ord + Copy + Add<Output = E> + Neg<Output = E> + std::ops::Sub<Output = E>,
@@ -33,17 +33,17 @@ pub fn bellman_ford<
             for (v, d) in edges {
                 match ans.get(v) {
                     Some(Some((_, dist)))
-                        // if this is a longer path, do nothing
+                        
                         if match dist_u {
                             Some(dist_u) => dist_u + *d >= *dist,
                             None => d >= dist,
                         } => {}
                     Some(None) => {
                         match dist_u {
-                            // if dist_u + d < 0 there is a negative loop going by start
-                            // else it's just a longer path
+                            
+                            
                             Some(dist_u) if dist_u >= -*d => {}
-                            // negative self edge or negative loop
+                            
                             _ => {
                                 if *d > *d + *d {
                                     return None;
@@ -51,7 +51,7 @@ pub fn bellman_ford<
                             }
                         };
                     }
-                    // it's a shorter path: either dist_v was infinite or it was longer than dist_u + d
+                    
                     _ => {
                         ans.insert(
                             *v,

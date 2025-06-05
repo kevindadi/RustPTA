@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 use std::ops::Deref;
 
-/// This struct implements as Binary Search Tree (BST), which is a
-/// simple data structure for storing sorted data
+
+
 pub struct BinarySearchTree<T>
 where
     T: Ord,
@@ -25,7 +25,7 @@ impl<T> BinarySearchTree<T>
 where
     T: Ord,
 {
-    /// Create a new, empty BST
+    
     pub fn new() -> BinarySearchTree<T> {
         BinarySearchTree {
             value: None,
@@ -34,25 +34,25 @@ where
         }
     }
 
-    /// Find a value in this tree. Returns True if value is in this
-    /// tree, and false otherwise
+    
+    
     pub fn search(&self, value: &T) -> bool {
         match &self.value {
             Some(key) => {
                 match key.cmp(value) {
                     Ordering::Equal => {
-                        // key == value
+                        
                         true
                     }
                     Ordering::Greater => {
-                        // key > value
+                        
                         match &self.left {
                             Some(node) => node.search(value),
                             None => false,
                         }
                     }
                     Ordering::Less => {
-                        // key < value
+                        
                         match &self.right {
                             Some(node) => node.search(value),
                             None => false,
@@ -64,12 +64,12 @@ where
         }
     }
 
-    /// Returns a new iterator which iterates over this tree in order
+    
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         BinarySearchTreeIter::new(self)
     }
 
-    /// Insert a value into the appropriate location in this tree.
+    
     pub fn insert(&mut self, value: T) {
         match &self.value {
             None => self.value = Some(value),
@@ -93,7 +93,7 @@ where
         }
     }
 
-    /// Returns the smallest value in this tree
+    
     pub fn minimum(&self) -> Option<&T> {
         match &self.left {
             Some(node) => node.minimum(),
@@ -101,7 +101,7 @@ where
         }
     }
 
-    /// Returns the largest value in this tree
+    
     pub fn maximum(&self) -> Option<&T> {
         match &self.right {
             Some(node) => node.maximum(),
@@ -109,20 +109,20 @@ where
         }
     }
 
-    /// Returns the largest value in this tree smaller than value
+    
     pub fn floor(&self, value: &T) -> Option<&T> {
         match &self.value {
             Some(key) => {
                 match key.cmp(value) {
                     Ordering::Greater => {
-                        // key > value
+                        
                         match &self.left {
                             Some(node) => node.floor(value),
                             None => None,
                         }
                     }
                     Ordering::Less => {
-                        // key < value
+                        
                         match &self.right {
                             Some(node) => {
                                 let val = node.floor(value);
@@ -141,20 +141,20 @@ where
         }
     }
 
-    /// Returns the smallest value in this tree larger than value
+    
     pub fn ceil(&self, value: &T) -> Option<&T> {
         match &self.value {
             Some(key) => {
                 match key.cmp(value) {
                     Ordering::Less => {
-                        // key < value
+                        
                         match &self.right {
                             Some(node) => node.ceil(value),
                             None => None,
                         }
                     }
                     Ordering::Greater => {
-                        // key > value
+                        
                         match &self.left {
                             Some(node) => {
                                 let val = node.ceil(value);
@@ -167,7 +167,7 @@ where
                         }
                     }
                     Ordering::Equal => {
-                        // key == value
+                        
                         Some(key)
                     }
                 }

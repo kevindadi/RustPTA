@@ -1,7 +1,7 @@
-/// In place counting sort for collections of u32
-/// O(n + maxval) in time, where maxval is the biggest value an input can possibly take
-/// O(maxval) in memory
-/// u32 is chosen arbitrarly, a counting sort probably should'nt be used on data that requires bigger types.
+
+
+
+
 
 pub fn counting_sort(arr: &mut [u32], maxval: usize) {
     let mut occurences: Vec<usize> = vec![0; maxval + 1];
@@ -20,7 +20,7 @@ pub fn counting_sort(arr: &mut [u32], maxval: usize) {
 }
 
 use std::ops::AddAssign;
-/// Generic implementation of a counting sort for all usigned types
+
 pub fn generic_counting_sort<T: Into<u64> + From<u8> + AddAssign + Copy>(
     arr: &mut [T],
     maxval: usize,
@@ -31,14 +31,14 @@ pub fn generic_counting_sort<T: Into<u64> + From<u8> + AddAssign + Copy>(
         occurences[data.into() as usize] += 1;
     }
 
-    // Current index in output array
+    
     let mut i = 0;
 
-    // current data point, necessary to be type-safe
+    
     let mut data = T::from(0);
 
-    // This will iterate from 0 to the largest data point in `arr`
-    // `number` contains the occurances of the data point `data`
+    
+    
     for &number in occurences.iter() {
         for _ in 0..number {
             arr[i] = data;

@@ -1,4 +1,4 @@
-/// Size of the state array in bits
+
 const B: usize = 1600;
 
 const W: usize = B / 25;
@@ -6,7 +6,7 @@ const L: usize = W.ilog2() as usize;
 
 const U8BITS: usize = u8::BITS as usize;
 
-// Macro for looping through the whole state array
+
 macro_rules! iterate {
     ( $x:ident, $y:ident, $z:ident => $b:block ) => {
         for $y in 0..5 {
@@ -19,8 +19,8 @@ macro_rules! iterate {
     };
 }
 
-/// A function that produces a padding string such that the length of the padding + the length of
-/// the string to be padded (2nd parameter) is divisible by the 1st parameter
+
+
 type PadFn = fn(isize, isize) -> Vec<bool>;
 type SpongeFn = fn(&[bool]) -> [bool; B];
 
@@ -59,12 +59,12 @@ fn state_dump(state: &State) -> [bool; B] {
     bits
 }
 
-/// XORs the state with the parities of two columns in the state array
+
 fn theta(state: &mut State) {
     let mut c = [[false; W]; 5];
     let mut d = [[false; W]; 5];
 
-    // Assign values of C[x,z]
+    
     for x in 0..5 {
         for z in 0..W {
             c[x][z] = state[x][0][z];
@@ -75,7 +75,7 @@ fn theta(state: &mut State) {
         }
     }
 
-    // Assign values of D[x,z]
+    
     for x in 0..5 {
         for z in 0..W {
             let x1 = (x as isize - 1).rem_euclid(5) as usize;
@@ -85,13 +85,13 @@ fn theta(state: &mut State) {
         }
     }
 
-    // Xor values of D[x,z] into our state array
+    
     iterate!(x, y, z => {
         state[x][y][z] ^= d[x][z];
     });
 }
 
-/// Rotates each lane by an offset depending of the x and y indeces
+
 fn rho(state: &mut State) {
     let mut new_state = state_new();
 
@@ -118,7 +118,7 @@ fn rho(state: &mut State) {
     state_copy(state, &new_state);
 }
 
-/// Rearrange the positions of the lanes of the state array
+
 fn pi(state: &mut State) {
     let mut new_state = state_new();
 
@@ -139,13 +139,13 @@ fn chi(state: &mut State) {
     state_copy(state, &new_state);
 }
 
-/// Calculates the round constant depending on what the round number is
+
 fn rc(t: u8) -> bool {
     let mut b1: u16;
     let mut b2: u16;
-    let mut r: u16 = 0x80; // tread r as an array of bits
+    let mut r: u16 = 0x80; 
 
-    //if t % 0xFF == 0 { return true; }
+    
 
     for _i in 0..(t % 255) {
         b1 = r >> 8;
@@ -153,15 +153,15 @@ fn rc(t: u8) -> bool {
         r |= (b1 ^ b2) << 8;
 
         b1 = (r >> 4) & 1;
-        r &= 0x1EF; // clear r[4]
+        r &= 0x1EF; 
         r |= (b1 ^ b2) << 4;
 
         b1 = (r >> 3) & 1;
-        r &= 0x1F7; // clear r[3]
+        r &= 0x1F7; 
         r |= (b1 ^ b2) << 3;
 
         b1 = (r >> 2) & 1;
-        r &= 0x1FB; // clear r[2]
+        r &= 0x1FB; 
         r |= (b1 ^ b2) << 2;
 
         r >>= 1;
@@ -170,7 +170,7 @@ fn rc(t: u8) -> bool {
     (r >> 7) != 0
 }
 
-/// Applies the round constant to the first lane of the state array
+
 fn iota(state: &mut State, i_r: u8) {
     let mut rc_arr = [false; W];
 
@@ -220,9 +220,9 @@ fn pad101(x: isize, m: isize) -> Vec<bool> {
     ret
 }
 
-/// Sponge construction is a method of compression needing 1) a function on fixed-length bit
-/// strings( here we use keccak_f), 2) a padding function (pad10*1), and 3) a rate. The input and
-/// output of this method can be arbitrarily long
+
+
+
 fn sponge(f: SpongeFn, pad: PadFn, r: usize, n: &[bool], d: usize) -> Vec<bool> {
     let mut p = Vec::from(n);
     p.append(&mut pad(r as isize, n.len() as isize));
@@ -287,7 +287,7 @@ fn b2h(s: &[bool]) -> Vec<u8> {
 
     bytes
 }
-/// Macro to implement all sha3 hash functions as they only differ in digest size
+
 macro_rules! sha3 {
     ($name:ident, $n:literal) => {
         pub fn $name(m: &[u8]) -> [u8; ($n / U8BITS)] {
@@ -354,7 +354,7 @@ mod tests {
         ]
     );
 
-    // Done on large input to verify sponge function is working properly
+    
     digest_test!(
         sha3_224_2312,
         sha3_224,

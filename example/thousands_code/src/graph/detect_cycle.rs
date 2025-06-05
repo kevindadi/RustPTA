@@ -7,7 +7,7 @@ pub trait DetectCycle {
     fn detect_cycle_bfs(&self) -> bool;
 }
 
-// Helper function to detect cycle in an undirected graph using DFS graph traversal
+
 fn undirected_graph_detect_cycle_dfs<'a>(
     graph: &'a UndirectedGraph,
     visited_node: &mut HashSet<&'a String>,
@@ -28,7 +28,7 @@ fn undirected_graph_detect_cycle_dfs<'a>(
     false
 }
 
-// Helper function to detect cycle in an undirected graph using BFS graph traversal
+
 fn undirected_graph_detect_cycle_bfs<'a>(
     graph: &'a UndirectedGraph,
     visited_node: &mut HashSet<&'a String>,
@@ -36,7 +36,7 @@ fn undirected_graph_detect_cycle_bfs<'a>(
 ) -> bool {
     visited_node.insert(u);
 
-    // Initialize the queue for BFS, storing (current node, parent node) tuples
+    
     let mut queue = VecDeque::<(&String, Option<&String>)>::new();
     queue.push_back((u, None));
 
@@ -83,7 +83,7 @@ impl DetectCycle for UndirectedGraph {
     }
 }
 
-// Helper function to detect cycle in a directed graph using DFS graph traversal
+
 fn directed_graph_detect_cycle_dfs<'a>(
     graph: &'a DirectedGraph,
     visited_node: &mut HashSet<&'a String>,
@@ -126,20 +126,20 @@ impl DetectCycle for DirectedGraph {
         false
     }
 
-    // detect cycle in a the graph using Kahn's algorithm
-    // https://www.geeksforgeeks.org/detect-cycle-in-a-directed-graph-using-bfs/
+    
+    
     fn detect_cycle_bfs(&self) -> bool {
-        // Set 0 in-degree for each vertex
+        
         let mut in_degree: HashMap<&String, usize> =
             self.adjacency_table().keys().map(|k| (k, 0)).collect();
 
-        // Calculate in-degree for each vertex
+        
         for u in self.adjacency_table().keys() {
             for (v, _) in self.adjacency_table().get(u).unwrap() {
                 *in_degree.get_mut(v).unwrap() += 1;
             }
         }
-        // Initialize queue with vertex having 0 in-degree
+        
         let mut queue: VecDeque<&String> = in_degree
             .iter()
             .filter(|&(_, &degree)| degree == 0)
@@ -159,8 +159,8 @@ impl DetectCycle for DirectedGraph {
             }
         }
 
-        // If count of processed vertices is not equal to the number of vertices,
-        // the graph has a cycle
+        
+        
         count != self.adjacency_table().len()
     }
 }

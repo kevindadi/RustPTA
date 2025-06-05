@@ -90,7 +90,7 @@ mod tests {
 
         let points = vec![a.clone(), b, c, d, e.clone()];
 
-        let epsilon = 3.; // The epsilon is quite large, so the result will be a single line
+        let epsilon = 3.; 
         let result = ramer_douglas_peucker(&points, epsilon);
         assert_eq!(result, vec![a, e]);
     }

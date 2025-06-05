@@ -1,9 +1,9 @@
-/// Finds the longest increasing subsequence and returns it.
-///
-/// If multiple subsequences with the longest possible subsequence length can be found, the
-/// subsequence which appeared first will be returned (see `test_example_1`).
-///
-/// Inspired by [this LeetCode problem](https://leetcode.com/problems/longest-increasing-subsequence/).
+
+
+
+
+
+
 pub fn longest_increasing_subsequence<T: Ord + Clone>(input_array: &[T]) -> Vec<T> {
     let n = input_array.len();
     if n <= 1 {
@@ -32,7 +32,7 @@ pub fn longest_increasing_subsequence<T: Ord + Clone>(input_array: &[T]) -> Vec<
         };
     }
 
-    // Construct subsequence
+    
     let mut out: Vec<T> = Vec::with_capacity(increasing_sequence.len());
 
     out.push(increasing_sequence.last().unwrap().0.clone());
@@ -50,7 +50,7 @@ mod tests {
     use super::longest_increasing_subsequence;
 
     #[test]
-    /// Need to specify generic type T in order to function
+    
     fn test_empty_vec() {
         assert_eq!(longest_increasing_subsequence::<i32>(&[]), vec![]);
     }
@@ -98,8 +98,8 @@ mod tests {
             longest_increasing_subsequence(&input_array),
             expected_result
         );
-        // should be [-1, 2, 4, 6, 8, ...]
-        // the first number is not 0, it would be replaced by -1 before 2 is added
+        
+        
     }
 
     #[test]

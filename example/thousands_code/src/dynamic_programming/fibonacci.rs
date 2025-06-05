@@ -1,18 +1,18 @@
-/// Fibonacci via Dynamic Programming
+
 use std::collections::HashMap;
 
-/// fibonacci(n) returns the nth fibonacci number
-/// This function uses the definition of Fibonacci where:
-/// F(0) = F(1) = 1 and F(n+1) = F(n) + F(n-1) for n>0
-///
-/// Warning: This will overflow the 128-bit unsigned integer at n=186
+
+
+
+
+
 pub fn fibonacci(n: u32) -> u128 {
-    // Use a and b to store the previous two values in the sequence
+    
     let mut a = 0;
     let mut b = 1;
     for _i in 0..n {
-        // As we iterate through, move b's value into a and the new computed
-        // value into b.
+        
+        
         let c = a + b;
         a = b;
         b = c;
@@ -20,14 +20,14 @@ pub fn fibonacci(n: u32) -> u128 {
     b
 }
 
-/// fibonacci(n) returns the nth fibonacci number
-/// This function uses the definition of Fibonacci where:
-/// F(0) = F(1) = 1 and F(n+1) = F(n) + F(n-1) for n>0
-///
-/// Warning: This will overflow the 128-bit unsigned integer at n=186
+
+
+
+
+
 pub fn recursive_fibonacci(n: u32) -> u128 {
-    // Call the actual tail recursive implementation, with the extra
-    // arguments set up.
+    
+    
     _recursive_fibonacci(n, 0, 1)
 }
 
@@ -39,11 +39,11 @@ fn _recursive_fibonacci(n: u32, previous: u128, current: u128) -> u128 {
     }
 }
 
-/// classical_fibonacci(n) returns the nth fibonacci number
-/// This function uses the definition of Fibonacci where:
-/// F(0) = 0, F(1) = 1 and F(n+1) = F(n) + F(n-1) for n>0
-///
-/// Warning: This will overflow the 128-bit unsigned integer at n=186
+
+
+
+
+
 pub fn classical_fibonacci(n: u32) -> u128 {
     match n {
         0 => 0,
@@ -62,14 +62,14 @@ pub fn classical_fibonacci(n: u32) -> u128 {
     }
 }
 
-/// logarithmic_fibonacci(n) returns the nth fibonacci number
-/// This function uses the definition of Fibonacci where:
-/// F(0) = 0, F(1) = 1 and F(n+1) = F(n) + F(n-1) for n>0
-///
-/// Warning: This will overflow the 128-bit unsigned integer at n=186
+
+
+
+
+
 pub fn logarithmic_fibonacci(n: u32) -> u128 {
-    // if it is the max value before overflow, use n-1 then get the second
-    // value in the tuple
+    
+    
     if n == 186 {
         let (_, second) = _logarithmic_fibonacci(185);
         second
@@ -95,7 +95,7 @@ fn _logarithmic_fibonacci(n: u32) -> (u128, u128) {
     }
 }
 
-/// Memoized fibonacci.
+
 pub fn memoized_fibonacci(n: u32) -> u128 {
     let mut cache: HashMap<u32, u128> = HashMap::new();
 
@@ -123,15 +123,15 @@ fn _memoized_fibonacci(n: u32, cache: &mut HashMap<u32, u128>) -> u128 {
     *f
 }
 
-/// matrix_fibonacci(n) returns the nth fibonacci number
-/// This function uses the definition of Fibonacci where:
-/// F(0) = 0, F(1) = 1 and F(n+1) = F(n) + F(n-1) for n>0
-///
-/// Matrix formula:
-/// [F(n + 2)]  =  [1, 1] * [F(n + 1)]
-/// [F(n + 1)]     [1, 0]   [F(n)    ]
-///
-/// Warning: This will overflow the 128-bit unsigned integer at n=186
+
+
+
+
+
+
+
+
+
 pub fn matrix_fibonacci(n: u32) -> u128 {
     let multiplier: Vec<Vec<u128>> = vec![vec![1, 1], vec![1, 0]];
 
@@ -151,14 +151,14 @@ fn matrix_power(base: &Vec<Vec<u128>>, power: u32) -> Vec<Vec<u128>> {
         .fold(identity_matrix, |acc, x| matrix_multiply(&acc, x))
 }
 
-// Copied from matrix_ops since u128 is required instead of i32
+
 #[allow(clippy::needless_range_loop)]
 fn matrix_multiply(multiplier: &[Vec<u128>], multiplicand: &[Vec<u128>]) -> Vec<Vec<u128>> {
-    // Multiply two matching matrices. The multiplier needs to have the same amount
-    // of columns as the multiplicand has rows.
+    
+    
     let mut result: Vec<Vec<u128>> = vec![];
     let mut temp;
-    // Using variable to compare lengths of rows in multiplicand later
+    
     let row_right_length = multiplicand[0].len();
     for row_left in 0..multiplier.len() {
         if multiplier[row_left].len() != multiplicand.len() {
@@ -169,7 +169,7 @@ fn matrix_multiply(multiplier: &[Vec<u128>], multiplicand: &[Vec<u128>]) -> Vec<
             temp = 0;
             for row_right in 0..multiplicand.len() {
                 if row_right_length != multiplicand[row_right].len() {
-                    // If row is longer than a previous row cancel operation with error
+                    
                     panic!("Matrix dimensions do not match");
                 }
                 temp += multiplier[row_left][row_right] * multiplicand[row_right][column_right];
@@ -180,21 +180,21 @@ fn matrix_multiply(multiplier: &[Vec<u128>], multiplicand: &[Vec<u128>]) -> Vec<
     result
 }
 
-/// Binary lifting fibonacci
-///
-/// Following properties of F(n) could be deduced from the matrix formula above:
-///
-/// F(2n)   = F(n) * (2F(n+1) - F(n))
-/// F(2n+1) = F(n+1)^2 + F(n)^2
-///
-/// Therefore F(n) and F(n+1) can be derived from F(n>>1) and F(n>>1 + 1), which
-/// has a smaller constant in both time and space compared to matrix fibonacci.
+
+
+
+
+
+
+
+
+
 pub fn binary_lifting_fibonacci(n: u32) -> u128 {
-    // the state always stores F(k), F(k+1) for some k, initially F(0), F(1)
+    
     let mut state = (0u128, 1u128);
 
     for i in (0..u32::BITS - n.leading_zeros()).rev() {
-        // compute F(2k), F(2k+1) from F(k), F(k+1)
+        
         state = (
             state.0 * (2 * state.1 - state.0),
             state.0 * state.0 + state.1 * state.1,
@@ -207,8 +207,8 @@ pub fn binary_lifting_fibonacci(n: u32) -> u128 {
     state.0
 }
 
-/// nth_fibonacci_number_modulo_m(n, m) returns the nth fibonacci number modulo the specified m
-/// i.e. F(n) % m
+
+
 pub fn nth_fibonacci_number_modulo_m(n: i64, m: i64) -> i128 {
     let (length, pisano_sequence) = get_pisano_sequence_and_period(m);
 
@@ -216,28 +216,28 @@ pub fn nth_fibonacci_number_modulo_m(n: i64, m: i64) -> i128 {
     pisano_sequence[remainder as usize].to_owned()
 }
 
-/// get_pisano_sequence_and_period(m) returns the Pisano Sequence and period for the specified integer m.
-/// The pisano period is the period with which the sequence of Fibonacci numbers taken modulo m repeats.
-/// The pisano sequence is the numbers in pisano period.
+
+
+
 fn get_pisano_sequence_and_period(m: i64) -> (i128, Vec<i128>) {
     let mut a = 0;
     let mut b = 1;
     let mut length: i128 = 0;
     let mut pisano_sequence: Vec<i128> = vec![a, b];
 
-    // Iterating through all the fib numbers to get the sequence
+    
     for _i in 0..(m * m) + 1 {
         let c = (a + b) % m as i128;
 
-        // adding number into the sequence
+        
         pisano_sequence.push(c);
 
         a = b;
         b = c;
 
         if a == 0 && b == 1 {
-            // Remove the last two elements from the sequence
-            // This is a less elegant way to do it.
+            
+            
             pisano_sequence.pop();
             pisano_sequence.pop();
             length = pisano_sequence.len() as i128;
@@ -248,18 +248,18 @@ fn get_pisano_sequence_and_period(m: i64) -> (i128, Vec<i128>) {
     (length, pisano_sequence)
 }
 
-/// last_digit_of_the_sum_of_nth_fibonacci_number(n) returns the last digit of the sum of n fibonacci numbers.
-/// The function uses the definition of Fibonacci where:
-/// F(0) = 0, F(1) = 1 and F(n+1) = F(n) + F(n-1) for n > 2
-///
-/// The sum of the Fibonacci numbers are:
-/// F(0) + F(1) + F(2) + ... + F(n)
+
+
+
+
+
+
 pub fn last_digit_of_the_sum_of_nth_fibonacci_number(n: i64) -> i64 {
     if n < 2 {
         return n;
     }
 
-    // the pisano period of mod 10 is 60
+    
     let n = ((n + 2) % 60) as usize;
     let mut fib = vec![0; n + 1];
     fib[0] = 0;
@@ -356,8 +356,8 @@ mod tests {
     }
 
     #[test]
-    /// Check that the iterative and recursive fibonacci
-    /// produce the same value. Both are combinatorial ( F(0) = F(1) = 1 )
+    
+    
     fn test_iterative_and_recursive_equivalence() {
         assert_eq!(fibonacci(0), recursive_fibonacci(0));
         assert_eq!(fibonacci(1), recursive_fibonacci(1));
@@ -372,10 +372,10 @@ mod tests {
     }
 
     #[test]
-    /// Check that classical and combinatorial fibonacci produce the
-    /// same value when 'n' differs by 1.
-    /// classical fibonacci: ( F(0) = 0, F(1) = 1 )
-    /// combinatorial fibonacci: ( F(0) = F(1) = 1 )
+    
+    
+    
+    
     fn test_classical_and_combinatorial_are_off_by_one() {
         assert_eq!(classical_fibonacci(1), fibonacci(0));
         assert_eq!(classical_fibonacci(2), fibonacci(1));
