@@ -120,7 +120,9 @@ fn main() {
             rustc_command_line_arguments
         );
 
-        rustc_driver::run_compiler(&rustc_command_line_arguments, &mut callbacks);
+        let compiler =
+            rustc_driver::RunCompiler::new(&rustc_command_line_arguments, &mut callbacks);
+        compiler.run()
     });
 
     let exit_code = match result {

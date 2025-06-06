@@ -119,20 +119,16 @@ impl rustc_driver::Callbacks for PTACallbacks {
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         let mut mem_watcher = MemoryWatcher::default();
-        mem_watcher.start();
+        let _ = mem_watcher.start();
 
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
 
-        let MonoItemPartitions {
-            codegen_units,
-            all_mono_items,
-            ..
-        } = tcx.collect_and_partition_mono_items(());
-        let instances: Vec<Instance<'tcx>> = codegen_units
+        let cgus = tcx.collect_and_partition_mono_items(()).1;
+        let instances: Vec<Instance<'tcx>> = cgus
             .iter()
-            .filter_map(|cgu| {
+            .flat_map(|cgu| {
                 cgu.items().iter().filter_map(|(mono_item, _)| {
                     if let MonoItem::Fn(instance) = mono_item {
                         Some(*instance)
@@ -331,7 +327,7 @@ impl PTACallbacks {
                         );
                         println!("Tina Result: {}", analyzer.get_analysis_info().unwrap());
                     }
-                    AnalysisTool::RPN => {
+                    _ => {
                         let mut state_graph = StateGraph::new(
                             pn.net.clone(),
                             pn.get_current_mark(),
