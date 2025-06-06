@@ -19,7 +19,7 @@ use crate::DetectorKind;
 use log::debug;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
-use rustc_middle::mir::mono::MonoItem;
+use rustc_middle::mir::mono::{MonoItem, MonoItemPartitions};
 use rustc_middle::ty::{Instance, TyCtxt};
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
@@ -118,17 +118,17 @@ impl rustc_driver::Callbacks for PTACallbacks {
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         let mut mem_watcher = MemoryWatcher::default();
-        mem_watcher.start();
+        let _ = mem_watcher.start();
 
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
 
-        let cgus = tcx.collect_and_partition_mono_items(()).1;
-        let instances: Vec<Instance<'tcx>> = cgus
+        let MonoItemPartitions { codegen_units, .. } = tcx.collect_and_partition_mono_items(());
+        let instances: Vec<Instance<'tcx>> = codegen_units
             .iter()
-            .flat_map(|cgu| {
-                cgu.items().iter().filter_map(|(mono_item, _)| {
+            .flat_map(|mono_item| {
+                mono_item.items().iter().filter_map(|(mono_item, _)| {
                     if let MonoItem::Fn(instance) = mono_item {
                         Some(*instance)
                     } else {
@@ -326,7 +326,7 @@ impl PTACallbacks {
                         );
                         println!("Tina Result: {}", analyzer.get_analysis_info().unwrap());
                     }
-                    AnalysisTool::RPN => {
+                    _ => {
                         let mut state_graph = StateGraph::new(
                             pn.net.clone(),
                             pn.get_current_mark(),
