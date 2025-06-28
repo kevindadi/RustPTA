@@ -644,6 +644,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             Rvalue::ThreadLocalRef(_) => vec![],
             // 6. 处理无操作数的操作（如常量）
             Rvalue::NullaryOp(_, _) => vec![],
+            Rvalue::WrapUnsafeBinder(_, _) => vec![],
         }
     }
 
