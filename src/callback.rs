@@ -21,6 +21,7 @@ use rustc_driver::Compilation;
 use rustc_hir::def_id::DefId;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::{MonoItem, MonoItemPartitions};
+use rustc_middle::mir::mono::{MonoItem, MonoItemPartitions};
 use rustc_middle::ty::{Instance, TyCtxt};
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
@@ -119,7 +120,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         let mut mem_watcher = MemoryWatcher::default();
-        mem_watcher.start();
+        let _ = mem_watcher.start();
 
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
@@ -331,7 +332,7 @@ impl PTACallbacks {
                         );
                         println!("Tina Result: {}", analyzer.get_analysis_info().unwrap());
                     }
-                    AnalysisTool::RPN => {
+                    _ => {
                         let mut state_graph = StateGraph::new(
                             pn.net.clone(),
                             pn.get_current_mark(),

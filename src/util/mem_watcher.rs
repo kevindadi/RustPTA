@@ -105,7 +105,6 @@ impl Default for MemoryWatcher {
 }
 
 impl MemoryWatcher {
-    /// 创建新的内存监视器
     pub fn new(config: MemoryWatcherConfig) -> Self {
         let initial_stats = get_memory_stats().unwrap_or_default();
         let c_history_size = config.history_size;
@@ -209,7 +208,6 @@ impl MemoryWatcher {
         Ok(())
     }
 
-    /// 停止监控并输出统计信息
     pub fn stop(&mut self) {
         if !self.running.load(Ordering::Relaxed) {
             return;

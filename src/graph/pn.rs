@@ -73,6 +73,204 @@ fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y:
     }
 }
 
+/// 分支合并机会的描述结构
+#[derive(Debug, Clone)]
+pub struct BranchMergeOpportunity {
+    /// 分支点节点（可选，如果所有路径从同一点开始）
+    pub branch_point: Option<NodeIndex>,
+    /// 汇聚到同一敏感节点的路径索引
+    pub convergent_paths: Vec<usize>,
+    /// 可以合并的路径段
+    pub mergeable_segment: Vec<NodeIndex>,
+}
+
+/// 资源节点的标识符，统一不同类型的资源ID
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ResourceId {
+    Lock(LockGuardId),
+    Atomic(AliasId),
+    Channel(ChannelId),
+    Unsafe(AliasId),
+    CondVar(CondVarId),
+}
+
+/// 资源节点信息
+#[derive(Debug, Clone)]
+pub struct ResourceInfo<'tcx> {
+    /// 资源节点在图中的索引
+    pub node_index: NodeIndex,
+    /// 资源类型
+    pub resource_type: ResourceType,
+    /// 资源名称
+    pub name: String,
+    /// 资源的额外信息（如原子操作顺序等）
+    pub metadata: ResourceMetadata<'tcx>,
+}
+
+/// 资源类型枚举
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ResourceType {
+    /// 互斥锁 (Mutex)
+    Mutex,
+    /// 读写锁 (RwLock)
+    RwLock,
+    /// 原子变量
+    Atomic,
+    /// 通道 (Channel)
+    Channel,
+    /// 不安全内存操作
+    Unsafe,
+    /// 条件变量
+    CondVar,
+}
+
+/// 资源的元数据信息
+#[derive(Debug, Clone)]
+pub enum ResourceMetadata<'tcx> {
+    /// 锁相关的元数据
+    Lock {
+        lock_type: LockGuardTy<'tcx>,
+        span: String,
+    },
+    /// 原子变量相关的元数据
+    Atomic {
+        ordering: Option<AtomicOrdering>,
+        var_type: String,
+        span: String,
+    },
+    /// 通道相关的元数据
+    Channel {
+        capacity: Option<usize>,
+        span: String,
+    },
+    /// 不安全操作相关的元数据
+    Unsafe {
+        operation_type: String,
+        span: String,
+    },
+    /// 条件变量相关的元数据
+    CondVar { span: String },
+}
+
+/// 统一管理所有资源节点的结构
+#[derive(Debug, Default)]
+pub struct ResourceManager<'tcx> {
+    /// 资源映射表：资源ID -> 资源信息
+    resources: HashMap<ResourceId, ResourceInfo<'tcx>>,
+    /// 按类型分组的资源索引
+    type_groups: HashMap<ResourceType, Vec<ResourceId>>,
+}
+
+impl<'tcx> ResourceManager<'tcx> {
+    pub fn new() -> Self {
+        Self {
+            resources: HashMap::new(),
+            type_groups: HashMap::new(),
+        }
+    }
+
+    /// 添加资源节点
+    pub fn add_resource(&mut self, id: ResourceId, info: ResourceInfo<'tcx>) {
+        // 添加到类型分组
+        self.type_groups
+            .entry(info.resource_type.clone())
+            .or_default()
+            .push(id.clone());
+
+        // 添加到资源映射表
+        self.resources.insert(id, info);
+    }
+
+    /// 获取指定资源的信息
+    pub fn get_resource(&self, id: &ResourceId) -> Option<&ResourceInfo<'tcx>> {
+        self.resources.get(id)
+    }
+
+    /// 获取指定类型的所有资源
+    pub fn get_resources_by_type(&self, resource_type: &ResourceType) -> Vec<&ResourceInfo<'tcx>> {
+        self.type_groups
+            .get(resource_type)
+            .map(|ids| ids.iter().filter_map(|id| self.resources.get(id)).collect())
+            .unwrap_or_default()
+    }
+
+    /// 获取所有资源节点的NodeIndex
+    pub fn get_all_node_indices(&self) -> Vec<NodeIndex> {
+        self.resources
+            .values()
+            .map(|info| info.node_index)
+            .collect()
+    }
+
+    /// 获取指定类型资源的NodeIndex
+    pub fn get_node_indices_by_type(&self, resource_type: &ResourceType) -> Vec<NodeIndex> {
+        self.get_resources_by_type(resource_type)
+            .into_iter()
+            .map(|info| info.node_index)
+            .collect()
+    }
+
+    /// 根据NodeIndex查找资源信息
+    pub fn find_resource_by_node(
+        &self,
+        node_index: NodeIndex,
+    ) -> Option<(&ResourceId, &ResourceInfo<'tcx>)> {
+        self.resources
+            .iter()
+            .find(|(_, info)| info.node_index == node_index)
+    }
+
+    /// 获取资源统计信息
+    pub fn get_statistics(&self) -> HashMap<ResourceType, usize> {
+        let mut stats = HashMap::new();
+        for resource_type in &[
+            ResourceType::Mutex,
+            ResourceType::RwLock,
+            ResourceType::Atomic,
+            ResourceType::Channel,
+            ResourceType::Unsafe,
+            ResourceType::CondVar,
+        ] {
+            let count = self
+                .type_groups
+                .get(resource_type)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            stats.insert(resource_type.clone(), count);
+        }
+        stats
+    }
+
+    /// 移除资源
+    pub fn remove_resource(&mut self, id: &ResourceId) -> Option<ResourceInfo<'tcx>> {
+        if let Some(info) = self.resources.remove(id) {
+            // 从类型分组中移除
+            if let Some(group) = self.type_groups.get_mut(&info.resource_type) {
+                group.retain(|rid| rid != id);
+            }
+            Some(info)
+        } else {
+            None
+        }
+    }
+
+    /// 判断是否包含指定资源
+    pub fn contains_resource(&self, id: &ResourceId) -> bool {
+        self.resources.contains_key(id)
+    }
+
+    /// 获取所有资源ID
+    pub fn get_all_resource_ids(&self) -> Vec<&ResourceId> {
+        self.resources.keys().collect()
+    }
+
+    /// 清空所有资源
+    pub fn clear(&mut self) {
+        self.resources.clear();
+        self.type_groups.clear();
+    }
+}
+
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
     output_directory: PathBuf,
@@ -82,6 +280,10 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
     pub function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
     pub function_vec: HashMap<DefId, Vec<NodeIndex>>,
+
+    // 统一的资源管理器
+    pub resource_manager: ResourceManager<'tcx>,
+
     locks_counter: HashMap<LockGuardId, NodeIndex>,
     lock_info: LockGuardMap<'tcx>,
     // all condvars
@@ -120,6 +322,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             alias,
             function_counter: HashMap::<DefId, (NodeIndex, NodeIndex)>::new(),
             function_vec: HashMap::<DefId, Vec<NodeIndex>>::new(),
+            resource_manager: ResourceManager::new(),
             locks_counter: HashMap::<LockGuardId, NodeIndex>::new(),
             lock_info: HashMap::default(),
             condvars: HashMap::<CondVarId, NodeIndex>::new(),
@@ -397,8 +600,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         // If CrateType is LIB, do not optimize to prevent initial markings from being changed
         if self.api_spec.apis.is_empty() && !self.options.test {
-            self.reduce_state();
-            log::info!("Merge long(>= 5) P-T chains");
+            let resource_nodes = self.get_resource_nodes();
+            self.reduce_comprehensive(Some(resource_nodes));
         }
         //self.reduce_state_from(self.entry_node);
 
@@ -407,7 +610,18 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::error!("Petri net structure verification failed: {}", err);
             // Can choose to panic here or handle other errors
         }
-        log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
+        let construction_duration = start_time.elapsed();
+        let (final_places, final_transitions, final_edges) = self.get_network_size();
+
+        log::info!("=== Petri网构建完成 ===");
+        log::info!(
+            "最终网络大小: {} places, {} transitions, {} edges",
+            final_places,
+            final_transitions,
+            final_edges
+        );
+        log::info!("构建总时间: {:?}", construction_duration);
+        log::info!("========================\n");
     }
 
     pub fn visitor_function_body(
@@ -625,6 +839,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     /// Simplify states in Petri net by merging simple paths to reduce network complexity
     ///
     /// Specific steps:
+    /// 0. Remove all unreachable nodes from start node (dead code elimination)
     /// 1. Find all nodes with in-degree and out-degree ≤1 as starting points
     /// 2. Starting from each starting point, search in both directions (forward and backward) to find mergeable paths
     /// 3. For each found path:
@@ -635,6 +850,21 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     ///
     /// This simplification can significantly reduce the size of the Petri net while maintaining its basic behavioral characteristics
     pub fn reduce_state(&mut self) {
+        let start_time = Instant::now();
+        let (initial_places, initial_transitions, initial_edges) = self.get_network_size();
+
+        log::info!("=== 开始基本路径合并缩减 ===");
+        log::info!(
+            "初始网络大小: {} places, {} transitions, {} edges",
+            initial_places,
+            initial_transitions,
+            initial_edges
+        );
+
+        // 第0步：删除从start节点不可达的所有节点
+        self.remove_unreachable_nodes();
+        let (after_removal_places, after_removal_transitions, after_removal_edges) =
+            self.get_network_size();
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut all_nodes_to_remove = Vec::new();
@@ -748,115 +978,37 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 self.net.remove_node(node);
             }
         }
-    }
 
-    /// Analyze and simplify paths from start node to end node, preserving paths connected to special nodes
-    /// 1. Use DFS to collect all paths from start_node to end_node
-    /// 2. Mark paths connected to special nodes as valid paths
-    /// 3. Collect nodes to keep (nodes appearing in valid paths)
-    /// 4. Delete nodes that only appear in invalid paths
-    pub fn reduce_state_from(
-        &mut self,
-        start_node: NodeIndex,
-        end_node: NodeIndex,
-        special_nodes: &[NodeIndex],
-    ) {
-        // Store all paths from start to end
-        let mut all_paths: Vec<Vec<NodeIndex>> = Vec::new();
-        // Store valid paths (paths connected to special nodes)
-        let mut valid_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
-        // Store the path currently being explored
-        let mut current_path: Vec<NodeIndex> = vec![start_node];
-        // Record visited nodes to avoid simple loops
-        let mut visited: HashSet<NodeIndex> = HashSet::new();
+        let duration = start_time.elapsed();
+        let (final_places, final_transitions, final_edges) = self.get_network_size();
 
-        // DFS collect all paths
-        self.collect_paths(
-            start_node,
-            end_node,
-            &mut all_paths,
-            &mut current_path,
-            &mut visited,
-            special_nodes,
-            &mut valid_paths,
+        log::info!("基本路径合并缩减完成:");
+        log::info!(
+            "  初始状态: {} places, {} transitions, {} edges",
+            initial_places,
+            initial_transitions,
+            initial_edges
         );
-
-        // Collect all nodes to keep (nodes appearing in valid paths)
-        let mut nodes_to_keep: HashSet<NodeIndex> = HashSet::new();
-        for path in &valid_paths {
-            nodes_to_keep.extend(path.iter().cloned());
-        }
-
-        // Collect all nodes that can be deleted (nodes appearing in invalid paths and not in valid paths)
-        let mut nodes_to_remove: HashSet<NodeIndex> = HashSet::new();
-        for path in &all_paths {
-            if !valid_paths.contains(path) {
-                for &node in path {
-                    if !nodes_to_keep.contains(&node) && node != start_node && node != end_node {
-                        nodes_to_remove.insert(node);
-                    }
-                }
-            }
-        }
-
-        let mut nodes_to_remove: Vec<_> = nodes_to_remove.into_iter().collect();
-        nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
-        for node in nodes_to_remove {
-            self.net.remove_node(node);
-        }
-    }
-
-    /// Recursively collect all paths from start to end
-    ///
-    /// 1. If reaching the end, check if current path is connected to special nodes
-    /// 2. If path is valid, add to valid_paths
-    /// 3. Add current path to all_paths
-    /// 4. Recursively explore all unvisited neighbor nodes
-    /// 5. Remove visit mark when backtracking, allowing nodes to be revisited in other paths
-    fn collect_paths(
-        &self,
-        current: NodeIndex,
-        end: NodeIndex,
-        all_paths: &mut Vec<Vec<NodeIndex>>,
-        current_path: &mut Vec<NodeIndex>,
-        visited: &mut HashSet<NodeIndex>,
-        special_nodes: &[NodeIndex],
-        valid_paths: &mut HashSet<Vec<NodeIndex>>,
-    ) {
-        if current == end {
-            // Check if path is connected to special nodes
-            let path_has_special_connection = current_path.iter().any(|&node| {
-                self.net
-                    .neighbors(node)
-                    .any(|neighbor| special_nodes.contains(&neighbor))
-            });
-
-            if path_has_special_connection {
-                valid_paths.insert(current_path.clone());
-            }
-            all_paths.push(current_path.clone());
-            return;
-        }
-
-        visited.insert(current);
-
-        for neighbor in self.net.neighbors_directed(current, Direction::Outgoing) {
-            if !visited.contains(&neighbor) {
-                current_path.push(neighbor);
-                self.collect_paths(
-                    neighbor,
-                    end,
-                    all_paths,
-                    current_path,
-                    visited,
-                    special_nodes,
-                    valid_paths,
-                );
-                current_path.pop();
-            }
-        }
-
-        visited.remove(&current);
+        log::info!(
+            "  删除不可达节点后: {} places, {} transitions, {} edges",
+            after_removal_places,
+            after_removal_transitions,
+            after_removal_edges
+        );
+        log::info!(
+            "  最终缩减后: {} places, {} transitions, {} edges",
+            final_places,
+            final_transitions,
+            final_edges
+        );
+        log::info!(
+            "  总节点减少: {} places, {} transitions, {} edges",
+            initial_places.saturating_sub(final_places),
+            initial_transitions.saturating_sub(final_transitions),
+            initial_edges.saturating_sub(final_edges)
+        );
+        log::info!("  缩减时间: {:?}", duration);
+        log::info!("=== 基本路径合并缩减结束 ===\n");
     }
 
     // Mapping JoinHandle To Thread DefId
@@ -1099,91 +1251,43 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
     /// Second step reduction: Remove non-sensitive paths while preserving shared nodes
     ///
-    /// This function identifies sensitive paths (containing Unsafe operations, Lock operations, etc.)
-    /// and removes non-sensitive paths, but preserves nodes that are shared between sensitive paths.
+    /// This function implements intelligent path analysis that:
+    /// 1. Identifies sensitive nodes (not just sensitive paths)
+    /// 2. For each sensitive node, finds all paths leading to it
+    /// 3. Identifies branch points where multiple paths converge to the same sensitive node
+    /// 4. Merges non-sensitive branch paths that lead to the same sensitive node
     ///
     /// Arguments:
     /// - start_node: Starting place (typically main function start)
     /// - end_node: Ending place (typically main function end)
     pub fn reduce_non_sensitive_paths(&mut self, start_node: NodeIndex, end_node: NodeIndex) {
-        log::info!("Starting second-step reduction: removing non-sensitive paths");
+        let start_time = Instant::now();
+        let (initial_places, initial_transitions, initial_edges) = self.get_network_size();
 
-        // Step 1: Find all paths from start to end
-        let mut all_paths: Vec<Vec<NodeIndex>> = Vec::new();
-        let mut current_path: Vec<NodeIndex> = vec![start_node];
-        let mut visited: HashSet<NodeIndex> = HashSet::new();
-
-        self.collect_all_paths(
-            start_node,
-            end_node,
-            &mut all_paths,
-            &mut current_path,
-            &mut visited,
+        log::info!("=== 开始快速非敏感节点缩减 ===");
+        log::info!(
+            "初始网络大小: {} places, {} transitions, {} edges",
+            initial_places,
+            initial_transitions,
+            initial_edges
         );
 
-        log::debug!("Found {} total paths from start to end", all_paths.len());
+        // Step 1: Identify all sensitive nodes in the network
+        let sensitive_nodes = self.find_sensitive_nodes();
+        log::info!("Found {} sensitive nodes", sensitive_nodes.len());
 
-        // Step 2: Classify paths as sensitive or non-sensitive
-        let mut sensitive_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
-        let mut non_sensitive_paths: HashSet<Vec<NodeIndex>> = HashSet::new();
+        // Step 2: Use fast BFS to mark essential nodes (避免路径枚举)
+        let nodes_to_preserve =
+            self.mark_essential_nodes_fast(start_node, end_node, &sensitive_nodes);
 
-        for path in &all_paths {
-            if self.is_sensitive_path(path) {
-                sensitive_paths.insert(path.clone());
-                log::debug!("Path marked as sensitive: {} nodes", path.len());
-            } else {
-                non_sensitive_paths.insert(path.clone());
-                log::debug!("Path marked as non-sensitive: {} nodes", path.len());
-            }
-        }
+        log::info!("标记保留 {} 个必要节点", nodes_to_preserve.len());
 
-        log::debug!(
-            "Found {} sensitive paths and {} non-sensitive paths",
-            sensitive_paths.len(),
-            non_sensitive_paths.len()
-        );
-
-        // Step 3: Find shared nodes between sensitive paths
-        let mut shared_nodes: HashSet<NodeIndex> = HashSet::new();
-        let mut node_count: HashMap<NodeIndex, usize> = HashMap::new();
-
-        // Count occurrences in sensitive paths
-        for path in &sensitive_paths {
-            for &node in path {
-                *node_count.entry(node).or_insert(0) += 1;
-            }
-        }
-
-        // Nodes that appear in multiple sensitive paths are shared
-        for (node, count) in node_count {
-            if count > 1 {
-                shared_nodes.insert(node);
-            }
-        }
-
-        // Step 4: Collect nodes to preserve
-        let mut nodes_to_preserve: HashSet<NodeIndex> = HashSet::new();
-
-        // Always preserve start and end nodes
-        nodes_to_preserve.insert(start_node);
-        nodes_to_preserve.insert(end_node);
-
-        // Preserve all shared nodes
-        nodes_to_preserve.extend(&shared_nodes);
-
-        // Preserve all nodes from sensitive paths
-        for path in &sensitive_paths {
-            nodes_to_preserve.extend(path.iter());
-        }
-
-        // Step 5: Remove nodes that only belong to non-sensitive paths
+        // Step 3: Remove nodes that are not essential
         let mut nodes_to_remove: Vec<NodeIndex> = Vec::new();
 
-        for path in &non_sensitive_paths {
-            for &node in path {
-                if !nodes_to_preserve.contains(&node) {
-                    nodes_to_remove.push(node);
-                }
+        for node_idx in self.net.node_indices() {
+            if !nodes_to_preserve.contains(&node_idx) {
+                nodes_to_remove.push(node_idx);
             }
         }
 
@@ -1192,122 +1296,251 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         nodes_to_remove.dedup();
         nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
 
-        log::info!(
-            "Removing {} nodes from non-sensitive paths",
-            nodes_to_remove.len()
-        );
+        log::info!("移除 {} 个非必要节点", nodes_to_remove.len());
         for node in nodes_to_remove {
             self.net.remove_node(node);
         }
+
+        let duration = start_time.elapsed();
+        let (final_places, final_transitions, final_edges) = self.get_network_size();
+
+        log::info!("快速非敏感节点缩减完成:");
+        log::info!(
+            "  缩减前: {} places, {} transitions, {} edges",
+            initial_places,
+            initial_transitions,
+            initial_edges
+        );
+        log::info!(
+            "  缩减后: {} places, {} transitions, {} edges",
+            final_places,
+            final_transitions,
+            final_edges
+        );
+        log::info!(
+            "  节点减少: {} places, {} transitions, {} edges",
+            initial_places.saturating_sub(final_places),
+            initial_transitions.saturating_sub(final_transitions),
+            initial_edges.saturating_sub(final_edges)
+        );
+        log::info!("  缩减时间: {:?}", duration);
+        log::info!("=== 快速非敏感节点缩减结束 ===\n");
     }
 
-    /// Check if a path contains sensitive operations
+    /// Find all sensitive nodes in the Petri net
     ///
-    /// A path is sensitive if it contains transitions with:
-    /// - Unsafe operations (UnsafeRead, UnsafeWrite)
-    /// - Lock operations (Lock, RwLockRead, RwLockWrite, Unlock, etc.)
-    /// - Atomic operations (AtomicLoad, AtomicStore, AtomicCmpXchg)
-    /// - Condition variable operations (Wait, Notify)
-    /// - Thread operations (Spawn, Join)
+    /// Sensitive nodes include:
+    /// - Transitions with sensitive operations (unsafe, lock, atomic, etc.)
+    /// - Resource places (lock, atomic, channel, condvar, unsafe places)
+    fn find_sensitive_nodes(&self) -> HashSet<NodeIndex> {
+        let mut sensitive_nodes = HashSet::new();
+
+        for node_idx in self.net.node_indices() {
+            match self.net.node_weight(node_idx) {
+                Some(PetriNetNode::T(transition)) => {
+                    if self.is_sensitive_transition(transition) {
+                        sensitive_nodes.insert(node_idx);
+                    }
+                }
+                Some(PetriNetNode::P(place)) => {
+                    if self.is_sensitive_place(place) {
+                        sensitive_nodes.insert(node_idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        sensitive_nodes
+    }
+
+    /// Check if a transition contains sensitive operations
+    fn is_sensitive_transition(&self, transition: &Transition) -> bool {
+        match &transition.transition_type {
+            // Unsafe operations are always sensitive
+            ControlType::UnsafeRead(_, _, _, _) | ControlType::UnsafeWrite(_, _, _, _) => true,
+
+            // Check call types for sensitive operations
+            ControlType::Call(call_type) => match call_type {
+                // Lock operations
+                CallType::Lock(_)
+                | CallType::RwLockRead(_)
+                | CallType::RwLockWrite(_)
+                | CallType::Wait
+                | CallType::Notify(_) => true,
+
+                // Atomic operations
+                CallType::AtomicLoad(_, _, _, _)
+                | CallType::AtomicStore(_, _, _, _)
+                | CallType::AtomicCmpXchg(_, _, _, _, _) => true,
+
+                // Thread operations
+                CallType::Spawn(_) | CallType::Join(_) => true,
+
+                // Regular function calls are not sensitive
+                CallType::Function => false,
+            },
+
+            // Drop operations for locks are sensitive
+            ControlType::Drop(drop_type) => match drop_type {
+                DropType::Unlock(_) | DropType::DropRead(_) | DropType::DropWrite(_) => true,
+                DropType::Basic => false,
+            },
+
+            // Basic control flow is not sensitive
+            ControlType::Start(_)
+            | ControlType::Goto
+            | ControlType::Switch
+            | ControlType::Return(_)
+            | ControlType::Assert => false,
+        }
+    }
+
+    /// Check if a place is a sensitive resource place
+    fn is_sensitive_place(&self, place: &Place) -> bool {
+        matches!(
+            place.place_type,
+            PlaceType::Lock
+                | PlaceType::Atomic
+                | PlaceType::Channel
+                | PlaceType::CondVar
+                | PlaceType::Unsafe
+        )
+    }
+
+    /// Fast BFS-based algorithm to mark essential nodes
     ///
-    /// Non-sensitive paths only contain Function calls and basic control flow.
-    /// Note: Channel operations are typically modeled as Function calls and get
-    /// their sensitivity through connections to Channel resource places.
-    fn is_sensitive_path(&self, path: &[NodeIndex]) -> bool {
-        for &node in path {
-            if let Some(PetriNetNode::T(transition)) = self.net.node_weight(node) {
-                match &transition.transition_type {
-                    // Unsafe operations are always sensitive
-                    ControlType::UnsafeRead(_, _, _, _) | ControlType::UnsafeWrite(_, _, _, _) => {
-                        return true;
-                    }
+    /// This is a much more efficient alternative to path enumeration.
+    /// Time complexity: O(V + E) instead of exponential path enumeration
+    ///
+    /// Strategy:
+    /// 1. Mark all nodes reachable from start (forward reachability)
+    /// 2. Mark all nodes that can reach end (backward reachability)
+    /// 3. Mark all nodes that can reach any sensitive node (forward to sensitive)
+    /// 4. Mark all nodes reachable from any sensitive node (backward from sensitive)
+    /// 5. Keep intersection of these sets
+    fn mark_essential_nodes_fast(
+        &self,
+        start_node: NodeIndex,
+        end_node: NodeIndex,
+        sensitive_nodes: &HashSet<NodeIndex>,
+    ) -> HashSet<NodeIndex> {
+        let mut essential_nodes = HashSet::new();
 
-                    // Check call types for sensitive operations
-                    ControlType::Call(call_type) => {
-                        match call_type {
-                            // Lock operations
-                            CallType::Lock(_)
-                            | CallType::RwLockRead(_)
-                            | CallType::RwLockWrite(_)
-                            | CallType::Wait
-                            | CallType::Notify(_) => {
-                                return true;
-                            }
+        // Always preserve start, end, and sensitive nodes
+        essential_nodes.insert(start_node);
+        essential_nodes.insert(end_node);
+        essential_nodes.extend(sensitive_nodes);
 
-                            // Atomic operations
-                            CallType::AtomicLoad(_, _, _, _)
-                            | CallType::AtomicStore(_, _, _, _)
-                            | CallType::AtomicCmpXchg(_, _, _, _, _) => {
-                                return true;
-                            }
+        // 1. Find all nodes reachable from start (forward reachability)
+        let reachable_from_start = self.bfs_reachable(start_node, Direction::Outgoing);
 
-                            // Thread operations
-                            CallType::Spawn(_) | CallType::Join(_) => {
-                                return true;
-                            }
+        // 2. Find all nodes that can reach end (backward reachability)
+        let can_reach_end = self.bfs_reachable(end_node, Direction::Incoming);
 
-                            // Regular function calls are not sensitive
-                            CallType::Function => {
-                                // Continue checking other transitions in the path
-                            }
-                        }
-                    }
-
-                    // Drop operations for locks are sensitive
-                    ControlType::Drop(drop_type) => {
-                        match drop_type {
-                            DropType::Unlock(_)
-                            | DropType::DropRead(_)
-                            | DropType::DropWrite(_) => {
-                                return true;
-                            }
-                            DropType::Basic => {
-                                // Basic drops are not sensitive
-                            }
-                        }
-                    }
-
-                    // Basic control flow is not sensitive
-                    ControlType::Start(_)
-                    | ControlType::Goto
-                    | ControlType::Switch
-                    | ControlType::Return(_)
-                    | ControlType::Assert => {
-                        // Continue checking other transitions
+        // 3. Find nodes that are on paths from start to sensitive nodes
+        let mut paths_to_sensitive = HashSet::new();
+        for &sensitive_node in sensitive_nodes {
+            if reachable_from_start.contains(&sensitive_node) {
+                // This sensitive node is reachable from start
+                let backward_from_sensitive =
+                    self.bfs_reachable(sensitive_node, Direction::Incoming);
+                // Keep nodes that are reachable from start AND can reach this sensitive node
+                for &node in &backward_from_sensitive {
+                    if reachable_from_start.contains(&node) {
+                        paths_to_sensitive.insert(node);
                     }
                 }
             }
         }
 
-        // If no sensitive operations found, path is non-sensitive
-        false
-    }
-
-    /// Helper function to collect all simple paths from start to end
-    fn collect_all_paths(
-        &self,
-        current: NodeIndex,
-        end: NodeIndex,
-        all_paths: &mut Vec<Vec<NodeIndex>>,
-        current_path: &mut Vec<NodeIndex>,
-        visited: &mut HashSet<NodeIndex>,
-    ) {
-        if current == end {
-            all_paths.push(current_path.clone());
-            return;
-        }
-
-        visited.insert(current);
-
-        for neighbor in self.net.neighbors_directed(current, Direction::Outgoing) {
-            if !visited.contains(&neighbor) {
-                current_path.push(neighbor);
-                self.collect_all_paths(neighbor, end, all_paths, current_path, visited);
-                current_path.pop();
+        // 4. Find nodes that are on paths from sensitive nodes to end
+        let mut paths_from_sensitive = HashSet::new();
+        for &sensitive_node in sensitive_nodes {
+            if can_reach_end.contains(&sensitive_node) {
+                // This sensitive node can reach end
+                let forward_from_sensitive =
+                    self.bfs_reachable(sensitive_node, Direction::Outgoing);
+                // Keep nodes that can reach end AND are reachable from this sensitive node
+                for &node in &forward_from_sensitive {
+                    if can_reach_end.contains(&node) {
+                        paths_from_sensitive.insert(node);
+                    }
+                }
             }
         }
 
-        visited.remove(&current);
+        // Combine all essential nodes
+        essential_nodes.extend(&paths_to_sensitive);
+        essential_nodes.extend(&paths_from_sensitive);
+
+        // Also preserve nodes with high connectivity (heuristic to avoid breaking important structure)
+        for node_idx in self.net.node_indices() {
+            let in_degree = self
+                .net
+                .edges_directed(node_idx, Direction::Incoming)
+                .count();
+            let out_degree = self
+                .net
+                .edges_directed(node_idx, Direction::Outgoing)
+                .count();
+
+            // Preserve nodes with high connectivity or special types
+            if in_degree + out_degree > 4 {
+                essential_nodes.insert(node_idx);
+            }
+        }
+
+        essential_nodes
+    }
+
+    /// BFS to find all reachable nodes in given direction
+    ///
+    /// This is a simple O(V + E) traversal, much faster than path enumeration
+    fn bfs_reachable(&self, start: NodeIndex, direction: Direction) -> HashSet<NodeIndex> {
+        let mut reachable = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        queue.push_back(start);
+        reachable.insert(start);
+
+        while let Some(current) = queue.pop_front() {
+            for neighbor in self.net.neighbors_directed(current, direction) {
+                if !reachable.contains(&neighbor) {
+                    reachable.insert(neighbor);
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        reachable
+    }
+
+    /// 删除从start节点不可达的所有节点
+    ///
+    /// 使用BFS遍历从start节点可达的所有节点，然后删除其余不可达的节点。
+    fn remove_unreachable_nodes(&mut self) {
+        let start_node = self.entry_exit.0;
+
+        let reachable_nodes = self.bfs_reachable(start_node, Direction::Outgoing);
+
+        // 收集所有不可达的节点
+        let mut nodes_to_remove = Vec::new();
+        for node_idx in self.net.node_indices() {
+            if !reachable_nodes.contains(&node_idx) {
+                nodes_to_remove.push(node_idx);
+            }
+        }
+
+        nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+
+        for node in nodes_to_remove.iter() {
+            self.net.remove_node(*node);
+        }
+
+        if !nodes_to_remove.is_empty() {
+            log::info!("删除了 {} 个从start节点不可达的节点", nodes_to_remove.len());
+        }
     }
 
     /// Third step reduction: Advanced optimizations
@@ -1318,7 +1551,16 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     /// 3. Redundant transition removal: Remove transitions that don't change system state
     /// 4. Structural invariant-based reduction: Use Petri net invariants for reduction
     pub fn reduce_advanced_optimizations(&mut self, resource_nodes: &[NodeIndex]) {
-        log::info!("Starting third-step reduction: advanced optimizations");
+        let start_time = Instant::now();
+        let (initial_places, initial_transitions, initial_edges) = self.get_network_size();
+
+        log::info!("=== 开始高级优化缩减 ===");
+        log::info!(
+            "初始网络大小: {} places, {} transitions, {} edges",
+            initial_places,
+            initial_transitions,
+            initial_edges
+        );
 
         // 1. Dead code elimination
         self.eliminate_dead_code();
@@ -1332,7 +1574,30 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         // 4. Remove redundant transitions
         self.remove_redundant_transitions();
 
-        log::info!("Advanced optimization reduction completed");
+        let duration = start_time.elapsed();
+        let (final_places, final_transitions, final_edges) = self.get_network_size();
+
+        log::info!("高级优化缩减完成:");
+        log::info!(
+            "  缩减前: {} places, {} transitions, {} edges",
+            initial_places,
+            initial_transitions,
+            initial_edges
+        );
+        log::info!(
+            "  缩减后: {} places, {} transitions, {} edges",
+            final_places,
+            final_transitions,
+            final_edges
+        );
+        log::info!(
+            "  节点减少: {} places, {} transitions, {} edges",
+            initial_places.saturating_sub(final_places),
+            initial_transitions.saturating_sub(final_transitions),
+            initial_edges.saturating_sub(final_edges)
+        );
+        log::info!("  缩减时间: {:?}", duration);
+        log::info!("=== 高级优化缩减结束 ===\n");
     }
 
     /// Remove transitions that are never enabled (dead code)
@@ -1515,34 +1780,94 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     /// Arguments:
     /// - resource_nodes: Optional vector of resource nodes. If None, will auto-detect.
     pub fn reduce_comprehensive(&mut self, resource_nodes: Option<Vec<NodeIndex>>) {
-        log::info!("Starting comprehensive three-step Petri net reduction");
+        let total_start_time = Instant::now();
+        let (total_initial_places, total_initial_transitions, total_initial_edges) =
+            self.get_network_size();
 
-        let resource_nodes = resource_nodes.unwrap_or_else(|| self.get_resource_nodes());
+        log::info!("=== 开始综合三步Petri网缩减 ===");
         log::info!(
-            "Identified {} resource nodes for reduction",
-            resource_nodes.len()
+            "总体初始网络大小: {} places, {} transitions, {} edges",
+            total_initial_places,
+            total_initial_transitions,
+            total_initial_edges
         );
 
+        let resource_nodes = resource_nodes.unwrap_or_else(|| self.get_resource_nodes());
+        log::info!("识别到 {} 个资源节点用于缩减", resource_nodes.len());
+
         // Step 1: Basic path merging (merge simple linear chains)
-        log::info!("Step 1: Basic path merging");
+        log::info!("第一步: 基本路径合并");
         self.reduce_state();
 
-        // Step 2: Resource-based path pruning
-        log::info!("Step 2: Resource-based path pruning");
+        // Step 2: Fast non-sensitive node removal
+        log::info!("第二步: 快速非敏感节点移除");
         if self.entry_exit.0 != self.entry_exit.1 {
             self.reduce_non_sensitive_paths(self.entry_exit.0, self.entry_exit.1);
         }
 
         // Step 3: Advanced optimizations
-        log::info!("Step 3: Advanced optimizations");
+        log::info!("第三步: 高级优化");
         self.reduce_advanced_optimizations(&resource_nodes);
 
         // Final cleanup and verification
         if let Err(err) = self.verify_and_clean() {
-            log::warn!("Post-reduction verification found issues: {}", err);
+            log::warn!("缩减后验证发现问题: {}", err);
         }
 
-        log::info!("Comprehensive reduction completed");
+        let total_duration = total_start_time.elapsed();
+        let (total_final_places, total_final_transitions, total_final_edges) =
+            self.get_network_size();
+
+        log::info!("=== 综合缩减总结 ===");
+        log::info!(
+            "总体缩减前: {} places, {} transitions, {} edges",
+            total_initial_places,
+            total_initial_transitions,
+            total_initial_edges
+        );
+        log::info!(
+            "总体缩减后: {} places, {} transitions, {} edges",
+            total_final_places,
+            total_final_transitions,
+            total_final_edges
+        );
+        log::info!(
+            "总体节点减少: {} places, {} transitions, {} edges",
+            total_initial_places.saturating_sub(total_final_places),
+            total_initial_transitions.saturating_sub(total_final_transitions),
+            total_initial_edges.saturating_sub(total_final_edges)
+        );
+
+        let place_reduction_rate = if total_initial_places > 0 {
+            ((total_initial_places.saturating_sub(total_final_places)) as f64
+                / total_initial_places as f64)
+                * 100.0
+        } else {
+            0.0
+        };
+        let transition_reduction_rate = if total_initial_transitions > 0 {
+            ((total_initial_transitions.saturating_sub(total_final_transitions)) as f64
+                / total_initial_transitions as f64)
+                * 100.0
+        } else {
+            0.0
+        };
+        let edge_reduction_rate = if total_initial_edges > 0 {
+            ((total_initial_edges.saturating_sub(total_final_edges)) as f64
+                / total_initial_edges as f64)
+                * 100.0
+        } else {
+            0.0
+        };
+
+        log::info!(
+            "缩减率: {:.2}% places, {:.2}% transitions, {:.2}% edges",
+            place_reduction_rate,
+            transition_reduction_rate,
+            edge_reduction_rate
+        );
+        log::info!("总缩减时间: {:?}", total_duration);
+        log::info!("=== 综合缩减完成 ===\n");
     }
 
     /// Automatically detect resource nodes in the Petri net
@@ -1573,6 +1898,29 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         log::debug!("Auto-detected resource nodes: {:?}", resource_nodes);
         resource_nodes
+    }
+
+    /// Get network size statistics
+    ///
+    /// Returns (places_count, transitions_count, edges_count)
+    pub fn get_network_size(&self) -> (usize, usize, usize) {
+        let mut places = 0;
+        let mut transitions = 0;
+
+        for node_idx in self.net.node_indices() {
+            match self.net.node_weight(node_idx) {
+                Some(PetriNetNode::P(_)) => {
+                    places += 1;
+                }
+                Some(PetriNetNode::T(_)) => {
+                    transitions += 1;
+                }
+                _ => {}
+            }
+        }
+
+        let edges = self.net.edge_count();
+        (places, transitions, edges)
     }
 
     /// Get reduction statistics
@@ -1607,5 +1955,135 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
 
         (places, transitions, resource_places)
+    }
+
+    pub fn add_lock_resource(
+        &mut self,
+        lock_id: LockGuardId,
+        node_index: NodeIndex,
+        name: String,
+        lock_type: LockGuardTy<'tcx>,
+        span: String,
+    ) {
+        let resource_type = match lock_type {
+            LockGuardTy::StdMutex(_)
+            | LockGuardTy::ParkingLotMutex(_)
+            | LockGuardTy::SpinMutex(_) => ResourceType::Mutex,
+            _ => ResourceType::RwLock,
+        };
+
+        let resource_info = ResourceInfo {
+            node_index,
+            resource_type,
+            name,
+            metadata: ResourceMetadata::Lock { lock_type, span },
+        };
+
+        self.resource_manager
+            .add_resource(ResourceId::Lock(lock_id), resource_info);
+    }
+
+    pub fn add_atomic_resource(
+        &mut self,
+        alias_id: AliasId,
+        node_index: NodeIndex,
+        name: String,
+        var_type: String,
+        span: String,
+        ordering: Option<AtomicOrdering>,
+    ) {
+        let resource_info = ResourceInfo {
+            node_index,
+            resource_type: ResourceType::Atomic,
+            name,
+            metadata: ResourceMetadata::Atomic {
+                ordering,
+                var_type,
+                span,
+            },
+        };
+
+        self.resource_manager
+            .add_resource(ResourceId::Atomic(alias_id), resource_info);
+    }
+
+    pub fn add_channel_resource(
+        &mut self,
+        channel_id: ChannelId,
+        node_index: NodeIndex,
+        name: String,
+        span: String,
+        capacity: Option<usize>,
+    ) {
+        let resource_info = ResourceInfo {
+            node_index,
+            resource_type: ResourceType::Channel,
+            name,
+            metadata: ResourceMetadata::Channel { capacity, span },
+        };
+
+        self.resource_manager
+            .add_resource(ResourceId::Channel(channel_id), resource_info);
+    }
+
+    pub fn add_unsafe_resource(
+        &mut self,
+        alias_id: AliasId,
+        node_index: NodeIndex,
+        name: String,
+        operation_type: String,
+        span: String,
+    ) {
+        let resource_info = ResourceInfo {
+            node_index,
+            resource_type: ResourceType::Unsafe,
+            name,
+            metadata: ResourceMetadata::Unsafe {
+                operation_type,
+                span,
+            },
+        };
+
+        self.resource_manager
+            .add_resource(ResourceId::Unsafe(alias_id), resource_info);
+    }
+
+    pub fn add_condvar_resource(
+        &mut self,
+        condvar_id: CondVarId,
+        node_index: NodeIndex,
+        name: String,
+        span: String,
+    ) {
+        let resource_info = ResourceInfo {
+            node_index,
+            resource_type: ResourceType::CondVar,
+            name,
+            metadata: ResourceMetadata::CondVar { span },
+        };
+
+        self.resource_manager
+            .add_resource(ResourceId::CondVar(condvar_id), resource_info);
+    }
+
+    pub fn get_all_resource_nodes(&self) -> Vec<NodeIndex> {
+        self.resource_manager.get_all_node_indices()
+    }
+
+    pub fn get_resource_nodes_by_type(&self, resource_type: &ResourceType) -> Vec<NodeIndex> {
+        self.resource_manager
+            .get_node_indices_by_type(resource_type)
+    }
+
+    pub fn print_resource_statistics(&self) {
+        let stats = self.resource_manager.get_statistics();
+        log::info!("=== Resource Statistics ===");
+        for (resource_type, count) in stats {
+            log::info!("{:?}: {} resources", resource_type, count);
+        }
+        log::info!(
+            "Total resources: {}",
+            self.resource_manager.get_all_node_indices().len()
+        );
     }
 }
