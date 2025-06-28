@@ -600,8 +600,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         // If CrateType is LIB, do not optimize to prevent initial markings from being changed
         if self.api_spec.apis.is_empty() && !self.options.test {
-            self.reduce_state();
-            self.reduce_non_sensitive_paths(self.entry_exit.0, self.entry_exit.1);
+            let resource_nodes = self.get_resource_nodes();
+            self.reduce_comprehensive(Some(resource_nodes));
         }
         //self.reduce_state_from(self.entry_node);
 
@@ -839,6 +839,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     /// Simplify states in Petri net by merging simple paths to reduce network complexity
     ///
     /// Specific steps:
+    /// 0. Remove all unreachable nodes from start node (dead code elimination)
     /// 1. Find all nodes with in-degree and out-degree ≤1 as starting points
     /// 2. Starting from each starting point, search in both directions (forward and backward) to find mergeable paths
     /// 3. For each found path:
@@ -859,6 +860,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             initial_transitions,
             initial_edges
         );
+
+        // 第0步：删除从start节点不可达的所有节点
+        self.remove_unreachable_nodes();
+        let (after_removal_places, after_removal_transitions, after_removal_edges) =
+            self.get_network_size();
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         let mut all_nodes_to_remove = Vec::new();
@@ -978,19 +984,25 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
         log::info!("基本路径合并缩减完成:");
         log::info!(
-            "  缩减前: {} places, {} transitions, {} edges",
+            "  初始状态: {} places, {} transitions, {} edges",
             initial_places,
             initial_transitions,
             initial_edges
         );
         log::info!(
-            "  缩减后: {} places, {} transitions, {} edges",
+            "  删除不可达节点后: {} places, {} transitions, {} edges",
+            after_removal_places,
+            after_removal_transitions,
+            after_removal_edges
+        );
+        log::info!(
+            "  最终缩减后: {} places, {} transitions, {} edges",
             final_places,
             final_transitions,
             final_edges
         );
         log::info!(
-            "  节点减少: {} places, {} transitions, {} edges",
+            "  总节点减少: {} places, {} transitions, {} edges",
             initial_places.saturating_sub(final_places),
             initial_transitions.saturating_sub(final_transitions),
             initial_edges.saturating_sub(final_edges)
@@ -1252,7 +1264,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         let start_time = Instant::now();
         let (initial_places, initial_transitions, initial_edges) = self.get_network_size();
 
-        log::info!("=== 开始智能敏感路径分析缩减 ===");
+        log::info!("=== 开始快速非敏感节点缩减 ===");
         log::info!(
             "初始网络大小: {} places, {} transitions, {} edges",
             initial_places,
@@ -1264,76 +1276,13 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         let sensitive_nodes = self.find_sensitive_nodes();
         log::info!("Found {} sensitive nodes", sensitive_nodes.len());
 
-        // Step 2: Find all paths from start to each sensitive node
-        let mut sensitive_node_paths: HashMap<NodeIndex, Vec<Vec<NodeIndex>>> = HashMap::new();
+        // Step 2: Use fast BFS to mark essential nodes (避免路径枚举)
+        let nodes_to_preserve =
+            self.mark_essential_nodes_fast(start_node, end_node, &sensitive_nodes);
 
-        for &sensitive_node in &sensitive_nodes {
-            let mut paths = Vec::new();
-            let mut current_path = vec![start_node];
-            let mut visited = HashSet::new();
+        log::info!("标记保留 {} 个必要节点", nodes_to_preserve.len());
 
-            self.collect_all_paths(
-                start_node,
-                sensitive_node,
-                &mut paths,
-                &mut current_path,
-                &mut visited,
-            );
-
-            if !paths.is_empty() {
-                sensitive_node_paths.insert(sensitive_node, paths);
-            }
-        }
-
-        // Step 3: For each sensitive node, analyze its incoming paths for branch merging opportunities
-        let mut nodes_to_preserve: HashSet<NodeIndex> = HashSet::new();
-
-        // Always preserve start and end nodes
-        nodes_to_preserve.insert(start_node);
-        nodes_to_preserve.insert(end_node);
-
-        // Preserve all sensitive nodes
-        nodes_to_preserve.extend(&sensitive_nodes);
-
-        for (sensitive_node, paths) in &sensitive_node_paths {
-            log::debug!(
-                "Analyzing {} paths to sensitive node {:?}",
-                paths.len(),
-                sensitive_node
-            );
-
-            // Find merge opportunities for this sensitive node
-            let (nodes_to_keep, merge_opportunities) =
-                self.analyze_branch_merge_opportunities(paths);
-            nodes_to_preserve.extend(nodes_to_keep);
-
-            // Apply merge optimizations
-            self.apply_branch_merges(merge_opportunities);
-        }
-
-        // Step 4: Find paths from sensitive nodes to end node and preserve necessary nodes
-        for &sensitive_node in &sensitive_nodes {
-            let mut paths = Vec::new();
-            let mut current_path = vec![sensitive_node];
-            let mut visited = HashSet::new();
-
-            self.collect_all_paths(
-                sensitive_node,
-                end_node,
-                &mut paths,
-                &mut current_path,
-                &mut visited,
-            );
-
-            // Preserve nodes in paths from sensitive nodes to end
-            for path in &paths {
-                for &node in path {
-                    nodes_to_preserve.insert(node);
-                }
-            }
-        }
-
-        // Step 5: Remove nodes that are not preserved
+        // Step 3: Remove nodes that are not essential
         let mut nodes_to_remove: Vec<NodeIndex> = Vec::new();
 
         for node_idx in self.net.node_indices() {
@@ -1355,7 +1304,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         let duration = start_time.elapsed();
         let (final_places, final_transitions, final_edges) = self.get_network_size();
 
-        log::info!("智能敏感路径分析缩减完成:");
+        log::info!("快速非敏感节点缩减完成:");
         log::info!(
             "  缩减前: {} places, {} transitions, {} edges",
             initial_places,
@@ -1375,7 +1324,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             initial_edges.saturating_sub(final_edges)
         );
         log::info!("  缩减时间: {:?}", duration);
-        log::info!("=== 智能敏感路径分析缩减结束 ===\n");
+        log::info!("=== 快速非敏感节点缩减结束 ===\n");
     }
 
     /// Find all sensitive nodes in the Petri net
@@ -1459,175 +1408,139 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         )
     }
 
-    /// Analyze branch merge opportunities for paths leading to a sensitive node
+    /// Fast BFS-based algorithm to mark essential nodes
     ///
-    /// Returns:
-    /// - HashSet of nodes that must be preserved
-    /// - Vec of merge opportunities (branch points and their convergent paths)
-    fn analyze_branch_merge_opportunities(
+    /// This is a much more efficient alternative to path enumeration.
+    /// Time complexity: O(V + E) instead of exponential path enumeration
+    ///
+    /// Strategy:
+    /// 1. Mark all nodes reachable from start (forward reachability)
+    /// 2. Mark all nodes that can reach end (backward reachability)
+    /// 3. Mark all nodes that can reach any sensitive node (forward to sensitive)
+    /// 4. Mark all nodes reachable from any sensitive node (backward from sensitive)
+    /// 5. Keep intersection of these sets
+    fn mark_essential_nodes_fast(
         &self,
-        paths: &[Vec<NodeIndex>],
-    ) -> (HashSet<NodeIndex>, Vec<BranchMergeOpportunity>) {
-        let mut nodes_to_preserve = HashSet::new();
-        let mut merge_opportunities = Vec::new();
+        start_node: NodeIndex,
+        end_node: NodeIndex,
+        sensitive_nodes: &HashSet<NodeIndex>,
+    ) -> HashSet<NodeIndex> {
+        let mut essential_nodes = HashSet::new();
 
-        if paths.len() < 2 {
-            // Need at least 2 paths to have merge opportunities
-            if let Some(path) = paths.first() {
-                nodes_to_preserve.extend(path.iter());
-            }
-            return (nodes_to_preserve, merge_opportunities);
-        }
+        // Always preserve start, end, and sensitive nodes
+        essential_nodes.insert(start_node);
+        essential_nodes.insert(end_node);
+        essential_nodes.extend(sensitive_nodes);
 
-        // Find common prefix (branch point)
-        let mut common_prefix_len = 0;
-        let min_path_len = paths.iter().map(|p| p.len()).min().unwrap_or(0);
+        // 1. Find all nodes reachable from start (forward reachability)
+        let reachable_from_start = self.bfs_reachable(start_node, Direction::Outgoing);
 
-        for i in 0..min_path_len {
-            let first_node = paths[0][i];
-            if paths.iter().all(|path| path[i] == first_node) {
-                common_prefix_len = i + 1;
-            } else {
-                break;
-            }
-        }
+        // 2. Find all nodes that can reach end (backward reachability)
+        let can_reach_end = self.bfs_reachable(end_node, Direction::Incoming);
 
-        // Preserve common prefix
-        if common_prefix_len > 0 {
-            for i in 0..common_prefix_len {
-                nodes_to_preserve.insert(paths[0][i]);
-            }
-        }
-
-        // Analyze branch segments after common prefix
-        if common_prefix_len < min_path_len {
-            let branch_point = if common_prefix_len > 0 {
-                Some(paths[0][common_prefix_len - 1])
-            } else {
-                None
-            };
-
-            // Group paths by their branch segments
-            let mut branch_segments: HashMap<Vec<NodeIndex>, Vec<usize>> = HashMap::new();
-
-            for (path_idx, path) in paths.iter().enumerate() {
-                let segment = path[common_prefix_len..].to_vec();
-                branch_segments.entry(segment).or_default().push(path_idx);
-            }
-
-            // Identify merge opportunities
-            for (segment, path_indices) in branch_segments {
-                if path_indices.len() > 1 && !self.segment_contains_sensitive_operations(&segment) {
-                    // This segment appears in multiple paths and contains no sensitive operations
-                    // It's a candidate for merging
-                    merge_opportunities.push(BranchMergeOpportunity {
-                        branch_point,
-                        convergent_paths: path_indices,
-                        mergeable_segment: segment.clone(),
-                    });
-                }
-
-                // Preserve the segment nodes
-                nodes_to_preserve.extend(segment.iter());
-            }
-        }
-
-        // Preserve the target sensitive node (last node in each path)
-        for path in paths {
-            if let Some(&target_node) = path.last() {
-                nodes_to_preserve.insert(target_node);
-            }
-        }
-
-        (nodes_to_preserve, merge_opportunities)
-    }
-
-    /// Check if a path segment contains sensitive operations
-    fn segment_contains_sensitive_operations(&self, segment: &[NodeIndex]) -> bool {
-        for &node in segment {
-            match self.net.node_weight(node) {
-                Some(PetriNetNode::T(transition)) => {
-                    if self.is_sensitive_transition(transition) {
-                        return true;
+        // 3. Find nodes that are on paths from start to sensitive nodes
+        let mut paths_to_sensitive = HashSet::new();
+        for &sensitive_node in sensitive_nodes {
+            if reachable_from_start.contains(&sensitive_node) {
+                // This sensitive node is reachable from start
+                let backward_from_sensitive =
+                    self.bfs_reachable(sensitive_node, Direction::Incoming);
+                // Keep nodes that are reachable from start AND can reach this sensitive node
+                for &node in &backward_from_sensitive {
+                    if reachable_from_start.contains(&node) {
+                        paths_to_sensitive.insert(node);
                     }
                 }
-                Some(PetriNetNode::P(place)) => {
-                    if self.is_sensitive_place(place) {
-                        return true;
+            }
+        }
+
+        // 4. Find nodes that are on paths from sensitive nodes to end
+        let mut paths_from_sensitive = HashSet::new();
+        for &sensitive_node in sensitive_nodes {
+            if can_reach_end.contains(&sensitive_node) {
+                // This sensitive node can reach end
+                let forward_from_sensitive =
+                    self.bfs_reachable(sensitive_node, Direction::Outgoing);
+                // Keep nodes that can reach end AND are reachable from this sensitive node
+                for &node in &forward_from_sensitive {
+                    if can_reach_end.contains(&node) {
+                        paths_from_sensitive.insert(node);
                     }
                 }
-                _ => {}
-            }
-        }
-        false
-    }
-
-    /// Apply branch merging optimizations
-    ///
-    /// For now, this is a placeholder for more sophisticated merging logic
-    /// In a full implementation, this would:
-    /// 1. Create new merged transitions to replace branch segments
-    /// 2. Reconnect the graph to bypass redundant paths
-    /// 3. Remove now-unused nodes
-    fn apply_branch_merges(&mut self, merge_opportunities: Vec<BranchMergeOpportunity>) {
-        for opportunity in merge_opportunities {
-            log::debug!(
-                "Found merge opportunity: {} convergent paths at branch point {:?}",
-                opportunity.convergent_paths.len(),
-                opportunity.branch_point
-            );
-
-            // For now, just log the opportunity
-            // TODO: Implement actual merging logic
-            // This would involve:
-            // 1. Creating a new transition to represent the merged behavior
-            // 2. Connecting the branch point to the new transition
-            // 3. Connecting the new transition to the convergence point
-            // 4. Removing the original branch segments
-        }
-    }
-
-    /// Check if a path contains sensitive operations (legacy method for compatibility)
-    ///
-    /// A path is sensitive if it contains transitions with:
-    /// - Unsafe operations (UnsafeRead, UnsafeWrite)
-    /// - Lock operations (Lock, RwLockRead, RwLockWrite, Unlock, etc.)
-    /// - Atomic operations (AtomicLoad, AtomicStore, AtomicCmpXchg)
-    /// - Condition variable operations (Wait, Notify)
-    /// - Thread operations (Spawn, Join)
-    ///
-    /// Non-sensitive paths only contain Function calls and basic control flow.
-    /// Note: Channel operations are typically modeled as Function calls and get
-    /// their sensitivity through connections to Channel resource places.
-    fn is_sensitive_path(&self, path: &[NodeIndex]) -> bool {
-        self.segment_contains_sensitive_operations(path)
-    }
-
-    /// Helper function to collect all simple paths from start to end
-    fn collect_all_paths(
-        &self,
-        current: NodeIndex,
-        end: NodeIndex,
-        all_paths: &mut Vec<Vec<NodeIndex>>,
-        current_path: &mut Vec<NodeIndex>,
-        visited: &mut HashSet<NodeIndex>,
-    ) {
-        if current == end {
-            all_paths.push(current_path.clone());
-            return;
-        }
-
-        visited.insert(current);
-
-        for neighbor in self.net.neighbors_directed(current, Direction::Outgoing) {
-            if !visited.contains(&neighbor) {
-                current_path.push(neighbor);
-                self.collect_all_paths(neighbor, end, all_paths, current_path, visited);
-                current_path.pop();
             }
         }
 
-        visited.remove(&current);
+        // Combine all essential nodes
+        essential_nodes.extend(&paths_to_sensitive);
+        essential_nodes.extend(&paths_from_sensitive);
+
+        // Also preserve nodes with high connectivity (heuristic to avoid breaking important structure)
+        for node_idx in self.net.node_indices() {
+            let in_degree = self
+                .net
+                .edges_directed(node_idx, Direction::Incoming)
+                .count();
+            let out_degree = self
+                .net
+                .edges_directed(node_idx, Direction::Outgoing)
+                .count();
+
+            // Preserve nodes with high connectivity or special types
+            if in_degree + out_degree > 4 {
+                essential_nodes.insert(node_idx);
+            }
+        }
+
+        essential_nodes
+    }
+
+    /// BFS to find all reachable nodes in given direction
+    ///
+    /// This is a simple O(V + E) traversal, much faster than path enumeration
+    fn bfs_reachable(&self, start: NodeIndex, direction: Direction) -> HashSet<NodeIndex> {
+        let mut reachable = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        queue.push_back(start);
+        reachable.insert(start);
+
+        while let Some(current) = queue.pop_front() {
+            for neighbor in self.net.neighbors_directed(current, direction) {
+                if !reachable.contains(&neighbor) {
+                    reachable.insert(neighbor);
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        reachable
+    }
+
+    /// 删除从start节点不可达的所有节点
+    ///
+    /// 使用BFS遍历从start节点可达的所有节点，然后删除其余不可达的节点。
+    fn remove_unreachable_nodes(&mut self) {
+        let start_node = self.entry_exit.0;
+
+        let reachable_nodes = self.bfs_reachable(start_node, Direction::Outgoing);
+
+        // 收集所有不可达的节点
+        let mut nodes_to_remove = Vec::new();
+        for node_idx in self.net.node_indices() {
+            if !reachable_nodes.contains(&node_idx) {
+                nodes_to_remove.push(node_idx);
+            }
+        }
+
+        nodes_to_remove.sort_by(|a, b| b.index().cmp(&a.index()));
+
+        for node in nodes_to_remove.iter() {
+            self.net.remove_node(*node);
+        }
+
+        if !nodes_to_remove.is_empty() {
+            log::info!("删除了 {} 个从start节点不可达的节点", nodes_to_remove.len());
+        }
     }
 
     /// Third step reduction: Advanced optimizations
@@ -1886,8 +1799,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         log::info!("第一步: 基本路径合并");
         self.reduce_state();
 
-        // Step 2: Resource-based path pruning
-        log::info!("第二步: 基于资源的路径修剪");
+        // Step 2: Fast non-sensitive node removal
+        log::info!("第二步: 快速非敏感节点移除");
         if self.entry_exit.0 != self.entry_exit.1 {
             self.reduce_non_sensitive_paths(self.entry_exit.0, self.entry_exit.1);
         }
