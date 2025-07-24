@@ -18,7 +18,6 @@ use crate::util::{parse_api_spec, ApiSpec};
 use crate::DetectorKind;
 use log::debug;
 use rustc_driver::Compilation;
-use rustc_hir::def_id::DefId;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::{MonoItem, MonoItemPartitions};
 use rustc_middle::ty::{Instance, TyCtxt};
