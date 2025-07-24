@@ -3,5 +3,3 @@
 *.dot
 /toys
 **/tmp
-example/rayon
-Cargo.lock

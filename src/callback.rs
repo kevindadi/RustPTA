@@ -18,8 +18,9 @@ use crate::util::{parse_api_spec, ApiSpec};
 use crate::DetectorKind;
 use log::debug;
 use rustc_driver::Compilation;
+use rustc_hir::def_id::DefId;
 use rustc_interface::interface;
-use rustc_middle::mir::mono::{MonoItem, MonoItemPartitions};
+use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
@@ -124,10 +125,14 @@ impl PTACallbacks {
             return;
         }
 
-        let cgus = tcx.collect_and_partition_mono_items(()).1;
-        let instances: Vec<Instance<'tcx>> = cgus
+        let MonoItemPartitions {
+            codegen_units,
+            all_mono_items,
+            ..
+        } = tcx.collect_and_partition_mono_items(());
+        let instances: Vec<Instance<'tcx>> = codegen_units
             .iter()
-            .flat_map(|cgu| {
+            .filter_map(|cgu| {
                 cgu.items().iter().filter_map(|(mono_item, _)| {
                     if let MonoItem::Fn(instance) = mono_item {
                         Some(*instance)
