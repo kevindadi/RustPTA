@@ -72,7 +72,7 @@ impl rustc_driver::Callbacks for PTACallbacks {
         let file_name = config
             .input
             .source_name()
-            .prefer_remapped_unconditionaly()
+            .prefer_remapped_unconditionally()
             .to_string();
 
         debug!("Processing input file: {}", file_name);
@@ -115,7 +115,7 @@ impl PTACallbacks {
             return;
         }
 
-        let cgus = tcx.collect_and_partition_mono_items(()).1;
+        let cgus = tcx.collect_and_partition_mono_items(()).codegen_units;
         let instances: Vec<Instance<'tcx>> = cgus
             .iter()
             .flat_map(|cgu| {

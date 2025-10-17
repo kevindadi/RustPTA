@@ -519,6 +519,8 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             Rvalue::ThreadLocalRef(_) => vec![],
 
             Rvalue::NullaryOp(_, _) => vec![],
+
+            _ => vec![],
         }
     }
 
