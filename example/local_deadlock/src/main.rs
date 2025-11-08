@@ -8,12 +8,12 @@ fn main() {
     let lock_b1 = Arc::new(Mutex::new(true));
     let lock_b2 = lock_b1.clone();
     let th1 = thread::spawn(move || {
-        let _b = lock_b1.lock().unwrap(); //26 31
+        let _b = lock_b1.lock().unwrap(); 
         let _a = lock_a1.lock().unwrap();
     });
     let th2 = thread::spawn(move || {
         let _a = lock_a2.lock().unwrap();
-        let _b = lock_b2.lock().unwrap(); //26 31
+        let _b = lock_b2.lock().unwrap(); 
     });
 
     let th3 = thread::spawn(move || {

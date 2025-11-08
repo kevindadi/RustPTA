@@ -42,8 +42,8 @@ fn add_edge<V: Ord + Copy>(tree: &mut Graph<V>, a: V, b: V) {
 }
 
 pub fn prufer_decode<V: Ord + Copy>(code: &[V], vertex_list: &[V]) -> Graph<V> {
-    // For many cases, this function won't fail even if given unsuitable code
-    // array. As such, returning really unlikely errors doesn't make much sense.
+    
+    
     let mut result = BTreeMap::new();
     let mut list_count: BTreeMap<V, usize> = BTreeMap::new();
     for vertex in code {
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn small_trees() {
         let mut g: Graph<u32> = Graph::new();
-        // Binary tree with 7 vertices
+        
         let edges = vec![(1, 2), (1, 3), (2, 4), (2, 5), (3, 6), (3, 7)];
         for (u, v) in edges {
             add_edge(&mut g, u, v);
@@ -100,7 +100,7 @@ mod tests {
         assert!(equal_graphs(&mut g, &mut decoded));
 
         g.clear();
-        // A path of length 10
+        
         for v in 2..=9 {
             g.insert(v, vec![v - 1, v + 1]);
         }
@@ -113,7 +113,7 @@ mod tests {
         assert!(equal_graphs(&mut g, &mut decoded));
 
         g.clear();
-        // 7-5-3-1-2-4-6
+        
         let edges = vec![(1, 2), (2, 4), (4, 6), (1, 3), (3, 5), (5, 7)];
         for (u, v) in edges {
             add_edge(&mut g, u, v);

@@ -1,46 +1,46 @@
 use std::cmp::min;
 
-/// Represents possible errors that can occur when calculating the minimum cost path in a matrix.
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum MatrixError {
-    /// Error indicating that the matrix is empty or has empty rows.
+    
     EmptyMatrix,
-    /// Error indicating that the matrix is not rectangular in shape.
+    
     NonRectangularMatrix,
 }
 
-/// Computes the minimum cost path from the top-left to the bottom-right
-/// corner of a matrix, where movement is restricted to right and down directions.
-///
-/// # Arguments
-///
-/// * `matrix` - A 2D vector of positive integers, where each element represents
-///              the cost to step on that cell.
-///
-/// # Returns
-///
-/// * `Ok(usize)` - The minimum path cost to reach the bottom-right corner from
-///   the top-left corner of the matrix.
-/// * `Err(MatrixError)` - An error if the matrix is empty or improperly formatted.
-///
-/// # Complexity
-///
-/// * Time complexity: `O(m * n)`, where `m` is the number of rows
-///   and `n` is the number of columns in the input matrix.
-/// * Space complexity: `O(n)`, as only a single row of cumulative costs
-///   is stored at any time.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn minimum_cost_path(matrix: Vec<Vec<usize>>) -> Result<usize, MatrixError> {
-    // Check if the matrix is rectangular
+    
     if !matrix.iter().all(|row| row.len() == matrix[0].len()) {
         return Err(MatrixError::NonRectangularMatrix);
     }
 
-    // Check if the matrix is empty or contains empty rows
+    
     if matrix.is_empty() || matrix.iter().all(|row| row.is_empty()) {
         return Err(MatrixError::EmptyMatrix);
     }
 
-    // Initialize the first row of the cost vector
+    
     let mut cost = matrix[0]
         .iter()
         .scan(0, |acc, &val| {
@@ -49,18 +49,18 @@ pub fn minimum_cost_path(matrix: Vec<Vec<usize>>) -> Result<usize, MatrixError> 
         })
         .collect::<Vec<_>>();
 
-    // Process each row from the second to the last
+    
     for row in matrix.iter().skip(1) {
-        // Update the first element of cost for this row
+        
         cost[0] += row[0];
 
-        // Update the rest of the elements in the current row of cost
+        
         for col in 1..matrix[0].len() {
             cost[col] = row[col] + min(cost[col - 1], cost[col]);
         }
     }
 
-    // The last element in cost contains the minimum path cost to the bottom-right corner
+    
     Ok(cost[matrix[0].len() - 1])
 }
 

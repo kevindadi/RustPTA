@@ -1,7 +1,7 @@
 use super::miller_rabin;
 
 struct LinearCongruenceGenerator {
-    // modulus as 2 ^ 32
+    
     multiplier: u32,
     increment: u32,
     state: u32,
@@ -53,9 +53,9 @@ fn pollard_rho_customizable(
     it is an expensive function. We will correct for overshooting later.
     This function may return either 1, `number` or a proper divisor of `number`
      */
-    let mut x = x0 as u128; // tortoise
-    let mut x_start = 0_u128; // to save the starting tortoise if we overshoot
-    let mut y = 0_u128; // hare
+    let mut x = x0 as u128; 
+    let mut x_start = 0_u128; 
+    let mut y = 0_u128; 
     let mut remainder = 1_u128;
     let mut current_gcd = 1_u64;
     let mut max_iterations = 1_u32;
@@ -102,7 +102,7 @@ advisable (but not mandatory) to reuse the saved seed value
 In subsequent calls to this function.
  */
 pub fn pollard_rho_get_one_factor(number: u64, seed: &mut u32, check_is_prime: bool) -> u64 {
-    // LCG parameters from wikipedia
+    
     let mut rng = LinearCongruenceGenerator::new(1103515245, 12345, *seed);
     if number <= 1 {
         return number;
@@ -125,10 +125,10 @@ pub fn pollard_rho_get_one_factor(number: u64, seed: &mut u32, check_is_prime: b
             (x % (number - 3)) + 2,
             (c % (number - 2)) + 1,
             32,
-            1 << 18, // This shouldn't take much longer than number ^ 0.25
+            1 << 18, 
         );
-        // These numbers were selected based on local testing.
-        // For specific applications there maybe better choices.
+        
+        
     }
     *seed = rng.state;
     factor
@@ -169,7 +169,7 @@ pub fn pollard_rho_factorize(
     }
     let mut result: Vec<u64> = Vec::new();
     {
-        // Create a new scope to keep the outer scope clean
+        
         let (rem, mut res) = get_small_factors(number, primes);
         number = rem;
         result.append(&mut res);
@@ -217,11 +217,11 @@ mod test {
 
     #[test]
     fn one_factor() {
-        // a few small cases
+        
         let mut sieve = LinearSieve::new();
         sieve.prepare(1e5 as usize).unwrap();
         let numbers = vec![1235, 239874233, 4353234, 456456, 120983];
-        let mut seed = 314159_u32; // first digits of pi; nothing up my sleeve
+        let mut seed = 314159_u32; 
         for num in numbers {
             let factor = pollard_rho_get_one_factor(num, &mut seed, true);
             assert!(check_is_proper_factor(num, factor));
@@ -232,7 +232,7 @@ mod test {
                 &pollard_rho_factorize(num, &mut seed, &sieve.primes, &sieve.minimum_prime_factor)
             ));
         }
-        // check if it goes into infinite loop if `number` is prime
+        
         let numbers = vec![
             2, 3, 5, 7, 11, 13, 101, 998244353, 1000000007, 1000000009, 1671398671, 1652465729,
             1894404511, 1683402997, 1661963047, 1946039987, 2071566551, 1867816303, 1952199377,
@@ -248,10 +248,10 @@ mod test {
     }
     #[test]
     fn big_numbers() {
-        // Bigger cases:
-        // Each of these numbers is a product of two 31 bit primes
-        // This shouldn't take more than a 10ms per number on a modern PC
-        let mut seed = 314159_u32; // first digits of pi; nothing up my sleeve
+        
+        
+        
+        let mut seed = 314159_u32; 
         let numbers: Vec<u64> = vec![
             2761929023323646159,
             3189046231347719467,

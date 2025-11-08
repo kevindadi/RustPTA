@@ -1,8 +1,8 @@
-// https://en.wikipedia.org/wiki/Quickselect
+
 
 fn partition(list: &mut [i32], left: usize, right: usize, pivot_index: usize) -> usize {
     let pivot_value = list[pivot_index];
-    list.swap(pivot_index, right); // Move pivot to end
+    list.swap(pivot_index, right); 
     let mut store_index = left;
     for i in left..right {
         if list[i] < pivot_value {
@@ -10,18 +10,18 @@ fn partition(list: &mut [i32], left: usize, right: usize, pivot_index: usize) ->
             store_index += 1;
         }
     }
-    list.swap(right, store_index); // Move pivot to its final place
+    list.swap(right, store_index); 
     store_index
 }
 
 pub fn quick_select(list: &mut [i32], left: usize, right: usize, index: usize) -> i32 {
     if left == right {
-        // If the list contains only one element,
+        
         return list[left];
-    } // return that element
-    let mut pivot_index = left + (right - left) / 2; // select a pivotIndex between left and right
+    } 
+    let mut pivot_index = left + (right - left) / 2; 
     pivot_index = partition(list, left, right, pivot_index);
-    // The pivot is in its final sorted position
+    
     match index {
         x if x == pivot_index => list[index],
         x if x < pivot_index => quick_select(list, left, pivot_index - 1, index),

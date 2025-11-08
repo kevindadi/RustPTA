@@ -1,12 +1,12 @@
-//! This module provides functionality to check if a given string is a pangram.
-//!
-//! A pangram is a sentence that contains every letter of the alphabet at least once.
-//! This module can distinguish between a non-pangram, a regular pangram, and a
-//! perfect pangram, where each letter appears exactly once.
+
+
+
+
+
 
 use std::collections::HashSet;
 
-/// Represents the status of a string in relation to the pangram classification.
+
 #[derive(PartialEq, Debug)]
 pub enum PangramStatus {
     NotPangram,
@@ -28,15 +28,15 @@ fn compute_letter_counts(pangram_str: &str) -> std::collections::HashMap<char, u
     letter_counts
 }
 
-/// Determines if the input string is a pangram, and classifies it as either a regular or perfect pangram.
-///
-/// # Arguments
-///
-/// * `pangram_str` - A reference to the string slice to be checked for pangram status.
-///
-/// # Returns
-///
-/// A `PangramStatus` enum indicating whether the string is a pangram, and if so, whether it is a perfect pangram.
+
+
+
+
+
+
+
+
+
 pub fn is_pangram(pangram_str: &str) -> PangramStatus {
     let letter_counts = compute_letter_counts(pangram_str);
 

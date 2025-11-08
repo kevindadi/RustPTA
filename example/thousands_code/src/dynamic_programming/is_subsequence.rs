@@ -1,20 +1,20 @@
-//! A module for checking if one string is a subsequence of another string.
-//!
-//! A subsequence is formed by deleting some (can be none) of the characters
-//! from the original string without disturbing the relative positions of the
-//! remaining characters. This module provides a function to determine if
-//! a given string is a subsequence of another string.
 
-/// Checks if `sub` is a subsequence of `main`.
-///
-/// # Arguments
-///
-/// * `sub` - A string slice that may be a subsequence.
-/// * `main` - A string slice that is checked against.
-///
-/// # Returns
-///
-/// Returns `true` if `sub` is a subsequence of `main`, otherwise returns `false`.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn is_subsequence(sub: &str, main: &str) -> bool {
     let mut sub_iter = sub.chars().peekable();
     let mut main_iter = main.chars();

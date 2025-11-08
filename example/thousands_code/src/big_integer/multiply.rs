@@ -1,4 +1,4 @@
-/// Performs long multiplication on string representations of non-negative numbers.
+
 pub fn multiply(num1: &str, num2: &str) -> String {
     if !is_valid_nonnegative(num1) || !is_valid_nonnegative(num2) {
         panic!("String does not conform to specification")
@@ -13,9 +13,9 @@ pub fn multiply(num1: &str, num2: &str) -> String {
     for (i, c1) in num1.chars().rev().enumerate() {
         for (j, c2) in num2.chars().rev().enumerate() {
             let mul = c1.to_digit(10).unwrap() * c2.to_digit(10).unwrap();
-            // It could be a two-digit number here.
+            
             mult[i + j + 1] += (mult[i + j] + mul) / 10;
-            // Handling rounding. Here's a single digit.
+            
             mult[i + j] = (mult[i + j] + mul) % 10;
         }
     }

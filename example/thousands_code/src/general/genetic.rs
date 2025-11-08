@@ -2,40 +2,40 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt::Debug;
 
-/// The goal is to showcase how Genetic algorithms generically work
-/// See: https://en.wikipedia.org/wiki/Genetic_algorithm for concepts
 
-/// This is the definition of a Chromosome for a genetic algorithm
-/// We can picture this as "one contending solution to our problem"
-/// It is generic over:
-/// * Eval, which could be a float, or any other totally ordered type, so that we can rank solutions to our problem
-/// * Rng: a random number generator (could be thread rng, etc.)
+
+
+
+
+
+
+
 pub trait Chromosome<Rng: rand::Rng, Eval> {
-    /// Mutates this Chromosome, changing its genes
+    
     fn mutate(&mut self, rng: &mut Rng);
 
-    /// Mixes this chromosome with another one
+    
     fn crossover(&self, other: &Self, rng: &mut Rng) -> Self;
 
-    /// How well this chromosome fits the problem we're trying to solve
-    /// **The smaller the better it fits** (we could use abs(... - expected_value) for instance
+    
+    
     fn fitness(&self) -> Eval;
 }
 
 pub trait SelectionStrategy<Rng: rand::Rng> {
     fn new(rng: Rng) -> Self;
 
-    /// Selects a portion of the population for reproduction
-    /// Could be totally random ones or the ones that fit best, etc.
-    /// This assumes the population is sorted by how it fits the solution (the first the better)
+    
+    
+    
     fn select<'a, Eval: Into<f64>, C: Chromosome<Rng, Eval>>(
         &mut self,
         population: &'a [C],
     ) -> (&'a C, &'a C);
 }
 
-/// A roulette wheel selection strategy
-/// https://en.wikipedia.org/wiki/Fitness_proportionate_selection
+
+
 pub struct RouletteWheel<Rng: rand::Rng> {
     rng: Rng,
 }
@@ -48,9 +48,9 @@ impl<Rng: rand::Rng> SelectionStrategy<Rng> for RouletteWheel<Rng> {
         &mut self,
         population: &'a [C],
     ) -> (&'a C, &'a C) {
-        // We will assign a probability for every item in the population, based on its proportion towards the sum of all fitness
-        // This would work well for an increasing fitness function, but not in our case of a fitness function for which "lower is better"
-        // We thus need to take the reciprocal
+        
+        
+        
         let mut parents = Vec::with_capacity(2);
         let fitnesses: Vec<f64> = population
             .iter()
@@ -99,10 +99,10 @@ impl<const K: usize, Rng: rand::Rng> SelectionStrategy<Rng> for Tournament<K, Rn
         if K < 2 {
             panic!("K must be > 2");
         }
-        // This strategy is defined as the following: pick K chromosomes randomly, use the 2 that fits the best
-        // We assume the population is sorted
-        // This means we can draw K random (distinct) numbers between (0..population.len()) and return the chromosomes at the 2 lowest indices
-        let mut picked_indices = BTreeSet::new(); // will keep indices ordered
+        
+        
+        
+        let mut picked_indices = BTreeSet::new(); 
         while picked_indices.len() < K {
             picked_indices.insert(self.rng.gen_range(0..population.len()));
         }
@@ -121,14 +121,14 @@ pub struct GeneticAlgorithm<
     C: Chromosome<Rng, Eval>,
     Selection: SelectionStrategy<Rng>,
 > {
-    rng: Rng, // will be used to draw random numbers for initial population, mutations and crossovers
-    population: Vec<C>, // the set of random solutions (chromosomes)
-    threshold: Eval, // Any chromosome fitting over this threshold is considered a valid solution
-    max_generations: usize, // So that we don't loop infinitely
-    mutation_chance: f64, // what's the probability a chromosome will mutate
-    crossover_chance: f64, // what's the probability two chromosomes will cross-over and give birth to a new chromosome
+    rng: Rng, 
+    population: Vec<C>, 
+    threshold: Eval, 
+    max_generations: usize, 
+    mutation_chance: f64, 
+    crossover_chance: f64, 
     compare: Comparator<Eval>,
-    selection: Selection, // how we will select parent chromosomes for crossing over, see `SelectionStrategy`
+    selection: Selection, 
 }
 
 pub struct GenericAlgorithmParams {
@@ -170,26 +170,26 @@ impl<
     }
 
     pub fn solve(&mut self) -> Option<C> {
-        let mut generations = 1; // 1st generation is our initial population
+        let mut generations = 1; 
         while generations <= self.max_generations {
-            // 1. Sort the population by fitness score, remember: the lower the better (so natural ordering)
+            
             self.population
                 .sort_by(|c1: &C, c2: &C| (self.compare)(&c1.fitness(), &c2.fitness()));
 
-            // 2. Stop condition: we might have found a good solution
+            
             if let Some(solution) = self.population.first() {
                 if solution.fitness() <= self.threshold {
                     return Some(solution).cloned();
                 }
             }
 
-            // 3. Apply random mutations to the whole population
+            
             for chromosome in self.population.iter_mut() {
                 if self.rng.r#gen::<f64>() <= self.mutation_chance {
                     chromosome.mutate(&mut self.rng);
                 }
             }
-            // 4. Select parents that will be mating to create new chromosomes
+            
             let mut new_population = Vec::with_capacity(self.population.len() + 1);
             while new_population.len() < self.population.len() {
                 let (p1, p2) = self.selection.select(&self.population);
@@ -197,16 +197,16 @@ impl<
                     let child = p1.crossover(p2, &mut self.rng);
                     new_population.push(child);
                 } else {
-                    // keep parents
+                    
                     new_population.extend([p1.clone(), p2.clone()]);
                 }
             }
             if new_population.len() > self.population.len() {
-                // We might have added 2 parents
+                
                 new_population.pop();
             }
             self.population = new_population;
-            // 5. Rinse & Repeat until we find a proper solution or we reach the maximum number of generations
+            
             generations += 1;
         }
         None
@@ -226,11 +226,11 @@ mod tests {
     use std::ops::RangeInclusive;
 
     #[test]
-    #[ignore] // Too long and not deterministic enough to be part of CI, more of an example than a test
+    #[ignore] 
     fn find_secret() {
         let chars = 'a'..='z';
         let secret = "thisistopsecret".to_owned();
-        // Note: we'll pick genes (a, b, c) in the range -10, 10
+        
         #[derive(Clone)]
         struct TestString {
             chars: RangeInclusive<char>,
@@ -257,21 +257,21 @@ mod tests {
         }
         impl Chromosome<ThreadRng, i32> for TestString {
             fn mutate(&mut self, rng: &mut ThreadRng) {
-                // let's assume mutations happen completely randomly, one "gene" at a time (i.e. one char at a time)
+                
                 let gene_idx = rng.gen_range(0..self.secret.len());
                 let new_char = rng.gen_range(self.chars.clone());
                 self.genes[gene_idx] = new_char;
             }
 
             fn crossover(&self, other: &Self, rng: &mut ThreadRng) -> Self {
-                // Let's not assume anything here, simply mixing random genes from both parents
+                
                 let genes = (0..self.secret.len())
                     .map(|idx| {
                         if rng.gen_bool(0.5) {
-                            // pick gene from self
+                            
                             self.genes[idx]
                         } else {
-                            // pick gene from other parent
+                            
                             other.genes[idx]
                         }
                     })
@@ -284,7 +284,7 @@ mod tests {
             }
 
             fn fitness(&self) -> i32 {
-                // We are just counting how many chars are distinct from secret
+                
                 self.genes
                     .iter()
                     .zip(self.secret.chars())
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Too long and not deterministic enough to be part of CI, more of an example than a test
+    #[ignore] 
     fn solve_mastermind() {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
         enum ColoredPeg {
@@ -324,12 +324,12 @@ mod tests {
             Black,
         }
         struct GuessAnswer {
-            right_pos: i32, // right color at the right pos
-            wrong_pos: i32, // right color, but at wrong pos
+            right_pos: i32, 
+            wrong_pos: i32, 
         }
         #[derive(Clone, Debug)]
         struct CodeMaker {
-            // the player coming up with a secret code
+            
             code: [ColoredPeg; 4],
             count_by_color: HashMap<ColoredPeg, usize>,
         }
@@ -352,7 +352,7 @@ mod tests {
                     if self.code[idx] == *color {
                         right_pos += 1;
                         let count = idx_by_colors.get_mut(color).unwrap();
-                        *count -= 1; // don't reuse to say "right color but wrong pos"
+                        *count -= 1; 
                         if *count == 0 {
                             idx_by_colors.remove(color);
                         }
@@ -360,7 +360,7 @@ mod tests {
                 }
                 for (idx, color) in guess.iter().enumerate() {
                     if self.code[idx] != *color {
-                        // try to use another color
+                        
                         if let Some(count) = idx_by_colors.get_mut(color) {
                             *count -= 1;
                             if *count == 0 {
@@ -379,7 +379,7 @@ mod tests {
 
         #[derive(Clone)]
         struct CodeBreaker {
-            maker: CodeMaker, // so that we can ask the code maker if our guess is good or not
+            maker: CodeMaker, 
             guess: [ColoredPeg; 4],
         }
         impl Debug for CodeBreaker {
@@ -402,7 +402,7 @@ mod tests {
         }
         impl Chromosome<ThreadRng, i32> for CodeBreaker {
             fn mutate(&mut self, rng: &mut ThreadRng) {
-                // change one random color
+                
                 let idx = rng.gen_range(0..4);
                 self.guess[idx] = random_color(rng);
             }
@@ -421,12 +421,12 @@ mod tests {
             }
 
             fn fitness(&self) -> i32 {
-                // Ask the code maker for the result
+                
                 let answer = self.maker.eval(&self.guess);
-                // Remember: we need to have fitness return 0 if the guess is good, and the higher number we return, the further we are from a proper solution
-                let mut res = 32; // worst case scenario, everything is wrong
-                res -= answer.right_pos * 8; // count 8 points for the right item at the right spot
-                res -= answer.wrong_pos; // count 1 point for having a right color
+                
+                let mut res = 32; 
+                res -= answer.right_pos * 8; 
+                res -= answer.wrong_pos; 
                 res
             }
         }

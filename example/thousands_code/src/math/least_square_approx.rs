@@ -1,14 +1,14 @@
-/// Least Square Approximation <p>
-/// Function that returns a polynomial which very closely passes through the given points (in 2D)
-///
-/// The result is made of coeficients, in descending order (from x^degree to free term)
-///
-/// Parameters:
-///
-/// points -> coordinates of given points
-///
-/// degree -> degree of the polynomial
-///
+
+
+
+
+
+
+
+
+
+
+
 pub fn least_square_approx<T: Into<f64> + Copy, U: Into<f64> + Copy>(
     points: &[(T, U)],
     degree: i32,
@@ -51,7 +51,7 @@ pub fn least_square_approx<T: Into<f64> + Copy, U: Into<f64> + Copy>(
             let rez: Vec<f64> = x.iter().map(|x| round_to_decimals(*x, 5)).collect();
             Some(rez)
         }
-        None => None, //<-- The system cannot be solved (badly conditioned system's matrix)
+        None => None, 
     }
 }
 

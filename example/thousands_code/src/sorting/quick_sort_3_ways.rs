@@ -10,9 +10,9 @@ fn _quick_sort_3_ways<T: Ord>(arr: &mut [T], lo: usize, hi: usize) {
     let mut rng = rand::thread_rng();
     arr.swap(lo, rng.gen_range(lo..hi + 1));
 
-    let mut lt = lo; // arr[lo+1, lt] < v
-    let mut gt = hi + 1; // arr[gt, r] > v
-    let mut i = lo + 1; // arr[lt + 1, i) == v
+    let mut lt = lo; 
+    let mut gt = hi + 1; 
+    let mut i = lo + 1; 
 
     while i < gt {
         match arr[i].cmp(&arr[lo]) {

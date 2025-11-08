@@ -1,4 +1,4 @@
-// Finds the prime factors of a number in increasing order, with repetition.
+
 
 pub fn prime_factors(n: u64) -> Vec<u64> {
     let mut i = 2;

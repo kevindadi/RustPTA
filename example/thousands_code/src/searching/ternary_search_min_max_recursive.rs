@@ -1,4 +1,4 @@
-/// Recursive ternary search algorithm for finding maximum of unimodal function
+
 pub fn ternary_search_max_rec(
     f: fn(f32) -> f32,
     start: f32,
@@ -23,7 +23,7 @@ pub fn ternary_search_max_rec(
     f(start)
 }
 
-/// Recursive ternary search algorithm for finding minimum of unimodal function
+
 pub fn ternary_search_min_rec(
     f: fn(f32) -> f32,
     start: f32,

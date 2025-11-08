@@ -1,5 +1,5 @@
-/// Encode an ASCII string into its location in a Polybius square.
-/// Only alphabetical characters are encoded.
+
+
 pub fn encode_ascii(string: &str) -> String {
     string
         .chars()
@@ -34,10 +34,10 @@ pub fn encode_ascii(string: &str) -> String {
         .collect()
 }
 
-/// Decode a string of ints into their corresponding
-/// letters in a Polybius square.
-///
-/// Any invalid characters, or whitespace will be ignored.
+
+
+
+
 pub fn decode_ascii(string: &str) -> String {
     string
         .chars()

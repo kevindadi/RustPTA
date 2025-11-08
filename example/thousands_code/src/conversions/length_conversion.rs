@@ -1,15 +1,15 @@
-/// Author : https://github.com/ali77gh
-/// Conversion of length units.
-///
-/// Available Units:
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Millimeter
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Centimeter
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Meter
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Kilometer
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Inch
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Foot
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Yard
-/// -> Wikipedia reference: https://en.wikipedia.org/wiki/Mile
+
+
+
+
+
+
+
+
+
+
+
+
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LengthUnit {
@@ -44,8 +44,8 @@ fn meter_to_unit(input: f64, to: LengthUnit) -> f64 {
     input / unit_to_meter_multiplier(to)
 }
 
-/// This function will convert a value in unit of [from] to value in unit of [to]
-/// by first converting it to meter and than convert it to destination unit
+
+
 pub fn length_conversion(input: f64, from: LengthUnit, to: LengthUnit) -> f64 {
     meter_to_unit(unit_to_meter(input, from), to)
 }

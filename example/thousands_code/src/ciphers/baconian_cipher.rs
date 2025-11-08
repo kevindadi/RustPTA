@@ -1,10 +1,10 @@
-// Author : cyrixninja
-//Program to encode and decode Baconian or Bacon's Cipher
-//Wikipedia reference : https://en.wikipedia.org/wiki/Bacon%27s_cipher
-// Bacon's cipher or the Baconian cipher is a method of steganographic message encoding devised by Francis Bacon in 1605.
-// A message is concealed in the presentation of text, rather than its content. Bacon cipher is categorized as both a substitution cipher (in plain code) and a concealment cipher (using the two typefaces).
 
-// Encode Baconian Cipher
+
+
+
+
+
+
 pub fn baconian_encode(message: &str) -> String {
     let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let baconian = [
@@ -25,7 +25,7 @@ pub fn baconian_encode(message: &str) -> String {
         .collect()
 }
 
-// Decode Baconian Cipher
+
 pub fn baconian_decode(encoded: &str) -> String {
     let baconian = [
         "AAAAA", "AAAAB", "AAABA", "AAABB", "AABAA", "AABAB", "AABBA", "AABBB", "ABAAA", "ABAAB",

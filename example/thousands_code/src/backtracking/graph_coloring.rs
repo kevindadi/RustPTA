@@ -1,27 +1,27 @@
-//! This module provides functionality for generating all possible colorings of a undirected (or directed) graph
-//! given a certain number of colors. It includes the GraphColoring struct and methods
-//! for validating color assignments and finding all valid colorings.
 
-/// Represents potential errors when coloring on an adjacency matrix.
+
+
+
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum GraphColoringError {
-    // Indicates that the adjacency matrix is empty
+    
     EmptyAdjacencyMatrix,
-    // Indicates that the adjacency matrix is not squared
+    
     ImproperAdjacencyMatrix,
 }
 
-/// Generates all possible valid colorings of a graph.
-///
-/// # Arguments
-///
-/// * `adjacency_matrix` - A 2D vector representing the adjacency matrix of the graph.
-/// * `num_colors` - The number of colors available for coloring the graph.
-///
-/// # Returns
-///
-/// * A `Result` containing an `Option` with a vector of solutions or a `GraphColoringError` if
-/// there is an issue with the matrix.
+
+
+
+
+
+
+
+
+
+
+
 pub fn generate_colorings(
     adjacency_matrix: Vec<Vec<bool>>,
     num_colors: usize,
@@ -29,35 +29,35 @@ pub fn generate_colorings(
     Ok(GraphColoring::new(adjacency_matrix)?.find_solutions(num_colors))
 }
 
-/// A struct representing a graph coloring problem.
+
 struct GraphColoring {
-    // The adjacency matrix of the graph
+    
     adjacency_matrix: Vec<Vec<bool>>,
-    // The current colors assigned to each vertex
+    
     vertex_colors: Vec<usize>,
-    // Vector of all valid color assignments for the vertices found during the search
+    
     solutions: Vec<Vec<usize>>,
 }
 
 impl GraphColoring {
-    /// Creates a new GraphColoring instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `adjacency_matrix` - A 2D vector representing the adjacency matrix of the graph.
-    ///
-    /// # Returns
-    ///
-    /// * A new instance of GraphColoring or a `GraphColoringError` if the matrix is empty or non-square.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn new(adjacency_matrix: Vec<Vec<bool>>) -> Result<Self, GraphColoringError> {
         let num_vertices = adjacency_matrix.len();
 
-        // Check if the adjacency matrix is empty
+        
         if num_vertices == 0 {
             return Err(GraphColoringError::EmptyAdjacencyMatrix);
         }
 
-        // Check if the adjacency matrix is square
+        
         if adjacency_matrix.iter().any(|row| row.len() != num_vertices) {
             return Err(GraphColoringError::ImproperAdjacencyMatrix);
         }
@@ -69,24 +69,24 @@ impl GraphColoring {
         })
     }
 
-    /// Returns the number of vertices in the graph.
+    
     fn num_vertices(&self) -> usize {
         self.adjacency_matrix.len()
     }
 
-    /// Checks if a given color can be assigned to a vertex without causing a conflict.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex` - The index of the vertex to be colored.
-    /// * `color` - The color to be assigned to the vertex.
-    ///
-    /// # Returns
-    ///
-    /// * `true` if the color can be assigned to the vertex, `false` otherwise.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn is_color_valid(&self, vertex: usize, color: usize) -> bool {
         for neighbor in 0..self.num_vertices() {
-            // Check outgoing edges from vertex and incoming edges to vertex
+            
             if (self.adjacency_matrix[vertex][neighbor] || self.adjacency_matrix[neighbor][vertex])
                 && self.vertex_colors[neighbor] == color
             {
@@ -96,12 +96,12 @@ impl GraphColoring {
         true
     }
 
-    /// Recursively finds all valid colorings for the graph.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex` - The current vertex to be colored.
-    /// * `num_colors` - The number of colors available for coloring the graph.
+    
+    
+    
+    
+    
+    
     fn find_colorings(&mut self, vertex: usize, num_colors: usize) {
         if vertex == self.num_vertices() {
             self.solutions.push(self.vertex_colors.clone());
@@ -117,15 +117,15 @@ impl GraphColoring {
         }
     }
 
-    /// Finds all solutions for the graph coloring problem.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_colors` - The number of colors available for coloring the graph.
-    ///
-    /// # Returns
-    ///
-    /// * A `Result` containing an `Option` with a vector of solutions or a `GraphColoringError`.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn find_solutions(&mut self, num_colors: usize) -> Option<Vec<Vec<usize>>> {
         self.find_colorings(0, num_colors);
         if self.solutions.is_empty() {

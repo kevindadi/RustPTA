@@ -1,17 +1,17 @@
 use std::cmp::max;
 use std::cmp::min;
 
-/// Maximal Square
-///
-/// Given an `m` * `n` binary matrix filled with 0's and 1's, find the largest square containing only 1's and return its area.\
-/// <https://leetcode.com/problems/maximal-square/>
-///
-/// # Arguments:
-///   * `matrix` - an array of integer array
-///
-/// # Complexity
-///   - time complexity: O(n^2),
-///   - space complexity: O(n),
+
+
+
+
+
+
+
+
+
+
+
 pub fn maximal_square(matrix: &mut [Vec<i32>]) -> i32 {
     if matrix.is_empty() {
         return 0;

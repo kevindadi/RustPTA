@@ -1,61 +1,61 @@
-/// Iteratively sums the digits of a signed integer
-///
-/// ## Arguments
-///
-/// * `num` - The number to sum the digits of
-///
-/// ## Examples
-///
-/// ```
-/// use the_algorithms_rust::math::sum_digits_iterative;
-///
-/// assert_eq!(10, sum_digits_iterative(1234));
-/// assert_eq!(12, sum_digits_iterative(-246));
-/// ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn sum_digits_iterative(num: i32) -> u32 {
-    // convert to unsigned integer
+    
     let mut num = num.unsigned_abs();
-    // initialize sum
+    
     let mut result: u32 = 0;
 
-    // iterate through digits
+    
     while num > 0 {
-        // extract next digit and add to sum
+        
         result += num % 10;
-        num /= 10; // chop off last digit
+        num /= 10; 
     }
     result
 }
 
-/// Recursively sums the digits of a signed integer
-///
-/// ## Arguments
-///
-/// * `num` - The number to sum the digits of
-///
-/// ## Examples
-///
-/// ```
-/// use the_algorithms_rust::math::sum_digits_recursive;
-///
-/// assert_eq!(10, sum_digits_recursive(1234));
-/// assert_eq!(12, sum_digits_recursive(-246));
-/// ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn sum_digits_recursive(num: i32) -> u32 {
-    // convert to unsigned integer
+    
     let num = num.unsigned_abs();
-    // base case
+    
     if num < 10 {
         return num;
     }
-    // recursive case: add last digit to sum of remaining digits
+    
     num % 10 + sum_digits_recursive((num / 10) as i32)
 }
 
 #[cfg(test)]
 mod tests {
     mod iterative {
-        // import relevant sum_digits function
+        
         use super::super::sum_digits_iterative as sum_digits;
 
         #[test]
@@ -85,7 +85,7 @@ mod tests {
     }
 
     mod recursive {
-        // import relevant sum_digits function
+        
         use super::super::sum_digits_recursive as sum_digits;
 
         #[test]

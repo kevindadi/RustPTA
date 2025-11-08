@@ -1,6 +1,6 @@
 use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::pointsto::AliasId;
-use crate::utils::format_name;
+use crate::util::format_name;
 use petgraph::csr::IndexType;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use rustc_hash::FxHashMap;
@@ -13,51 +13,44 @@ use rustc_middle::mir::{
 use rustc_middle::ty::{Instance, TyCtxt, TyKind};
 use serde::Serialize;
 
-/// 表示一个 unsafe 块的信息
 #[derive(Debug, Clone, Serialize)]
 pub struct UnsafeBlockInfo {
-    /// unsafe 块的位置
     pub span: String,
-    /// unsafe 块所在的基本块
+
     pub block: usize,
-    /// unsafe 块中包含的语句位置
+
     pub locations: Vec<String>,
 }
 
-/// 表示对 unsafe 变量的操作类型
 #[derive(Debug, Clone, Serialize)]
 pub enum UnsafeOperation {
-    Read(String),   // 读取操作,包含位置信息
-    Write(String),  // 写入操作
-    Deref(String),  // 解引用
-    AddrOf(String), // 取地址
-    Cast(String),   // 类型转换
-    Call(String),   // 作为函数参数
+    Read(String),
+    Write(String),
+    Deref(String),
+    AddrOf(String),
+    Cast(String),
+    Call(String),
 }
 
-/// 表示一个 unsafe 的局部变量信息
 #[derive(Debug, Clone, Serialize)]
 pub struct UnsafePlaceInfo {
-    /// 局部变量
     pub local: usize,
-    /// 变量的类型字符串
+
     pub ty_string: String,
-    /// 变量定义的位置
+
     pub span: String,
-    /// 变量是否来自 unsafe 函数的参数
+
     pub is_param: bool,
-    /// 记录所有对该变量的操作
+
     pub operations: Vec<UnsafeOperation>,
 }
 
-/// 收集函数中所有的 unsafe 信息
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UnsafeInfo {
-    /// 函数是否被标记为 unsafe
     pub is_unsafe_fn: bool,
-    /// 函数中的 unsafe 块
+
     pub unsafe_blocks: Vec<UnsafeBlockInfo>,
-    /// 函数中的 unsafe 局部变量
+
     pub unsafe_places: FxHashMap<usize, UnsafePlaceInfo>,
 }
 
@@ -85,9 +78,8 @@ impl UnsafeData {
 }
 
 pub struct UnsafeDataInfo {
-    /// 局部变量
     pub local: Local,
-    /// 变量定义的位置
+
     pub span: String,
 }
 
@@ -96,7 +88,6 @@ impl UnsafeInfo {
         Self::default()
     }
 
-    /// 收集函数中的 unsafe 信息
     pub fn collect<'tcx>(
         instance: Instance<'tcx>,
         instance_id: Option<InstanceId>,
@@ -135,20 +126,18 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
 
     fn analyze(&mut self) -> UnsafeData {
         let mut unsafe_data = UnsafeData::default();
-        // 首先收集所有 unsafe 变量
+
         self.collect_unsafe_locals(&mut unsafe_data);
 
-        // 然后再分析语句和操作
         self.info.is_unsafe_fn = self.check_unsafe_fn();
         self.visit_body(self.body);
         unsafe_data
     }
 
     fn collect_unsafe_locals(&mut self, unsafe_data: &mut UnsafeData) {
-        // 预先收集所有局部变量
         for (local, local_decl) in self.body.local_decls.iter_enumerated() {
             let ty = local_decl.ty;
-            if ty.is_unsafe_ptr() {
+            if matches!(ty.kind(), TyKind::RawPtr(..)) {
                 let info = UnsafePlaceInfo {
                     local: local.index(),
                     ty_string: ty.to_string(),
@@ -177,15 +166,9 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
     }
 
     fn check_unsafe_fn(&self) -> bool {
-        let def_id = self.instance.def_id();
-        let hir_id = self.tcx.local_def_id_to_hir_id(def_id.expect_local());
-
-        // Closure 的 safety 总是返回 None
-        if let Some(fn_sig) = self.tcx.hir().fn_sig_by_hir_id(hir_id) {
-            matches!(fn_sig.header.safety, rustc_hir::Safety::Unsafe)
-        } else {
-            false
-        }
+        // TODO: 需要找到新的方法来检查函数是否为 unsafe
+        // 暂时返回 false，因为 hir() 方法在当前版本中不可用
+        false
     }
 
     fn is_unsafe_operation(&mut self, statement: &Statement<'tcx>, location: Location) -> bool {
@@ -193,7 +176,6 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
             StatementKind::Assign(box (place, rvalue)) => {
                 let loc_str = format!("{:?}", location);
 
-                // 记录写操作
                 if self.info.unsafe_places.contains_key(&place.local.index()) {
                     if let Some(place_info) = self.info.unsafe_places.get_mut(&place.local.index())
                     {
@@ -203,7 +185,6 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
                     }
                 }
 
-                // 记录读操作和其他操作
                 match rvalue {
                     Rvalue::Use(operand) => {
                         self.check_operand_usage(operand, &loc_str);
@@ -252,7 +233,6 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
                             .operations
                             .push(UnsafeOperation::Read(loc_str.to_string()));
 
-                        // 检查解引用
                         if place
                             .projection
                             .iter()
@@ -270,7 +250,6 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
     }
 
     fn is_unsafe_place(&self, place: Place<'tcx>) -> bool {
-        // 检查是否涉及原始指针解引用
         place
             .projection
             .iter()
@@ -296,10 +275,8 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Visitor<'tcx> for UnsafeCollector<'a, 'tcx> {
-    // 访问语句
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
         if self.is_unsafe_operation(statement, location) {
-            // 如果当前语句在 unsafe 块中
             if let Some(block_info) = self
                 .info
                 .unsafe_blocks
@@ -320,33 +297,31 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafeCollector<'a, 'tcx> {
         self.super_statement(statement, location);
     }
 
-    // 访问终止符
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        // 检查终止符是否在unsafe上下文中
         match terminator.kind {
-            // 特别关注函数调用
             TerminatorKind::Call { ref func, .. } => {
                 let func_ty = func.ty(self.body, self.tcx);
                 if let TyKind::FnDef(def_id, _) = func_ty.kind() {
-                    // 如果调用的是unsafe函数
                     if self.tcx.is_mir_available(*def_id) {
                         if def_id.is_local() {
-                            let hir_id = self.tcx.local_def_id_to_hir_id(def_id.expect_local());
-                            if matches!(
-                                self.tcx
-                                    .hir()
-                                    .fn_sig_by_hir_id(hir_id)
-                                    .unwrap()
-                                    .header
-                                    .safety,
-                                rustc_hir::Safety::Unsafe
-                            ) {
-                                self.info.unsafe_blocks.push(UnsafeBlockInfo {
-                                    span: format!("{:?}", terminator.source_info.span),
-                                    block: location.block.index(),
-                                    locations: vec![format!("{:?}", location)],
-                                });
-                            }
+                            // TODO: 需要找到新的方法来检查函数是否为 unsafe
+                            // 暂时跳过检查，因为 hir() 方法在当前版本中不可用
+                            // let hir_id = self.tcx.local_def_id_to_hir_id(def_id.expect_local());
+                            // if matches!(
+                            //     self.tcx
+                            //         .hir()
+                            //         .fn_sig_by_hir_id(hir_id)
+                            //         .unwrap()
+                            //         .header
+                            //         .safety,
+                            //     rustc_hir::Safety::Unsafe
+                            // ) {
+                            //     self.info.unsafe_blocks.push(UnsafeBlockInfo {
+                            //         span: format!("{:?}", terminator.source_info.span),
+                            //         block: location.block.index(),
+                            //         locations: vec![format!("{:?}", location)],
+                            //     });
+                            // }
                         }
                     }
                 }
@@ -354,23 +329,10 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafeCollector<'a, 'tcx> {
             _ => {}
         }
 
-        // let loc_str = format!("{:?}", location);
-        // // 检查函数参数中的 unsafe 变量
-        // for arg in args {
-        //     if let Operand::Copy(place) | Operand::Move(place) = arg {
-        //         if let Some(place_info) = self.info.unsafe_places.get_mut(&place.local.index()) {
-        //             place_info
-        //                 .operations
-        //                 .push(UnsafeOperation::Call(loc_str.clone()));
-        //         }
-        //     }
-        // }
-
         self.super_terminator(terminator, location);
     }
 }
 
-/// 用于分析和收集整个crate中的unsafe使用情况
 pub struct UnsafeAnalyzer<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     callgraph: &'a CallGraph<'tcx>,
@@ -386,7 +348,6 @@ impl<'a, 'tcx> UnsafeAnalyzer<'a, 'tcx> {
         }
     }
 
-    /// 分析当前crate中的所有unsafe使用
     pub fn analyze(&self) -> (FxHashMap<DefId, UnsafeInfo>, UnsafeData) {
         let mut unsafe_info = FxHashMap::default();
         let mut unsafe_data = UnsafeData::default();

@@ -2,26 +2,26 @@ type Adj = [Vec<usize>];
 
 const IN_DECOMPOSITION: u64 = 1 << 63;
 
-/// Centroid Decomposition for a tree.
-///
-/// Given a tree, it can be recursively decomposed into centroids. Then the
-/// parent of a centroid `c` is the previous centroid that splitted its connected
-/// component into two or more components. It can be shown that in such
-/// decomposition, for each path `p` with starting and ending vertices `u`, `v`,
-/// the lowest common ancestor of `u` and `v` in centroid tree is a vertex of `p`.
-///
-/// The input tree should have its vertices numbered from 1 to n, and
-/// `graph_enumeration.rs` may help to convert other representations.
+
+
+
+
+
+
+
+
+
+
 pub struct CentroidDecomposition {
-    /// The root of the centroid tree, should _not_ be set by the user
+    
     pub root: usize,
-    /// The result. `decomposition[v]` is the parent of `v` in centroid tree.
-    /// `decomposition[root]` is 0
+    
+    
     pub decomposition: Vec<usize>,
-    /// Used internally to save the big_child of a vertex, and whether it has
-    /// been added to the centroid tree.
+    
+    
     vert_state: Vec<u64>,
-    /// Used internally to save the subtree size of a vertex
+    
     vert_size: Vec<usize>,
 }
 
@@ -47,7 +47,7 @@ impl CentroidDecomposition {
     fn dfs_size(&mut self, v: usize, parent: usize, adj: &Adj) -> usize {
         self.vert_size[v] = 1;
         let mut big_child = 0_usize;
-        let mut bc_size = 0_usize; // big child size
+        let mut bc_size = 0_usize; 
         for &u in adj[v].iter() {
             if u == parent || self.is_in_decomposition(u) {
                 continue;
@@ -63,7 +63,7 @@ impl CentroidDecomposition {
         self.vert_size[v]
     }
     fn dfs_centroid(&self, v: usize, size_thr: usize) -> usize {
-        // recurse until big child's size is <= `size_thr`
+        
         match self.vert_state[v] as usize {
             u if self.vert_size[u] <= size_thr => v,
             u => self.dfs_centroid(u, size_thr),
@@ -76,8 +76,8 @@ impl CentroidDecomposition {
         calculate_vert_size: bool,
         adj: &Adj,
     ) -> usize {
-        // `calculate_vert_size` determines if it is necessary to recalculate
-        // `self.vert_size`
+        
+        
         if calculate_vert_size {
             self.dfs_size(v, centroid_parent, adj);
         }
@@ -128,7 +128,7 @@ mod tests {
         }
         let mut cd = CentroidDecomposition::new(len - 1);
         cd.decompose_tree(&adj);
-        // We should get a complete binary tree
+        
         assert_eq!(
             cd.decomposition,
             vec![0, 2, 4, 2, 8, 6, 4, 6, 0, 10, 12, 10, 8, 14, 12, 14]
@@ -137,8 +137,8 @@ mod tests {
     #[test]
     #[ignore]
     fn random_tree_height() {
-        // Do not run this test in debug mode! It takes > 30s to run without
-        // optimizations!
+        
+        
         let n = 1e6 as usize;
         let max_height = 1 + 20;
         let len = n + 1;

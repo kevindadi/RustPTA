@@ -1,17 +1,17 @@
-//! This module provides functionalities to match patterns in strings
-//! and compute the Z-array for a given input string.
 
-/// Calculates the Z-value for a given substring of the input string
-/// based on a specified pattern.
-///
-/// # Parameters
-/// - `input_string`: A slice of elements that represents the input string.
-/// - `pattern`: A slice of elements representing the pattern to match.
-/// - `start_index`: The index in the input string to start checking for matches.
-/// - `z_value`: The initial Z-value to be computed.
-///
-/// # Returns
-/// The computed Z-value indicating the length of the matching prefix.
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn calculate_z_value<T: Eq>(
     input_string: &[T],
     pattern: &[T],
@@ -30,17 +30,17 @@ fn calculate_z_value<T: Eq>(
     z_value
 }
 
-/// Initializes the Z-array value based on a previous match and updates
-/// it to optimize further calculations.
-///
-/// # Parameters
-/// - `z_array`: A mutable slice of the Z-array to be updated.
-/// - `i`: The current index in the input string.
-/// - `match_end`: The index of the last character matched in the pattern.
-/// - `last_match`: The index of the last match found.
-///
-/// # Returns
-/// The initialized Z-array value for the current index.
+
+
+
+
+
+
+
+
+
+
+
 fn initialize_z_array_from_previous_match(
     z_array: &[usize],
     i: usize,
@@ -50,15 +50,15 @@ fn initialize_z_array_from_previous_match(
     std::cmp::min(z_array[i - last_match], match_end - i + 1)
 }
 
-/// Finds the starting indices of all full matches of the pattern
-/// in the Z-array.
-///
-/// # Parameters
-/// - `z_array`: A slice of the Z-array containing computed Z-values.
-/// - `pattern_size`: The length of the pattern to find in the Z-array.
-///
-/// # Returns
-/// A vector containing the starting indices of full matches.
+
+
+
+
+
+
+
+
+
 fn find_full_matches(z_array: &[usize], pattern_size: usize) -> Vec<usize> {
     z_array
         .iter()
@@ -67,17 +67,17 @@ fn find_full_matches(z_array: &[usize], pattern_size: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Matches the occurrences of a pattern in an input string starting
-/// from a specified index.
-///
-/// # Parameters
-/// - `input_string`: A slice of elements to search within.
-/// - `pattern`: A slice of elements that represents the pattern to match.
-/// - `start_index`: The index in the input string to start the search.
-/// - `only_full_matches`: If true, only full matches of the pattern will be returned.
-///
-/// # Returns
-/// A vector containing the starting indices of the matches.
+
+
+
+
+
+
+
+
+
+
+
 fn match_with_z_array<T: Eq>(
     input_string: &[T],
     pattern: &[T],
@@ -110,31 +110,31 @@ fn match_with_z_array<T: Eq>(
     }
 }
 
-/// Constructs the Z-array for the given input string.
-///
-/// The Z-array is an array where the i-th element is the length of the longest
-/// substring starting from s[i] that is also a prefix of s.
-///
-/// # Parameters
-/// - `input`: A slice of the input string for which the Z-array is to be constructed.
-///
-/// # Returns
-/// A vector representing the Z-array of the input string.
+
+
+
+
+
+
+
+
+
+
 pub fn z_array<T: Eq>(input: &[T]) -> Vec<usize> {
     match_with_z_array(input, input, 1, false)
 }
 
-/// Matches the occurrences of a given pattern in an input string.
-///
-/// This function acts as a wrapper around `match_with_z_array` to provide a simpler
-/// interface for pattern matching, returning only full matches.
-///
-/// # Parameters
-/// - `input`: A slice of the input string where the pattern will be searched.
-/// - `pattern`: A slice of the pattern to search for in the input string.
-///
-/// # Returns
-/// A vector of indices where the pattern matches the input string.
+
+
+
+
+
+
+
+
+
+
+
 pub fn match_pattern<T: Eq>(input: &[T], pattern: &[T]) -> Vec<usize> {
     match_with_z_array(input, pattern, 0, true)
 }

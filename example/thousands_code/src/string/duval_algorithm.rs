@@ -1,36 +1,36 @@
-//! Implementation of Duval's Algorithm to compute the standard factorization of a string
-//! into Lyndon words. A Lyndon word is defined as a string that is strictly smaller
-//! (lexicographically) than any of its nontrivial suffixes. This implementation operates
-//! in linear time and space.
 
-/// Performs Duval's algorithm to factorize a given string into its Lyndon words.
-///
-/// # Arguments
-///
-/// * `s` - A slice of characters representing the input string.
-///
-/// # Returns
-///
-/// A vector of strings, where each string is a Lyndon word, representing the factorization
-/// of the input string.
-///
-/// # Time Complexity
-///
-/// The algorithm runs in O(n) time, where `n` is the length of the input string.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn duval_algorithm(s: &str) -> Vec<String> {
     factorize_duval(&s.chars().collect::<Vec<char>>())
 }
 
-/// Helper function that takes a string slice, converts it to a vector of characters,
-/// and then applies the Duval factorization algorithm to find the Lyndon words.
-///
-/// # Arguments
-///
-/// * `s` - A string slice representing the input text.
-///
-/// # Returns
-///
-/// A vector of strings, each representing a Lyndon word in the factorization.
+
+
+
+
+
+
+
+
+
+
 fn factorize_duval(s: &[char]) -> Vec<String> {
     let mut start = 0;
     let mut factors: Vec<String> = Vec::new();

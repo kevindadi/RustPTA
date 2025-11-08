@@ -1,3 +1,3 @@
 pub mod atomic;
-pub mod candvar;
-pub mod locks;
+pub mod blocking;
+pub mod channel;

@@ -11,7 +11,7 @@ pub fn another_rot13(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    
     use super::*;
 
     #[test]

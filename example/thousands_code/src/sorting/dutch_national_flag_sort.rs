@@ -1,24 +1,24 @@
 /*
 A Rust implementation of the Dutch National Flag sorting algorithm.
 
-Reference implementation: https://github.com/TheAlgorithms/Python/blob/master/sorts/dutch_national_flag_sort.py
-More info: https://en.wikipedia.org/wiki/Dutch_national_flag_problem
+Reference implementation: https:
+More info: https:
 */
 
 #[derive(PartialOrd, PartialEq, Eq)]
 pub enum Colors {
-    Red,   // \
-    White, //  | Define the three colors of the Dutch Flag: 🇳🇱
-    Blue,  // /
+    Red,   
+    White, 
+    Blue,  
 }
 use Colors::*;
 
-// Algorithm implementation
+
 pub fn dutch_national_flag_sort(mut sequence: Vec<Colors>) -> Vec<Colors> {
-    // We take ownership of `sequence` because the original `sequence` will be modified and then returned
+    
     let length = sequence.len();
     if length <= 1 {
-        return sequence; // Arrays of length 0 or 1 are automatically sorted
+        return sequence; 
     }
     let mut low = 0;
     let mut mid = 0;

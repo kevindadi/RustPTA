@@ -1,27 +1,27 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
-/// Custom error types representing possible errors that can occur during operations on the `SegmentTree`.
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum SegmentTreeError {
-    /// Error indicating that an index is out of bounds.
+    
     IndexOutOfBounds,
-    /// Error indicating that a range provided for a query is invalid.
+    
     InvalidRange,
 }
 
-/// A data structure representing a Segment Tree. Which is used for efficient
-/// range queries and updates on an array of elements.
+
+
 pub struct SegmentTree<T, F>
 where
     T: Debug + Default + Ord + Copy,
     F: Fn(T, T) -> T,
 {
-    /// The number of elements in the original input array for which the segment tree is built.
+    
     size: usize,
-    /// A vector representing the nodes of the segment tree.
+    
     nodes: Vec<T>,
-    /// A function that merges two elements of type `T`.
+    
     merge_fn: F,
 }
 
@@ -30,16 +30,16 @@ where
     T: Debug + Default + Ord + Copy,
     F: Fn(T, T) -> T,
 {
-    /// Creates a new `SegmentTree` from the provided slice of elements.
-    ///
-    /// # Arguments
-    ///
-    /// * `arr`: A slice of elements of type `T` that initializes the segment tree.
-    /// * `merge_fn`: A merging function that specifies how to combine two elements of type `T`.
-    ///
-    /// # Returns
-    ///
-    /// A new `SegmentTree` instance initialized with the given elements.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn from_vec(arr: &[T], merge_fn: F) -> Self {
         let size = arr.len();
         let mut seg_tree = SegmentTree {
@@ -53,13 +53,13 @@ where
         seg_tree
     }
 
-    /// Recursively builds the segment tree from the provided array.
-    ///
-    /// # Parameters
-    ///
-    /// * `arr` - The original array of values.
-    /// * `node_idx` - The index of the current node in the segment tree.
-    /// * `node_range` - The range of elements in the original array that the current node covers.
+    
+    
+    
+    
+    
+    
+    
     fn build_recursive(&mut self, arr: &[T], node_idx: usize, node_range: Range<usize>) {
         if node_range.end - node_range.start == 1 {
             self.nodes[node_idx] = arr[node_range.start];
@@ -72,18 +72,18 @@ where
         }
     }
 
-    /// Queries the segment tree for the result of merging the elements in the specified range.
-    ///
-    /// # Arguments
-    ///
-    /// * `target_range`: A range specified as `Range<usize>`, indicating the start (inclusive)
-    ///   and end (exclusive) indices of the segment to query.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Some(result))` if the query is successful and there are elements in the range,
-    /// * `Ok(None)` if the range is empty,
-    /// * `Err(SegmentTreeError::InvalidRange)` if the provided range is invalid.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn query(&self, target_range: Range<usize>) -> Result<Option<T>, SegmentTreeError> {
         if target_range.start >= self.size || target_range.end > self.size {
             return Err(SegmentTreeError::InvalidRange);
@@ -91,18 +91,18 @@ where
         Ok(self.query_recursive(1, 0..self.size, &target_range))
     }
 
-    /// Recursively performs a range query to find the merged result of the specified range.
-    ///
-    /// # Parameters
-    ///
-    /// * `node_idx` - The index of the current node in the segment tree.
-    /// * `tree_range` - The range of elements covered by the current node.
-    /// * `target_range` - The range for which the query is being performed.
-    ///
-    /// # Returns
-    ///
-    /// An `Option<T>` containing the result of the merge operation on the range if within bounds,
-    /// or `None` if the range is outside the covered range.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn query_recursive(
         &self,
         node_idx: usize,
@@ -126,17 +126,17 @@ where
         }
     }
 
-    /// Updates the value at the specified index in the segment tree.
-    ///
-    /// # Arguments
-    ///
-    /// * `target_idx`: The index (0-based) of the element to update.
-    /// * `val`: The new value of type `T` to set at the specified index.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` if the update was successful,
-    /// * `Err(SegmentTreeError::IndexOutOfBounds)` if the index is out of bounds.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn update(&mut self, target_idx: usize, val: T) -> Result<(), SegmentTreeError> {
         if target_idx >= self.size {
             return Err(SegmentTreeError::IndexOutOfBounds);
@@ -145,14 +145,14 @@ where
         Ok(())
     }
 
-    /// Recursively updates the segment tree for a specific index with a new value.
-    ///
-    /// # Parameters
-    ///
-    /// * `node_idx` - The index of the current node in the segment tree.
-    /// * `tree_range` - The range of elements covered by the current node.
-    /// * `target_idx` - The index in the original array to update.
-    /// * `val` - The new value to set at `target_idx`.
+    
+    
+    
+    
+    
+    
+    
+    
     fn update_recursive(
         &mut self,
         node_idx: usize,

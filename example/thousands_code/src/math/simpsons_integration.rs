@@ -105,8 +105,8 @@ mod tests {
 
     #[test]
     fn parabola_curve_length() {
-        // Calculate the length of the curve f(x) = x^2 for -5 <= x <= 5
-        // We should integrate sqrt(1 + (f'(x))^2)
+        
+        
         let function = |x: f64| -> f64 { (1.0 + 4.0 * x * x).sqrt() };
         let result = simpsons_integration(function, -5.0, 5.0, 1_000);
         let integrated = |x: f64| -> f64 { (x * function(x) / 2.0) + ((2.0 * x).asinh() / 4.0) };
@@ -117,8 +117,8 @@ mod tests {
     #[test]
     fn area_under_cosine() {
         use std::f64::consts::PI;
-        // Calculate area under f(x) = cos(x) + 5 for -pi <= x <= pi
-        // cosine should cancel out and the answer should be 2pi * 5
+        
+        
         let function = |x: f64| -> f64 { x.cos() + 5.0 };
         let result = simpsons_integration(function, -PI, PI, 1_000);
         let expected = 2.0 * PI * 5.0;

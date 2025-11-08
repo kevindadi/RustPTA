@@ -1,15 +1,15 @@
-//! This module provides a function to find the position of the most significant bit (MSB)
-//! set to 1 in a given positive integer.
 
-/// Finds the position of the highest (most significant) set bit in a positive integer.
-///
-/// # Arguments
-///
-/// * `num` - An integer value for which the highest set bit will be determined.
-///
-/// # Returns
-///
-/// *  Returns `Some(position)` if a set bit exists or `None` if no bit is set.
+
+
+
+
+
+
+
+
+
+
+
 pub fn find_highest_set_bit(num: usize) -> Option<usize> {
     if num == 0 {
         return None;

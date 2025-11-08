@@ -1,14 +1,14 @@
-// Author : cyrixninja
-// Find the Sum of Geometric Progression
-// Wikipedia: https://en.wikipedia.org/wiki/Geometric_progression
+
+
+
 
 pub fn sum_of_geometric_progression(first_term: f64, common_ratio: f64, num_of_terms: i32) -> f64 {
     if common_ratio == 1.0 {
-        // Formula for sum if the common ratio is 1
+        
         return (num_of_terms as f64) * first_term;
     }
 
-    // Formula for finding the sum of n terms of a Geometric Progression
+    
     (first_term / (1.0 - common_ratio)) * (1.0 - common_ratio.powi(num_of_terms))
 }
 

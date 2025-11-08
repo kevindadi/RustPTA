@@ -1,6 +1,6 @@
-// list all subset combinations of n element in given set of r element.
-// This is a recursive function that collects all subsets of the set of size n
-// with the given set of size r.
+
+
+
 pub fn list_subset(
     set: &[i32],
     n: usize,
@@ -11,7 +11,7 @@ pub fn list_subset(
 ) -> Vec<Vec<i32>> {
     let mut res = Vec::new();
 
-    // Current subset is ready to be added to the list
+    
     if i == r {
         let mut subset = Vec::new();
         for j in data.iter().take(r) {
@@ -21,23 +21,23 @@ pub fn list_subset(
         return res;
     }
 
-    // When no more elements are there to put in data[]
+    
     if index >= n {
         return res;
     }
 
-    // current is included, put next at next location
+    
     data[i] = set[index];
     res.append(&mut list_subset(set, n, r, index + 1, data, i + 1));
 
-    // current is excluded, replace it with next (Note that
-    // i+1 is passed, but index is not changed)
+    
+    
     res.append(&mut list_subset(set, n, r, index + 1, data, i));
 
     res
 }
 
-// Test module
+
 #[cfg(test)]
 mod tests {
     use super::*;

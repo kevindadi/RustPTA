@@ -1,4 +1,4 @@
-/// Ternary search algorithm for finding maximum of unimodal function
+
 pub fn ternary_search_max(
     f: fn(f32) -> f32,
     mut start: f32,
@@ -24,7 +24,7 @@ pub fn ternary_search_max(
     f(start)
 }
 
-/// Ternary search algorithm for finding minimum of unimodal function
+
 pub fn ternary_search_min(
     f: fn(f32) -> f32,
     mut start: f32,

@@ -1,7 +1,7 @@
-// Author : cyrixninja
-// Octal to Binary Converter : Converts Octal to Binary
-// Wikipedia References  : 1. https://en.wikipedia.org/wiki/Octal
-//                         2. https://en.wikipedia.org/wiki/Binary_number
+
+
+
+
 
 pub fn octal_to_binary(octal_str: &str) -> Result<String, &'static str> {
     let octal_str = octal_str.trim();
@@ -14,7 +14,7 @@ pub fn octal_to_binary(octal_str: &str) -> Result<String, &'static str> {
         return Err("Non-octal Value");
     }
 
-    // Convert octal to binary
+    
     let binary = octal_str
         .chars()
         .map(|c| match c {

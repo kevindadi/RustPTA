@@ -10,7 +10,7 @@ pub mod graph;
 pub mod memory;
 pub mod options;
 pub mod report;
-pub mod utils;
+pub mod util;
 
 extern crate rustc_abi;
 extern crate rustc_data_structures;
@@ -31,7 +31,7 @@ use crate::options::DetectorKind;
 
 fn main() {
     let handler = EarlyDiagCtxt::new(ErrorOutputType::default());
-    // Initialize loggers.
+
     if std::env::var("RUSTC_LOG").is_ok() {
         rustc_driver::init_rustc_env_logger(&handler);
     }
@@ -47,10 +47,8 @@ fn main() {
 
     let _ = options.parse_from_str(&std::env::var("PN_FLAGS").unwrap_or_default(), &handler);
 
-    //let _ = options.parse_from_str(&std::env::args().skip(2), &early_error_handler);
-
     log::debug!("PN options from environment: {:?}", options);
-    // panic!();
+
     let mut args = std::env::args_os()
         .enumerate()
         .map(|(i, arg)| {
@@ -61,16 +59,13 @@ fn main() {
         .collect::<Vec<_>>();
     assert!(!args.is_empty());
 
-    // Setting RUSTC_WRAPPER causes Cargo to pass 'rustc' as the first argument.
-    // We're invoking the compiler programmatically, so we remove it if present.
     if args.len() > 1 && std::path::Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
         args.remove(1);
     }
 
     let mut rustc_command_line_arguments: Vec<String> = args[1..].into();
-    //rustc_driver::install_ice_hook();
+
     let result = rustc_driver::catch_fatal_errors(|| {
-        // Add back the binary name
         rustc_command_line_arguments.insert(0, args[0].clone());
 
         let print: String = "--print=".into();
@@ -84,8 +79,6 @@ fn main() {
                 .iter()
                 .any(|arg| arg.starts_with(&sysroot))
             {
-                // Tell compiler where to find the std library and so on.
-                // The compiler relies on the standard rustc driver to tell it, so we have to do likewise.
                 rustc_command_line_arguments.push(sysroot);
                 rustc_command_line_arguments.push(find_sysroot());
             }
@@ -95,7 +88,6 @@ fn main() {
                 .iter()
                 .any(|arg| arg.ends_with(&always_encode_mir))
             {
-                // Tell compiler to emit MIR into crate for every function with a body.
                 rustc_command_line_arguments.push("-Z".into());
                 rustc_command_line_arguments.push(always_encode_mir);
             }
@@ -107,9 +99,7 @@ fn main() {
             rustc_command_line_arguments
         );
 
-        let compiler =
-            rustc_driver::RunCompiler::new(&rustc_command_line_arguments, &mut callbacks);
-        compiler.run()
+        rustc_driver::run_compiler(&rustc_command_line_arguments, &mut callbacks);
     });
 
     let exit_code = match result {

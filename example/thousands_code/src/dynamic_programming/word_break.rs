@@ -1,36 +1,36 @@
 use crate::data_structures::Trie;
 
-/// Checks if a string can be segmented into a space-separated sequence
-/// of one or more words from the given dictionary.
-///
-/// # Arguments
-/// * `s` - The input string to be segmented.
-/// * `word_dict` - A slice of words forming the dictionary.
-///
-/// # Returns
-/// * `bool` - `true` if the string can be segmented, `false` otherwise.
+
+
+
+
+
+
+
+
+
 pub fn word_break(s: &str, word_dict: &[&str]) -> bool {
     let mut trie = Trie::new();
     for &word in word_dict {
         trie.insert(word.chars(), true);
     }
 
-    // Memoization vector: one extra space to handle out-of-bound end case.
+    
     let mut memo = vec![None; s.len() + 1];
     search(&trie, s, 0, &mut memo)
 }
 
-/// Recursively checks if the substring starting from `start` can be segmented
-/// using words in the trie and memoizes the results.
-///
-/// # Arguments
-/// * `trie` - The Trie containing the dictionary words.
-/// * `s` - The input string.
-/// * `start` - The starting index for the current substring.
-/// * `memo` - A vector for memoization to store intermediate results.
-///
-/// # Returns
-/// * `bool` - `true` if the substring can be segmented, `false` otherwise.
+
+
+
+
+
+
+
+
+
+
+
 fn search(trie: &Trie<char, bool>, s: &str, start: usize, memo: &mut Vec<Option<bool>>) -> bool {
     if start == s.len() {
         return true;

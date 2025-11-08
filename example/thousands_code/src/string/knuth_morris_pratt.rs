@@ -1,20 +1,20 @@
-//! Knuth-Morris-Pratt string matching algorithm implementation in Rust.
-//!
-//! This module contains the implementation of the KMP algorithm, which is used for finding
-//! occurrences of a pattern string within a text string efficiently. The algorithm preprocesses
-//! the pattern to create a partial match table, which allows for efficient searching.
 
-/// Finds all occurrences of the pattern in the given string using the Knuth-Morris-Pratt algorithm.
-///
-/// # Arguments
-///
-/// * `string` - The string to search within.
-/// * `pattern` - The pattern string to search for.
-///
-/// # Returns
-///
-/// A vector of starting indices where the pattern is found in the string. If the pattern or the
-/// string is empty, an empty vector is returned.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn knuth_morris_pratt(string: &str, pattern: &str) -> Vec<usize> {
     if string.is_empty() || pattern.is_empty() {
         return vec![];
@@ -26,19 +26,19 @@ pub fn knuth_morris_pratt(string: &str, pattern: &str) -> Vec<usize> {
     find_pattern(&text_chars, &pattern_chars, &partial_match_table)
 }
 
-/// Builds the partial match table (also known as "prefix table") for the given pattern.
-///
-/// The partial match table is used to skip characters while matching the pattern in the text.
-/// Each entry at index `i` in the table indicates the length of the longest proper prefix of
-/// the substring `pattern[0..i]` which is also a suffix of this substring.
-///
-/// # Arguments
-///
-/// * `pattern_chars` - The pattern string as a slice of characters.
-///
-/// # Returns
-///
-/// A vector representing the partial match table.
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn build_partial_match_table(pattern_chars: &[char]) -> Vec<usize> {
     let mut partial_match_table = vec![0];
     pattern_chars
@@ -59,20 +59,20 @@ fn build_partial_match_table(pattern_chars: &[char]) -> Vec<usize> {
     partial_match_table
 }
 
-/// Finds all occurrences of the pattern in the given string using the precomputed partial match table.
-///
-/// This function iterates through the string and uses the partial match table to efficiently find
-/// all starting indices of the pattern in the string.
-///
-/// # Arguments
-///
-/// * `text_chars` - The string to search within as a slice of characters.
-/// * `pattern_chars` - The pattern string to search for as a slice of characters.
-/// * `partial_match_table` - The precomputed partial match table for the pattern.
-///
-/// # Returns
-///
-/// A vector of starting indices where the pattern is found in the string.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn find_pattern(
     text_chars: &[char],
     pattern_chars: &[char],

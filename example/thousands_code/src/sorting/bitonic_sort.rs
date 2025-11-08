@@ -24,7 +24,7 @@ pub fn bitonic_sort<T: Ord>(array: &mut [T], low: usize, length: usize, ascendin
     }
 }
 
-//Note that this program works only when size of input is a power of 2.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,7 +34,7 @@ mod tests {
 
     #[test]
     fn descending() {
-        //descending
+        
         let mut ve1 = vec![6, 5, 4, 3];
         let cloned = ve1.clone();
         bitonic_sort(&mut ve1, 0, 4, true);
@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn ascending() {
-        //pre-sorted
+        
         let mut ve2 = vec![1, 2, 3, 4];
         let cloned = ve2.clone();
         bitonic_sort(&mut ve2, 0, 4, false);

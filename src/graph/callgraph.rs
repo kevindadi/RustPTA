@@ -13,21 +13,16 @@ use rustc_middle::mir::{
 };
 use rustc_middle::ty::{self, Instance, TyCtxt, TyKind, TypingEnv};
 
-/// The NodeIndex in CallGraph, denoting a unique instance in CallGraph.
 pub type InstanceId = NodeIndex;
 
-/// The location where caller calls callee.
-/// Support direct call for now, where callee resolves to FnDef.
-/// Also support tracking the parameter of a closure (pointed to by upvars)
-/// Add support for FnPtr.
 #[derive(Copy, Clone, Debug)]
 pub enum CallSiteLocation {
     Direct(Location),
     ClosureDef(Local),
-    // Indirect(Location),
+
     Spawn {
         location: Location,
-        destination: Local, // spawn 返回的 JoinHandle 存储位置
+        destination: Local,
     },
     RayonJoin,
 }
@@ -75,19 +70,11 @@ impl<'tcx> FunctionNode<'tcx> {
     }
 }
 
-/// The CallGraph node wrapping an Instance.
-/// WithBody means the Instance owns body.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CallGraphNode<'tcx> {
     WithBody(Instance<'tcx>),
     WithoutBody(Instance<'tcx>),
 }
-
-// #[derive(Debug, PartialEq, Eq)]
-// pub enum CallGraphNode<'tcx> {
-//     WithBody(FunctionNode<'tcx>),
-//     WithoutBody(FunctionNode<'tcx>),
-// }
 
 impl<'tcx> CallGraphNode<'tcx> {
     pub fn instance(&self) -> &Instance<'tcx> {
@@ -101,22 +88,13 @@ impl<'tcx> CallGraphNode<'tcx> {
     }
 }
 
-/// CallGraph
-/// The nodes of CallGraph are instances.
-/// The directed edges are CallSite Locations.
-/// e.g., `Instance1--|[CallSite1, CallSite2]|-->Instance2`
-/// denotes `Instance1` calls `Instance2` at locations `Callsite1` and `CallSite2`.
 pub struct CallGraph<'tcx> {
     pub graph: Graph<CallGraphNode<'tcx>, Vec<CallSiteLocation>, Directed>,
-    // key: 调用spawn的函数的DefId
-    // value: (spawn创建的闭包的DefId, spawn返回的JoinHandle存储位置)的集合
-    // _0 = spawn::<{closure@src/main.rs:10:23: 10:30}, ()>(move _3)
-    // fix: 线程闭包可能不在函数本地调用,改为记录闭包结构
+
     pub spawn_calls: FxHashMap<DefId, FxHashSet<(DefId, Local)>>,
 }
 
 impl<'tcx> CallGraph<'tcx> {
-    /// Create an empty CallGraph.
     pub fn new() -> Self {
         Self {
             graph: Graph::new(),
@@ -124,17 +102,14 @@ impl<'tcx> CallGraph<'tcx> {
         }
     }
 
-    /// 格式化输出 spawn_calls
     pub fn format_spawn_calls(&self) -> String {
         let mut output = String::from("Spawn calls in functions:\n");
 
         for (caller_id, spawn_set) in &self.spawn_calls {
-            // 获取调用者函数的可读名称
             let caller_name = FunctionNode::format_name(*caller_id);
             output.push_str(&format!("\nIn function {}:\n", caller_name));
 
             for (closure_id, destination) in spawn_set {
-                // 获取被spawn的闭包的可读名称
                 let closure_name = FunctionNode::format_name(*closure_id);
                 output.push_str(&format!(
                     "  - Spawned closure {} (stored in _{})\n",
@@ -146,7 +121,6 @@ impl<'tcx> CallGraph<'tcx> {
         output
     }
 
-    /// Search for the InstanceId of a given instance in CallGraph.
     pub fn instance_to_index(&self, instance: &Instance<'tcx>) -> Option<InstanceId> {
         self.graph
             .node_references()
@@ -154,12 +128,10 @@ impl<'tcx> CallGraph<'tcx> {
             .map(|(idx, _)| idx)
     }
 
-    /// Get the instance by InstanceId.
     pub fn index_to_instance(&self, idx: InstanceId) -> Option<&CallGraphNode<'tcx>> {
         self.graph.node_weight(idx)
     }
 
-    /// 记录spawn调用
     fn record_spawn_call(&mut self, caller: DefId, closure_idx: DefId, destination: Local) {
         self.spawn_calls
             .entry(caller)
@@ -167,13 +139,10 @@ impl<'tcx> CallGraph<'tcx> {
             .insert((closure_idx, destination));
     }
 
-    /// 获取指定函数的所有spawn调用
     pub fn get_spawn_calls(&self, def_id: DefId) -> Option<&FxHashSet<(DefId, Local)>> {
         self.spawn_calls.get(&def_id)
     }
 
-    /// Perform callgraph analysis on the given instances.
-    /// The instances should be **all** the instances with MIR available in the current crate.
     pub fn analyze(&mut self, instances: Vec<Instance<'tcx>>, tcx: TyCtxt<'tcx>) {
         let idx_insts = instances
             .into_iter()
@@ -184,7 +153,7 @@ impl<'tcx> CallGraph<'tcx> {
             .collect::<Vec<_>>();
         for (caller_idx, caller) in idx_insts {
             let body = tcx.instance_mir(caller.def);
-            // Skip promoted src
+
             if body.source.promoted.is_some() {
                 continue;
             }
@@ -197,22 +166,18 @@ impl<'tcx> CallGraph<'tcx> {
                     self.graph.add_node(CallGraphNode::WithoutBody(callee))
                 };
 
-                // 记录spawn调用
                 if let CallSiteLocation::Spawn { destination, .. } = location {
                     self.record_spawn_call(caller.def_id(), callee.def_id(), destination);
                 }
                 if let Some(edge_idx) = self.graph.find_edge(caller_idx, callee_idx) {
-                    // Update edge weight.
                     self.graph.edge_weight_mut(edge_idx).unwrap().push(location);
                 } else {
-                    // Add edge if not exists.
                     self.graph.add_edge(caller_idx, callee_idx, vec![location]);
                 }
             }
         }
     }
 
-    /// Find the callsites (weight) on the edge from source to target.
     pub fn callsites(
         &self,
         source: InstanceId,
@@ -222,20 +187,15 @@ impl<'tcx> CallGraph<'tcx> {
         self.graph.edge_weight(edge).cloned()
     }
 
-    /// Find all the callers that call target
     pub fn callers(&self, target: InstanceId) -> Vec<InstanceId> {
         self.graph.neighbors_directed(target, Incoming).collect()
     }
 
-    /// Find all simple paths from source to target.
-    /// e.g., for one of the paths, `source --> instance1 --> instance2 --> target`,
-    /// the return is [source, instance1, instance2, target].
     pub fn all_simple_paths(&self, source: InstanceId, target: InstanceId) -> Vec<Vec<InstanceId>> {
         algo::all_simple_paths::<Vec<_>, _>(&self.graph, source, target, 0, None)
             .collect::<Vec<_>>()
     }
 
-    /// Print the callgraph in dot format.
     #[allow(dead_code)]
     pub fn dot(&self) -> String {
         format!(
@@ -245,7 +205,6 @@ impl<'tcx> CallGraph<'tcx> {
     }
 }
 
-/// Visit Terminator and record callsites (callee + location).
 struct CallSiteCollector<'a, 'tcx> {
     caller: Instance<'tcx>,
     body: &'a Body<'tcx>,
@@ -263,15 +222,12 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
         }
     }
 
-    /// Consumes `CallSiteCollector` and returns its callsites when finished visiting.
     fn finish(self) -> impl IntoIterator<Item = (Instance<'tcx>, CallSiteLocation)> {
         self.callsites.into_iter()
     }
 }
 
 impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
-    /// Resolve direct call.
-    /// Inspired by rustc_mir/src/transform/inline.rs#get_valid_function_call.
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         if let TerminatorKind::Call {
             ref func,
@@ -290,7 +246,6 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
                 let fn_path = self.tcx.def_path_str(def_id);
                 if fn_path.contains("spawn") {
-                    // 获取第一个参数（闭包）
                     if let Some(closure_arg) = args.first() {
                         let closure_ty = match closure_arg.node {
                             Operand::Move(place) | Operand::Copy(place) => {
@@ -374,7 +329,6 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                     return;
                 }
 
-                // 处理普通函数调用
                 if let Some(callee) = Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                     .ok()
                     .flatten()
@@ -387,19 +341,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
         self.super_terminator(terminator, location);
     }
 
-    /// Find where the closure is defined rather than called,
-    /// including the closure instance and the arg.
-    ///
-    /// e.g., let mut _20: [closure@src/main.rs:13:28: 16:6];
-    ///
-    /// _20 is of type Closure, but it is actually the arg that captures
-    /// the variables in the defining function.
     fn visit_local_decl(&mut self, local: Local, local_decl: &LocalDecl<'tcx>) {
-        // let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
-        //     self.tcx,
-        //     self.param_env,
-        //     ty::EarlyBinder::bind(local_decl.ty),
-        // );
         let typing_env = TypingEnv::post_analysis(self.tcx, self.caller.def_id());
         let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,

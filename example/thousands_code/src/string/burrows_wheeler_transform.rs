@@ -43,7 +43,7 @@ mod tests {
     use super::*;
 
     #[test]
-    //Ensure function stand-alone legitimacy
+    
     fn stand_alone_function() {
         assert_eq!(
             burrows_wheeler_transform("CARROT"),
@@ -102,8 +102,8 @@ mod tests {
             "!{}{}(((&&%%!??.=::"
         );
         assert_eq!(
-            inv_burrows_wheeler_transform(burrows_wheeler_transform("//&$[]")),
-            "//&$[]"
+            inv_burrows_wheeler_transform(burrows_wheeler_transform("
+            "
         );
     }
 

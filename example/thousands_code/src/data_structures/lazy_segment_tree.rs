@@ -133,15 +133,15 @@ mod tests {
     fn test_min_segments() {
         let vec = vec![-30, 2, -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8];
         let mut min_seg_tree = LazySegmentTree::from_vec(&vec, min);
-        // [-30, 2, -4, 7, (3, -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(-5), min_seg_tree.query(4..7));
-        // [(-30, 2, -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8)]
+        
         assert_eq!(Some(-30), min_seg_tree.query(0..vec.len()));
-        // [(-30, 2), -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(-30), min_seg_tree.query(0..2));
-        // [-30, (2, -4), 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(-4), min_seg_tree.query(1..3));
-        // [-30, (2, -4, 7, 3, -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(-5), min_seg_tree.query(1..7));
     }
 
@@ -149,15 +149,15 @@ mod tests {
     fn test_max_segments() {
         let vec = vec![-30, 2, -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8];
         let mut max_seg_tree = LazySegmentTree::from_vec(&vec, max);
-        // [-30, 2, -4, 7, (3, -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(6), max_seg_tree.query(4..7));
-        // [(-30, 2, -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8)]
+        
         assert_eq!(Some(15), max_seg_tree.query(0..vec.len()));
-        // [(-30, 2), -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(2), max_seg_tree.query(0..2));
-        // [-30, (2, -4), 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(2), max_seg_tree.query(1..3));
-        // [-30, (2, -4, 7, 3, -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(7), max_seg_tree.query(1..7));
     }
 
@@ -165,15 +165,15 @@ mod tests {
     fn test_sum_segments() {
         let vec = vec![-30, 2, -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8];
         let mut max_seg_tree = LazySegmentTree::from_vec(&vec, |x, y| x + y);
-        // [-30, 2, -4, 7, (3, -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(4), max_seg_tree.query(4..7));
-        // [(-30, 2, -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8)]
+        
         assert_eq!(Some(7), max_seg_tree.query(0..vec.len()));
-        // [(-30, 2), -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(-28), max_seg_tree.query(0..2));
-        // [-30, (2, -4), 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(-2), max_seg_tree.query(1..3));
-        // [-30, (2, -4, 7, 3, -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(9), max_seg_tree.query(1..7));
     }
 
@@ -194,24 +194,24 @@ mod tests {
     fn test_update_segments() {
         let vec = vec![-30, 2, -4, 7, 3, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8];
         let mut update_seg_tree = LazySegmentTree::from_vec(&vec, |x, y| x + y);
-        // -> [-30, (5, -1, 10, 6), -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         update_seg_tree.update(1..5, 3);
 
-        // [-30, 5, -1, 10, (6 -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(7), update_seg_tree.query(4..7));
-        // [(-30, 5, -1, 10, 6 , -5, 6, 11, -20, 9, 14, 15, 5, 2, -8)]
+        
         assert_eq!(Some(19), update_seg_tree.query(0..vec.len()));
-        // [(-30, 5), -1, 10, 6, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(-25), update_seg_tree.query(0..2));
-        // [-30, (5, -1), 10, 6, -5, 6, 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(4), update_seg_tree.query(1..3));
-        // [-30, (5, -1, 10, 6, -5, 6), 11, -20, 9, 14, 15, 5, 2, -8]
+        
         assert_eq!(Some(21), update_seg_tree.query(1..7));
     }
 
-    // Some properties over segment trees:
-    //  When asking for the range of the overall array, return the same as iter().min() or iter().max(), etc.
-    //  When asking for an interval containing a single value, return this value, no matter the merge function
+    
+    
+    
 
     #[quickcheck]
     fn check_overall_interval_min(array: Vec<i32>) -> TestResult {

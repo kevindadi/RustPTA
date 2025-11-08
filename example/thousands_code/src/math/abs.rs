@@ -1,7 +1,7 @@
-/// This function returns the absolute value of a number.\
-/// The absolute value of a number is the non-negative value of the number, regardless of its sign.\
-///
-/// Wikipedia: <https://en.wikipedia.org/wiki/Absolute_value>
+
+
+
+
 pub fn abs<T>(num: T) -> T
 where
     T: std::ops::Neg<Output = T> + PartialOrd + Copy + num_traits::Zero,

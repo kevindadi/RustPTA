@@ -1,21 +1,21 @@
-// Check if a number is a perfect cube using binary search.
+
 pub fn perfect_cube_binary_search(n: i64) -> bool {
     if n < 0 {
         return perfect_cube_binary_search(-n);
     }
 
-    // Initialize left and right boundaries for binary search.
+    
     let mut left = 0;
-    let mut right = n.abs(); // Use the absolute value to handle negative numbers
+    let mut right = n.abs(); 
 
-    // Binary search loop to find the cube root.
+    
     while left <= right {
-        // Calculate the mid-point.
+        
         let mid = left + (right - left) / 2;
-        // Calculate the cube of the mid-point.
+        
         let cube = mid * mid * mid;
 
-        // Check if the cube equals the original number.
+        
         match cube.cmp(&n) {
             std::cmp::Ordering::Equal => return true,
             std::cmp::Ordering::Less => left = mid + 1,
@@ -23,7 +23,7 @@ pub fn perfect_cube_binary_search(n: i64) -> bool {
         }
     }
 
-    // If no cube root is found, return false.
+    
     false
 }
 

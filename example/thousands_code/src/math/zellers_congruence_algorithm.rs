@@ -1,4 +1,4 @@
-// returns the day of the week from the Gregorian Date
+
 
 pub fn zellers_congruence_algorithm(date: i32, month: i32, year: i32, as_string: bool) -> String {
     let q = date;

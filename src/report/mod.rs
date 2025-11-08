@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::fmt;
 use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadlockState {
     pub state_id: String,
-    pub marking: Vec<(String, u8)>, // (place_name, tokens)
+    pub marking: Vec<(String, u8)>,
     pub description: String,
 }
 
@@ -17,14 +16,14 @@ pub struct DeadlockTrace {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadlockReport {
-    pub tool_name: String,                        // 使用的分析工具名称
-    pub has_deadlock: bool,                       // 是否存在死锁
-    pub deadlock_count: usize,                    // 死锁数量
-    pub deadlock_states: Vec<DeadlockState>,      // 死锁状态列表
-    pub traces: Vec<DeadlockTrace>,               // 到达死锁的路径
-    pub analysis_time: Duration,                  // 分析耗时
-    pub state_space_info: Option<StateSpaceInfo>, // 状态空间信息
-    pub error: Option<String>,                    // 错误信息
+    pub tool_name: String,
+    pub has_deadlock: bool,
+    pub deadlock_count: usize,
+    pub deadlock_states: Vec<DeadlockState>,
+    pub traces: Vec<DeadlockTrace>,
+    pub analysis_time: Duration,
+    pub state_space_info: Option<StateSpaceInfo>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,16 +50,6 @@ impl fmt::Display for DeadlockReport {
                     writeln!(f, "标识:")?;
                     for (place, tokens) in &state.marking {
                         writeln!(f, "  {}: {}", place, tokens)?;
-                    }
-                }
-            }
-
-            if !self.traces.is_empty() {
-                writeln!(f, "\n死锁路径:")?;
-                for (i, trace) in self.traces.iter().enumerate() {
-                    writeln!(f, "\n路径 #{}", i + 1)?;
-                    for (step_num, step) in trace.steps.iter().enumerate() {
-                        writeln!(f, "  步骤 {}: {}", step_num + 1, step)?;
                     }
                 }
             }
@@ -102,7 +91,6 @@ impl DeadlockReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        // 可选：同时保存JSON格式
         let json_path = format!("{}.json", path);
         std::fs::write(
             json_path,
@@ -200,7 +188,6 @@ impl AtomicReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        // 同时保存JSON格式
         let json_path = format!("{}.json", path);
         std::fs::write(
             json_path,
@@ -213,18 +200,17 @@ impl AtomicReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaceOperation {
-    pub operation_type: String,     // "read" 或 "write"
-    pub thread_name: String,        // 线程标识
-    pub variable: String,           // 变量标识
-    pub location: String,           // 源代码位置
-    pub basic_block: Option<usize>, // 基本块信息
+    pub operation_type: String,
+    pub variable: String,
+    pub location: String,
+    pub basic_block: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaceCondition {
-    pub operations: Vec<RaceOperation>,     // 相关的操作
-    pub variable_info: VariableInfo,        // 变量信息
-    pub state: Option<Vec<(usize, usize)>>, // 发生竞争的状态
+    pub operations: Vec<RaceOperation>,
+    pub variable_info: String,
+    pub state: Vec<(usize, u8)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,25 +242,17 @@ impl fmt::Display for RaceReport {
             for (i, race) in self.race_conditions.iter().enumerate() {
                 writeln!(f, "\n竞争 #{}", i + 1)?;
                 writeln!(f, "变量信息:")?;
-                writeln!(f, "  名称: {}", race.variable_info.name)?;
-                writeln!(f, "  类型: {}", race.variable_info.data_type)?;
-                writeln!(f, "  作用域: {}", race.variable_info.function_scope)?;
+                writeln!(f, "  名称: {}", race.variable_info)?;
 
                 writeln!(f, "\n相关操作:")?;
                 for op in &race.operations {
-                    writeln!(
-                        f,
-                        "  - {} by {} at {}",
-                        op.operation_type, op.thread_name, op.location
-                    )?;
+                    writeln!(f, "  - {} at {}", op.operation_type, op.location)?;
                     if let Some(bb) = op.basic_block {
                         writeln!(f, "    (Basic Block: {})", bb)?;
                     }
                 }
 
-                if let Some(state) = &race.state {
-                    writeln!(f, "\n竞争状态: {:?}", state)?;
-                }
+                writeln!(f, "\n竞争状态: {:?}", race.state)?;
             }
         }
 
@@ -305,7 +283,6 @@ impl RaceReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        // 同时保存JSON格式
         let json_path = format!("{}.json", path);
         std::fs::write(
             json_path,

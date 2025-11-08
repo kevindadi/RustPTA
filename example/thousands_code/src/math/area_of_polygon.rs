@@ -10,8 +10,8 @@
  * @param fig A vector of points defining the polygon.
  * @return The area of the polygon.
  *
- * @author [Gyandeep](https://github.com/Gyan172004)
- * @see [Wikipedia - Polygon](https://en.wikipedia.org/wiki/Polygon)
+ * @author [Gyandeep](https:
+ * @see [Wikipedia - Polygon](https:
  */
 
 pub struct Point {

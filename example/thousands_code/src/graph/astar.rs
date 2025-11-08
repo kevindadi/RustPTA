@@ -16,16 +16,16 @@ struct Candidate<V, E> {
 
 impl<V: Ord + Copy, E: Ord + Copy> PartialOrd for Candidate<V, E> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        // Note the inverted order; we want nodes with lesser weight to have
-        // higher priority
+        
+        
         Some(self.cmp(other))
     }
 }
 
 impl<V: Ord + Copy, E: Ord + Copy> Ord for Candidate<V, E> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Note the inverted order; we want nodes with lesser weight to have
-        // higher priority
+        
+        
         other.estimated_weight.cmp(&self.estimated_weight)
     }
 }
@@ -36,13 +36,13 @@ pub fn astar<V: Ord + Copy, E: Ord + Copy + Add<Output = E> + Zero>(
     target: V,
     heuristic: impl Fn(V) -> E,
 ) -> Option<(E, Vec<V>)> {
-    // traversal front
+    
     let mut queue = BinaryHeap::new();
-    // maps each node to its predecessor in the final path
+    
     let mut previous = BTreeMap::new();
-    // weights[v] is the accumulated weight from start to v
+    
     let mut weights = BTreeMap::new();
-    // initialize traversal
+    
     weights.insert(start, E::zero());
     queue.push(Candidate {
         estimated_weight: heuristic(start),
@@ -64,8 +64,8 @@ pub fn astar<V: Ord + Copy, E: Ord + Copy + Add<Output = E> + Zero>(
                 .get(&next)
                 .map_or(true, |&weight| real_weight < weight)
             {
-                // current allows us to reach next with lower weight (or at all)
-                // add next to the front
+                
+                
                 let estimated_weight = real_weight + heuristic(next);
                 weights.insert(next, real_weight);
                 queue.push(Candidate {
@@ -80,10 +80,10 @@ pub fn astar<V: Ord + Copy, E: Ord + Copy + Add<Output = E> + Zero>(
     let weight = if let Some(&weight) = weights.get(&target) {
         weight
     } else {
-        // we did not reach target from start
+        
         return None;
     };
-    // build path in reverse
+    
     let mut current = target;
     let mut path = vec![current];
     while current != start {
@@ -104,7 +104,7 @@ mod tests {
     use num_traits::Zero;
     use std::collections::BTreeMap;
 
-    // the null heuristic make A* equivalent to Dijkstra
+    
     fn null_heuristic<V, E: Zero>(_v: V) -> E {
         E::zero()
     }
@@ -142,7 +142,7 @@ mod tests {
         add_edge(&mut graph, 'c', 'd', 32);
         add_edge(&mut graph, 'e', 'a', 7);
 
-        // from a
+        
         assert_eq!(
             astar(&graph, 'a', 'a', null_heuristic),
             Some((0, vec!['a']))
@@ -161,7 +161,7 @@ mod tests {
         );
         assert_eq!(astar(&graph, 'a', 'e', null_heuristic), None);
 
-        // from b
+        
         assert_eq!(
             astar(&graph, 'b', 'a', null_heuristic),
             Some((10, vec!['b', 'a']))
@@ -180,7 +180,7 @@ mod tests {
         );
         assert_eq!(astar(&graph, 'b', 'e', null_heuristic), None);
 
-        // from c
+        
         assert_eq!(
             astar(&graph, 'c', 'a', null_heuristic),
             Some((20 + 10, vec!['c', 'b', 'a']))
@@ -199,7 +199,7 @@ mod tests {
         );
         assert_eq!(astar(&graph, 'c', 'e', null_heuristic), None);
 
-        // from d
+        
         assert_eq!(astar(&graph, 'd', 'a', null_heuristic), None);
         assert_eq!(astar(&graph, 'd', 'b', null_heuristic), None);
         assert_eq!(astar(&graph, 'd', 'c', null_heuristic), None);
@@ -209,7 +209,7 @@ mod tests {
         );
         assert_eq!(astar(&graph, 'd', 'e', null_heuristic), None);
 
-        // from e
+        
         assert_eq!(
             astar(&graph, 'e', 'a', null_heuristic),
             Some((7, vec!['e', 'a']))
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_heuristic() {
-        // make a grid
+        
         let mut graph = BTreeMap::new();
         let rows = 100;
         let cols = 100;
@@ -248,8 +248,8 @@ mod tests {
             }
         }
 
-        // Dijkstra would explore most of the 101 × 101 nodes
-        // the heuristic should allow exploring only about 200 nodes
+        
+        
         let now = std::time::Instant::now();
         let res = astar(&graph, (0, 0), (100, 90), |(i, j)| 100 - i + 90 - j);
         assert!(now.elapsed() < std::time::Duration::from_millis(10));

@@ -1,23 +1,23 @@
 use std::collections::HashMap;
 
-/// Custom error type representing an invalid character found in the input.
+
 #[derive(Debug, PartialEq)]
 pub enum AnagramError {
     NonAlphabeticCharacter,
 }
 
-/// Checks if two strings are anagrams, ignoring spaces and case sensitivity.
-///
-/// # Arguments
-///
-/// * `s` - First input string.
-/// * `t` - Second input string.
-///
-/// # Returns
-///
-/// * `Ok(true)` if the strings are anagrams.
-/// * `Ok(false)` if the strings are not anagrams.
-/// * `Err(AnagramError)` if either string contains non-alphabetic characters.
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn check_anagram(s: &str, t: &str) -> Result<bool, AnagramError> {
     let s_cleaned = clean_string(s)?;
     let t_cleaned = clean_string(t)?;
@@ -25,17 +25,17 @@ pub fn check_anagram(s: &str, t: &str) -> Result<bool, AnagramError> {
     Ok(char_count(&s_cleaned) == char_count(&t_cleaned))
 }
 
-/// Cleans the input string by removing spaces and converting to lowercase.
-/// Returns an error if any non-alphabetic character is found.
-///
-/// # Arguments
-///
-/// * `s` - Input string to clean.
-///
-/// # Returns
-///
-/// * `Ok(String)` containing the cleaned string (no spaces, lowercase).
-/// * `Err(AnagramError)` if the string contains non-alphabetic characters.
+
+
+
+
+
+
+
+
+
+
+
 fn clean_string(s: &str) -> Result<String, AnagramError> {
     s.chars()
         .filter(|c| !c.is_whitespace())
@@ -49,15 +49,15 @@ fn clean_string(s: &str) -> Result<String, AnagramError> {
         .collect()
 }
 
-/// Computes the histogram of characters in a string.
-///
-/// # Arguments
-///
-/// * `s` - Input string.
-///
-/// # Returns
-///
-/// * A `HashMap` where the keys are characters and values are their count.
+
+
+
+
+
+
+
+
+
 fn char_count(s: &str) -> HashMap<char, usize> {
     let mut res = HashMap::new();
     for c in s.chars() {

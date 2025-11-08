@@ -1,7 +1,7 @@
-// Author : cyrixninja
-// Binary to Hex Converter : Converts Binary to Hexadecimal
-// Wikipedia References  : 1. https://en.wikipedia.org/wiki/Hexadecimal
-//                         2. https://en.wikipedia.org/wiki/Binary_number
+
+
+
+
 
 static BITS_TO_HEX: &[(u8, &str)] = &[
     (0b0000, "0"),
@@ -47,7 +47,7 @@ pub fn binary_to_hexadecimal(binary_str: &str) -> String {
         width = binary_str.len() + padded_len
     );
 
-    // Convert binary to hexadecimal
+    
     let mut hexadecimal = String::with_capacity(binary_str.len() / 4 + 2);
     hexadecimal.push_str("0x");
 

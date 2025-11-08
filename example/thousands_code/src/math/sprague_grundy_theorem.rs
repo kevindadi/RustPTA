@@ -8,9 +8,9 @@
  * The Grundy number of a terminal state is 0; otherwise, it is recursively defined as the minimum
  * excludant (mex) of the Grundy values of possible next states.
  *
- * For more details on Sprague Grundy Theorem, you can visit:(https://en.wikipedia.org/wiki/Sprague%E2%80%93Grundy_theorem)
+ * For more details on Sprague Grundy Theorem, you can visit:(https:
  *
- * Author : [Gyandeep](https://github.com/Gyan172004)
+ * Author : [Gyandeep](https:
  */
 
 pub fn calculate_grundy_number(
@@ -18,18 +18,18 @@ pub fn calculate_grundy_number(
     grundy_numbers: &mut [i64],
     possible_moves: &[i64],
 ) -> i64 {
-    // Check if we've already calculated the Grundy number for this position.
+    
     if grundy_numbers[position as usize] != -1 {
         return grundy_numbers[position as usize];
     }
 
-    // Base case: terminal state
+    
     if position == 0 {
         grundy_numbers[0] = 0;
         return 0;
     }
 
-    // Calculate Grundy values for possible next states.
+    
     let mut next_state_grundy_values: Vec<i64> = vec![];
     for move_size in possible_moves.iter() {
         if position - move_size >= 0 {
@@ -41,7 +41,7 @@ pub fn calculate_grundy_number(
         }
     }
 
-    // Sort the Grundy values and find the minimum excludant.
+    
     next_state_grundy_values.sort_unstable();
     let mut mex: i64 = 0;
     for grundy_value in next_state_grundy_values.iter() {
@@ -51,7 +51,7 @@ pub fn calculate_grundy_number(
         mex += 1;
     }
 
-    // Store the calculated Grundy number and return it.
+    
     grundy_numbers[position as usize] = mex;
     mex
 }

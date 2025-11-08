@@ -1,28 +1,23 @@
-//! The main functionality: callbacks for rustc plugin systems.
-//! Inspired by <https://github.com/facebookexperimental/MIRAI/blob/9cf3067309d591894e2d0cd9b1ee6e18d0fdd26c/checker/src/callbacks.rs>
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use crate::concurrency::atomic::AtomicCollector;
 use crate::detect::atomicity_violation::AtomicityViolationDetector;
+use crate::detect::datarace::DataRaceDetector;
 use crate::detect::deadlock::DeadlockDetector;
 use crate::extern_tools::lola::LolaAnalyzer;
 use crate::extern_tools::tina::TinaAnalyzer;
 use crate::graph::callgraph::CallGraph;
-use crate::graph::cpn::ColorPetriNet;
-use crate::graph::cpn_state_graph::CpnStateGraph;
 use crate::graph::pn::PetriNet;
 use crate::graph::state_graph::StateGraph;
-use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::{AnalysisTool, Options, OwnCrateType};
-use crate::utils::{format_name, parse_api_spec, ApiSpec};
+use crate::util::mem_watcher::MemoryWatcher;
+use crate::util::{parse_api_spec, ApiSpec};
 use crate::DetectorKind;
 use log::debug;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
-use serde_json::{self, json};
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
 
@@ -35,7 +30,6 @@ pub struct PTACallbacks {
 
 impl PTACallbacks {
     pub fn new(options: Options) -> Self {
-        // 构造默认的诊断输出路径
         let diagnostics_output = if let Some(output) = options.output.clone() {
             let mut path = PathBuf::from(output);
             path.push(&options.crate_name);
@@ -46,7 +40,6 @@ impl PTACallbacks {
             path
         };
 
-        // 确保目录存在
         std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
             eprintln!("Warning: Failed to create output directory: {}", e);
         });
@@ -79,14 +72,12 @@ impl rustc_driver::Callbacks for PTACallbacks {
         let file_name = config
             .input
             .source_name()
-            //.prefer_remapped() // nightly-2023-09-13
-            .prefer_remapped_unconditionaly()
+            .prefer_remapped_unconditionally()
             .to_string();
 
         debug!("Processing input file: {}", file_name);
         if config.opts.test {
             debug!("in test only mode");
-            // self.options.test_only = true;
         }
     }
 
@@ -102,14 +93,12 @@ impl rustc_driver::Callbacks for PTACallbacks {
             .expect("valid string")
             .contains("/build/")
         {
-            // No need to analyze a build script, but do generate code.
             return Compilation::Continue;
         }
 
         self.analyze_with_pta(compiler, tcx);
 
         if self.test_run {
-            // We avoid code gen for test cases because LLVM is not used in a thread safe manner.
             Compilation::Stop
         } else {
             Compilation::Continue
@@ -119,11 +108,14 @@ impl rustc_driver::Callbacks for PTACallbacks {
 
 impl PTACallbacks {
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
+        let mut mem_watcher = MemoryWatcher::new();
+        mem_watcher.start();
+
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
 
-        let cgus = tcx.collect_and_partition_mono_items(()).1;
+        let cgus = tcx.collect_and_partition_mono_items(()).codegen_units;
         let instances: Vec<Instance<'tcx>> = cgus
             .iter()
             .flat_map(|cgu| {
@@ -154,75 +146,30 @@ impl PTACallbacks {
                 api_spec,
                 false,
                 self.output_directory.clone(),
+                true,
+                false,
+                false,
             );
             pn.construct();
             pn.save_petri_net_to_file();
-            let terminal_states = pn.get_terminal_states();
-            // log::info!("apis_marks: {:?}", pn.api_marks);
-            let mut state_graph = StateGraph::new(
-                pn.net.clone(),
-                pn.get_current_mark(),
-                pn.function_counter.clone(),
-                self.options.clone(),
-                terminal_states,
-            );
-            for (api_name, initial_mark) in pn.api_marks.iter() {
-                state_graph.generate_states_with_api(api_name.clone(), initial_mark.clone());
-            }
+            // let terminal_states = pn.get_terminal_states();
 
-            // log::info!("deadlock state: {}", state_graph.detect_api_deadlock());
+            // let mut state_graph = StateGraph::new(
+            //     pn.net.clone(),
+            //     pn.get_current_mark(),
+            //     pn.function_counter.clone(),
+            //     self.options.clone(),
+            //     terminal_states,
+            // );
+            // for (api_name, initial_mark) in pn.api_marks.iter() {}
+
+            mem_watcher.stop();
+
             return;
         }
+
         match &self.options.detector_kind {
             DetectorKind::DataRace => {
-                let unsafe_analyzer =
-                    UnsafeAnalyzer::new(tcx, &callgraph, self.options.crate_name.clone());
-                let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
-                unsafe_info.iter().for_each(|(def_id, info)| {
-                    log::debug!(
-                        "{}:\n{}",
-                        format_name(*def_id),
-                        serde_json::to_string_pretty(&json!({
-                            "unsafe_fn": info.is_unsafe_fn,
-                            "unsafe_blocks": info.unsafe_blocks,
-                            "unsafe_places": info.unsafe_places
-                        }))
-                        .unwrap()
-                    )
-                });
-                log::debug!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
-                let mut cpn =
-                    ColorPetriNet::new(self.options.clone(), tcx, &callgraph, unsafe_data, false);
-                cpn.construct();
-                cpn.cpn_to_dot("cpn.dot").unwrap();
-                log::info!("generate states reachable graph ");
-                let mut state_graph = CpnStateGraph::new(cpn.net.clone(), cpn.get_marking());
-                state_graph.generate_states();
-                state_graph.race_info.iter().for_each(|race_info| {
-                    log::info!(
-                        "Race {:?}:\n{}",
-                        serde_json::to_string(&json!({
-                            "unsafe_transitions": race_info.transitions,
-                        })),
-                        serde_json::to_string_pretty(&json!({
-                            "operations": race_info.span_str,
-                        }))
-                        .unwrap()
-                    )
-                });
-                if self.options.dump_options.dump_points_to {
-                    cpn.alias.borrow_mut().print_all_points_to_relations();
-                }
-            }
-            DetectorKind::AtomicityViolation => {
-                // 收集atomic变量和操作信息
-                log::debug!("Starting atomic operation collection");
-                let mut atomic_collector =
-                    AtomicCollector::new(tcx, &callgraph, self.options.crate_name.clone());
-                let atomic_vars = atomic_collector.analyze();
-
-                // 输出收集到的atomic信息
-                atomic_collector.to_json_pretty().unwrap();
                 let mut pn = PetriNet::new(
                     &self.options,
                     tcx,
@@ -230,11 +177,43 @@ impl PTACallbacks {
                     ApiSpec::default(),
                     true,
                     self.output_directory.clone(),
+                    false,
+                    false,
+                    true,
                 );
 
-                if !atomic_vars.is_empty() {
-                    pn.add_atomic_places(&atomic_vars);
+                pn.construct();
+                pn.save_petri_net_to_file();
+                let terminal_states = pn.get_terminal_states();
+                let mut state_graph = StateGraph::new(
+                    pn.net.clone(),
+                    pn.get_current_mark(),
+                    pn.function_counter.clone(),
+                    self.options.clone(),
+                    terminal_states,
+                );
+                state_graph.generate_states();
+                let detector = DataRaceDetector::new(&state_graph);
+                let data_races = detector.detect();
+
+                println!("Data Race: {}", data_races);
+                if self.options.dump_options.dump_points_to {
+                    pn.alias.borrow_mut().print_all_points_to_relations();
                 }
+            }
+            DetectorKind::AtomicityViolation => {
+                log::debug!("Starting atomic operation collection");
+                let mut pn = PetriNet::new(
+                    &self.options,
+                    tcx,
+                    &callgraph,
+                    ApiSpec::default(),
+                    true,
+                    self.output_directory.clone(),
+                    false,
+                    true,
+                    false,
+                );
 
                 pn.construct();
                 pn.save_petri_net_to_file();
@@ -249,9 +228,8 @@ impl PTACallbacks {
                 state_graph.generate_states();
                 let detector = AtomicityViolationDetector::new(&state_graph);
                 let atomicity_violation = detector.detect();
-                log::info!("atomicity_violation: {}", atomicity_violation);
 
-                // log::info!("atomic_races: {}", detector.generate_atomic_races());
+                println!("atomicity_violation: {}", atomicity_violation);
 
                 if self.options.dump_options.dump_points_to {
                     pn.alias.borrow_mut().print_all_points_to_relations();
@@ -265,19 +243,13 @@ impl PTACallbacks {
                     ApiSpec::default(),
                     false,
                     self.output_directory.clone(),
+                    true,
+                    false,
+                    false,
                 );
+
                 pn.construct();
                 pn.save_petri_net_to_file();
-                // let unfolding = UnfoldingNet::new(pn.net.clone(), pn.get_current_mark());
-
-                // match unfolding.check_local_deadlock() {
-                //     Some(deadlock_path) => {
-                //         println!("发现死锁路径: {:?}", deadlock_path);
-                //     }
-                //     None => {
-                //         println!("未发现死锁");
-                //     }
-                // }
 
                 match self.options.analysis_tool {
                     AnalysisTool::LoLA => {
@@ -309,7 +281,8 @@ impl PTACallbacks {
                         state_graph.dot().unwrap();
                         let deadlock_detector = DeadlockDetector::new(&state_graph);
                         let result = deadlock_detector.detect();
-                        log::info!("deadlock state: {}", result);
+
+                        println!("deadlock state: {}", result);
                     }
                 }
 
@@ -318,5 +291,6 @@ impl PTACallbacks {
                 }
             }
         }
+        mem_watcher.stop();
     }
 }

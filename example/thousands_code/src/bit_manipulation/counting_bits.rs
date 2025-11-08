@@ -1,27 +1,27 @@
-//! This module implements a function to count the number of set bits (1s)
-//! in the binary representation of an unsigned integer.
-//! It uses Brian Kernighan's algorithm, which efficiently clears the least significant
-//! set bit in each iteration until all bits are cleared.
-//! The algorithm runs in O(k), where k is the number of set bits.
 
-/// Counts the number of set bits in an unsigned integer.
-///
-/// # Arguments
-///
-/// * `n` - An unsigned 32-bit integer whose set bits will be counted.
-///
-/// # Returns
-///
-/// * `usize` - The number of set bits (1s) in the binary representation of the input number.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn count_set_bits(mut n: usize) -> usize {
-    // Initialize a variable to keep track of the count of set bits
+    
     let mut count = 0;
     while n > 0 {
-        // Clear the least significant set bit by
-        // performing a bitwise AND operation with (n - 1)
+        
+        
         n &= n - 1;
 
-        // Increment the count for each set bit found
+        
         count += 1;
     }
 

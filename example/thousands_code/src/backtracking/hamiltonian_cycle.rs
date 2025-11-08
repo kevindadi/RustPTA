@@ -1,42 +1,42 @@
-//! This module provides functionality to find a Hamiltonian cycle in a directed or undirected graph.
-//! Source: [Wikipedia](https://en.wikipedia.org/wiki/Hamiltonian_path_problem)
 
-/// Represents potential errors when finding hamiltonian cycle on an adjacency matrix.
+
+
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum FindHamiltonianCycleError {
-    /// Indicates that the adjacency matrix is empty.
+    
     EmptyAdjacencyMatrix,
-    /// Indicates that the adjacency matrix is not square.
+    
     ImproperAdjacencyMatrix,
-    /// Indicates that the starting vertex is out of bounds.
+    
     StartOutOfBound,
 }
 
-/// Represents a graph using an adjacency matrix.
+
 struct Graph {
-    /// The adjacency matrix representing the graph.
+    
     adjacency_matrix: Vec<Vec<bool>>,
 }
 
 impl Graph {
-    /// Creates a new graph with the provided adjacency matrix.
-    ///
-    /// # Arguments
-    ///
-    /// * `adjacency_matrix` - A square matrix where each element indicates
-    ///                        the presence (`true`) or absence (`false`) of an edge
-    ///                        between two vertices.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the graph if successful, or an `FindHamiltonianCycleError` if there is an issue with the matrix.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn new(adjacency_matrix: Vec<Vec<bool>>) -> Result<Self, FindHamiltonianCycleError> {
-        // Check if the adjacency matrix is empty.
+        
         if adjacency_matrix.is_empty() {
             return Err(FindHamiltonianCycleError::EmptyAdjacencyMatrix);
         }
 
-        // Validate that the adjacency matrix is square.
+        
         if adjacency_matrix
             .iter()
             .any(|row| row.len() != adjacency_matrix.len())
@@ -47,46 +47,46 @@ impl Graph {
         Ok(Self { adjacency_matrix })
     }
 
-    /// Returns the number of vertices in the graph.
+    
     fn num_vertices(&self) -> usize {
         self.adjacency_matrix.len()
     }
 
-    /// Determines if it is safe to include vertex `v` in the Hamiltonian cycle path.
-    ///
-    /// # Arguments
-    ///
-    /// * `v` - The index of the vertex being considered.
-    /// * `visited` - A reference to the vector representing the visited vertices.
-    /// * `path` - A reference to the current path being explored.
-    /// * `pos` - The position of the current vertex being considered.
-    ///
-    /// # Returns
-    ///
-    /// `true` if it is safe to include `v` in the path, `false` otherwise.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn is_safe(&self, v: usize, visited: &[bool], path: &[Option<usize>], pos: usize) -> bool {
-        // Check if the current vertex and the last vertex in the path are adjacent.
+        
         if !self.adjacency_matrix[path[pos - 1].unwrap()][v] {
             return false;
         }
 
-        // Check if the vertex has already been included in the path.
+        
         !visited[v]
     }
 
-    /// Recursively searches for a Hamiltonian cycle.
-    ///
-    /// This function is called by `find_hamiltonian_cycle`.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - A mutable vector representing the current path being explored.
-    /// * `visited` - A mutable vector representing the visited vertices.
-    /// * `pos` - The position of the current vertex being considered.
-    ///
-    /// # Returns
-    ///
-    /// `true` if a Hamiltonian cycle is found, `false` otherwise.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn hamiltonian_cycle_util(
         &self,
         path: &mut [Option<usize>],
@@ -94,7 +94,7 @@ impl Graph {
         pos: usize,
     ) -> bool {
         if pos == self.num_vertices() {
-            // Check if there is an edge from the last included vertex to the first vertex.
+            
             return self.adjacency_matrix[path[pos - 1].unwrap()][path[0].unwrap()];
         }
 
@@ -113,41 +113,41 @@ impl Graph {
         false
     }
 
-    /// Attempts to find a Hamiltonian cycle in the graph, starting from the specified vertex.
-    ///
-    /// A Hamiltonian cycle visits every vertex exactly once and returns to the starting vertex.
-    ///
-    /// # Note
-    /// This implementation may not find all possible Hamiltonian cycles.
-    /// It stops as soon as it finds one valid cycle. If multiple Hamiltonian cycles exist,
-    /// only one will be returned.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(Some(path))` if a Hamiltonian cycle is found, where `path` is a vector
-    /// containing the indices of vertices in the cycle, starting and ending with the same vertex.
-    ///
-    /// `Ok(None)` if no Hamiltonian cycle exists.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     fn find_hamiltonian_cycle(
         &self,
         start_vertex: usize,
     ) -> Result<Option<Vec<usize>>, FindHamiltonianCycleError> {
-        // Validate the start vertex.
+        
         if start_vertex >= self.num_vertices() {
             return Err(FindHamiltonianCycleError::StartOutOfBound);
         }
 
-        // Initialize the path.
+        
         let mut path = vec![None; self.num_vertices()];
-        // Start at the specified vertex.
+        
         path[0] = Some(start_vertex);
 
-        // Initialize the visited vector.
+        
         let mut visited = vec![false; self.num_vertices()];
         visited[start_vertex] = true;
 
         if self.hamiltonian_cycle_util(&mut path, &mut visited, 1) {
-            // Complete the cycle by returning to the starting vertex.
+            
             path.push(Some(start_vertex));
             Ok(Some(path.into_iter().map(Option::unwrap).collect()))
         } else {
@@ -156,7 +156,7 @@ impl Graph {
     }
 }
 
-/// Attempts to find a Hamiltonian cycle in a graph represented by an adjacency matrix, starting from a specified vertex.
+
 pub fn find_hamiltonian_cycle(
     adjacency_matrix: Vec<Vec<bool>>,
     start_vertex: usize,

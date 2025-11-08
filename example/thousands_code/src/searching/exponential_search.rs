@@ -13,7 +13,7 @@ pub fn exponential_search<T: Ord>(item: &T, arr: &[T]) -> Option<usize> {
         upper = len
     }
 
-    // binary search
+    
     let mut lower = upper / 2;
     while lower < upper {
         let mid = lower + (upper - lower) / 2;

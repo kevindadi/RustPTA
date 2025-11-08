@@ -1,21 +1,21 @@
-//! This module provides functionality to check if there exists a subset of a given set of integers
-//! that sums to a target value. The implementation uses a recursive backtracking approach.
 
-/// Checks if there exists a subset of the given set that sums to the target value.
+
+
+
 pub fn has_subset_with_sum(set: &[isize], target: isize) -> bool {
     backtrack(set, set.len(), target)
 }
 
 fn backtrack(set: &[isize], remaining_items: usize, target: isize) -> bool {
-    // Found a subset with the required sum
+    
     if target == 0 {
         return true;
     }
-    // No more elements to process
+    
     if remaining_items == 0 {
         return false;
     }
-    // Check if we can find a subset including or excluding the last element
+    
     backtrack(set, remaining_items - 1, target)
         || backtrack(set, remaining_items - 1, target - set[remaining_items - 1])
 }

@@ -1,19 +1,19 @@
 use std::cmp::Ordering;
 
-/// Finds the longest continuous increasing subsequence in a slice.
-///
-/// Given a slice of elements, this function returns a slice representing
-/// the longest continuous subsequence where each element is strictly
-/// less than the following element.
-///
-/// # Arguments
-///
-/// * `arr` - A reference to a slice of elements
-///
-/// # Returns
-///
-/// A subslice of the input, representing the longest continuous increasing subsequence.
-/// If there are multiple subsequences of the same length, the function returns the first one found.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn longest_continuous_increasing_subsequence<T: Ord>(arr: &[T]) -> &[T] {
     if arr.len() <= 1 {
         return arr;
@@ -26,26 +26,26 @@ pub fn longest_continuous_increasing_subsequence<T: Ord>(arr: &[T]) -> &[T] {
 
     for i in 1..arr.len() {
         match arr[i - 1].cmp(&arr[i]) {
-            // include current element is greater than or equal to the previous
-            // one elements in the current increasing sequence
+            
+            
             Ordering::Less | Ordering::Equal => {
                 curr_len += 1;
             }
-            // reset when a strictly decreasing element is found
+            
             Ordering::Greater => {
                 if curr_len > max_len {
                     max_len = curr_len;
                     max_start = start;
                 }
-                // reset start to the current position
+                
                 start = i;
-                // reset current length
+                
                 curr_len = 1;
             }
         }
     }
 
-    // final check for the last sequence
+    
     if curr_len > max_len {
         max_len = curr_len;
         max_start = start;

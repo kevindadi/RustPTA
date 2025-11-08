@@ -5,11 +5,11 @@ use std::{
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct HuffmanValue {
-    // For the `value` to overflow, the sum of frequencies should be bigger
-    // than u64. So we should be safe here
-    /// The encoded value
+    
+    
+    
     pub value: u64,
-    /// number of bits used (up to 64)
+    
     pub bits: u32,
 }
 
@@ -41,7 +41,7 @@ impl<T> Ord for HuffmanNode<T> {
 }
 
 impl<T: Clone + Copy + Ord> HuffmanNode<T> {
-    /// Turn the tree into the map that can be used in encoding
+    
     pub fn get_alphabet(
         height: u32,
         path: u64,
@@ -74,8 +74,8 @@ pub struct HuffmanDictionary<T> {
 }
 
 impl<T: Clone + Copy + Ord> HuffmanDictionary<T> {
-    /// The list of alphabet symbols and their respective frequency should
-    /// be given as input
+    
+    
     pub fn new(alphabet: &[(T, u64)]) -> Self {
         let mut alph: BTreeMap<T, HuffmanValue> = BTreeMap::new();
         let mut queue: BinaryHeap<HuffmanNode<T>> = BinaryHeap::new();
@@ -143,7 +143,7 @@ impl HuffmanEncoding {
     fn get_bit(&self, pos: u64) -> bool {
         (self.data[(pos >> 6) as usize] & (1 << (pos & 63))) != 0
     }
-    /// In case the encoding is invalid, `None` is returned
+    
     pub fn decode<T: Clone + Copy + Ord>(&self, dict: &HuffmanDictionary<T>) -> Option<Vec<T>> {
         let mut state = &dict.root;
         let mut result: Vec<T> = vec![];

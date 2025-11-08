@@ -1,27 +1,27 @@
-//! This module provides an implementation of a binary search algorithm that
-//! works for both ascending and descending ordered arrays. The binary search
-//! function returns the index of the target element if it is found, or `None`
-//! if the target is not present in the array.
+
+
+
+
 
 use std::cmp::Ordering;
 
-/// Performs a binary search for a specified item within a sorted array.
-///
-/// This function can handle both ascending and descending ordered arrays. It
-/// takes a reference to the item to search for and a slice of the array. If
-/// the item is found, it returns the index of the item within the array. If
-/// the item is not found, it returns `None`.
-///
-/// # Parameters
-///
-/// - `item`: A reference to the item to search for.
-/// - `arr`: A slice of the sorted array in which to search.
-///
-/// # Returns
-///
-/// An `Option<usize>` which is:
-/// - `Some(index)` if the item is found at the given index.
-/// - `None` if the item is not found in the array.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn binary_search<T: Ord>(item: &T, arr: &[T]) -> Option<usize> {
     let is_asc = is_asc_arr(arr);
 
@@ -37,25 +37,25 @@ pub fn binary_search<T: Ord>(item: &T, arr: &[T]) -> Option<usize> {
     None
 }
 
-/// Compares the item with the middle element of the current search range and
-/// updates the search bounds accordingly. This function handles both ascending
-/// and descending ordered arrays. It calculates the middle index of the
-/// current search range and compares the item with the element at
-/// this index. It then updates the search bounds (`left` and `right`) based on
-/// the result of this comparison. If the item is found, it updates `left` to
-/// the index of the found item and returns `true`.
-///
-/// # Parameters
-///
-/// - `item`: A reference to the item to search for.
-/// - `arr`: A slice of the array in which to search.
-/// - `left`: A mutable reference to the left bound of the search range.
-/// - `right`: A mutable reference to the right bound of the search range.
-/// - `is_asc`: A boolean indicating whether the array is sorted in ascending order.
-///
-/// # Returns
-///
-/// A `bool` indicating whether the item was found.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn match_compare<T: Ord>(
     item: &T,
     arr: &[T],
@@ -82,19 +82,19 @@ fn match_compare<T: Ord>(
     false
 }
 
-/// Determines if the given array is sorted in ascending order.
-///
-/// This helper function checks if the first element of the array is less than the
-/// last element, indicating an ascending order. It returns `false` if the array
-/// has fewer than two elements.
-///
-/// # Parameters
-///
-/// - `arr`: A slice of the array to check.
-///
-/// # Returns
-///
-/// A `bool` indicating whether the array is sorted in ascending order.
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn is_asc_arr<T: Ord>(arr: &[T]) -> bool {
     arr.len() > 1 && arr[0] < arr[arr.len() - 1]
 }

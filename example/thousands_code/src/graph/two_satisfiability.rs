@@ -12,9 +12,9 @@ fn variable(var: i64) -> usize {
     }
 }
 
-/// Returns an assignment that satisfies all the constraints, or a variable that makes such an assignment impossible.\
-/// Variables should be numbered from 1 to `n`, and a negative number `-m` corresponds to the negated variable `m`.\
-/// For more information about this problem, please visit: <https://en.wikipedia.org/wiki/2-satisfiability>
+
+
+
 pub fn solve_two_satisfiability(
     expression: &[Condition],
     num_variables: usize,
@@ -36,7 +36,7 @@ pub fn solve_two_satisfiability(
         if sccs.component[var] == sccs.component[var ^ 1] {
             return Err((var >> 1) as i64);
         }
-        // if a variable isn't
+        
         if sccs.component[var] < sccs.component[var ^ 1] {
             result[var >> 1] = true;
         }
@@ -93,10 +93,10 @@ mod tests {
     #[test]
     #[ignore]
     fn big_test() {
-        // We should spawn a new thread and set its stack size to something
-        // big (256MB in this case), because doing DFS (for finding SCCs) is
-        // a stack-intensive operation. 256MB should be enough for 3e5
-        // variables though.
+        
+        
+        
+        
         let builder = thread::Builder::new().stack_size(256 * 1024 * 1024);
         let handler = builder
             .spawn(|| {

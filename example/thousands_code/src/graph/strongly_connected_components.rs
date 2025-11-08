@@ -9,25 +9,25 @@ can use `src/graph/graph_enumeration.rs` to convert their graph.
 */
 
 pub struct StronglyConnectedComponents {
-    // The number of the SCC the vertex is in, starting from 1
+    
     pub component: Vec<usize>,
 
-    // The discover time of the vertex with minimum discover time reachable
-    // from this vertex. The MSB of the numbers are used to save whether the
-    // vertex has been visited (but the MSBs are cleared after
-    // the algorithm is done)
+    
+    
+    
+    
     pub state: Vec<u64>,
 
-    // The total number of SCCs
+    
     pub num_components: usize,
 
-    // The stack of vertices that DFS has seen (used internally)
+    
     stack: Vec<usize>,
-    // Used internally during DFS to know the current discover time
+    
     current_time: usize,
 }
 
-// Some functions to help with DRY and code readability
+
 const NOT_DONE: u64 = 1 << 63;
 
 #[inline]
@@ -52,7 +52,7 @@ fn get_discover_time(vertex_state: u64) -> u64 {
 
 impl StronglyConnectedComponents {
     pub fn new(mut num_vertices: usize) -> Self {
-        num_vertices += 1; // Vertices are numbered from 1, not 0
+        num_vertices += 1; 
         StronglyConnectedComponents {
             component: vec![0; num_vertices],
             state: vec![NOT_DONE; num_vertices],
@@ -63,7 +63,7 @@ impl StronglyConnectedComponents {
     }
     fn dfs(&mut self, v: usize, adj: &[Vec<usize>]) -> u64 {
         let mut min_disc = self.current_time as u64;
-        // self.state[v] = NOT_DONE + min_disc
+        
         self.state[v] ^= min_disc;
         self.current_time += 1;
         self.stack.push(v);
@@ -76,8 +76,8 @@ impl StronglyConnectedComponents {
             }
         }
 
-        // No vertex with a lower discovery time is reachable from this one
-        // So it should be "the head" of a new SCC.
+        
+        
         if min_disc == get_discover_time(self.state[v]) {
             self.num_components += 1;
             loop {

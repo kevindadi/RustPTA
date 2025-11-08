@@ -5,7 +5,7 @@ pub fn area_under_curve(start: f64, end: f64, func: fn(f64) -> f64, step_count: 
         (end, start)
     } else {
         (start, end)
-    }; //swap if bounds reversed
+    }; 
 
     let step_length: f64 = (end - start) / step_count as f64;
     let mut area = 0f64;

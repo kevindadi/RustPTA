@@ -1,11 +1,11 @@
-/// Generates all combinations of well-formed parentheses given a non-negative integer `n`.
-///
-/// This function uses backtracking to generate all possible combinations of well-formed
-/// parentheses. The resulting combinations are returned as a vector of strings.
-///
-/// # Arguments
-///
-/// * `n` - A non-negative integer representing the number of pairs of parentheses.
+
+
+
+
+
+
+
+
 pub fn generate_parentheses(n: usize) -> Vec<String> {
     let mut result = Vec::new();
     if n > 0 {
@@ -14,19 +14,19 @@ pub fn generate_parentheses(n: usize) -> Vec<String> {
     result
 }
 
-/// Helper function for generating parentheses recursively.
-///
-/// This function is called recursively to build combinations of well-formed parentheses.
-/// It tracks the number of open and close parentheses added so far and adds a new parenthesis
-/// if it's valid to do so.
-///
-/// # Arguments
-///
-/// * `current` - The current string of parentheses being built.
-/// * `open_count` - The count of open parentheses in the current string.
-/// * `close_count` - The count of close parentheses in the current string.
-/// * `n` - The total number of pairs of parentheses to be generated.
-/// * `result` - A mutable reference to the vector storing the generated combinations.
+
+
+
+
+
+
+
+
+
+
+
+
+
 fn generate(
     current: &str,
     open_count: usize,

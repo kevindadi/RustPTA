@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn test_tarjan_scc() {
-        // Test 1: A graph with multiple strongly connected components
+        
         let n_vertices = 11;
         let edges = vec![
             (0, 1),
@@ -117,7 +117,7 @@ mod tests {
             ]
         );
 
-        // Test 2: A graph with no edges
+        
         let n_vertices = 5;
         let edges: Vec<(usize, usize)> = vec![];
         let mut graph = Graph::new(n_vertices);
@@ -128,13 +128,13 @@ mod tests {
 
         let components = tarjan_scc(&graph);
 
-        // Each node is its own SCC
+        
         assert_eq!(
             components,
             vec![vec![0], vec![1], vec![2], vec![3], vec![4]]
         );
 
-        // Test 3: A graph with single strongly connected component
+        
         let n_vertices = 5;
         let edges = vec![(0, 1), (1, 2), (2, 3), (2, 4), (3, 0), (4, 2)];
         let mut graph = Graph::new(n_vertices);
@@ -146,7 +146,7 @@ mod tests {
         let components = tarjan_scc(&graph);
         assert_eq!(components, vec![vec![4, 3, 2, 1, 0]]);
 
-        // Test 4: A graph with multiple strongly connected component
+        
         let n_vertices = 7;
         let edges = vec![
             (0, 1),

@@ -1,6 +1,6 @@
-// Intro Sort (Also known as Introspective Sort)
-// Introspective Sort is hybrid sort (Quick Sort + Heap Sort + Insertion Sort)
-// https://en.wikipedia.org/wiki/Introsort
+
+
+
 fn insertion_sort<T: Ord>(arr: &mut [T]) {
     for i in 1..arr.len() {
         let mut j = i;
@@ -33,12 +33,12 @@ fn heapify<T: Ord>(arr: &mut [T], n: usize, i: usize) {
 fn heap_sort<T: Ord>(arr: &mut [T]) {
     let n = arr.len();
 
-    // Build a max-heap
+    
     for i in (0..n / 2).rev() {
         heapify(arr, n, i);
     }
 
-    // Extract elements from the heap one by one
+    
     for i in (0..n).rev() {
         arr.swap(0, i);
         heapify(arr, i, 0);
@@ -89,17 +89,17 @@ mod tests {
 
     #[test]
     fn test_intro_sort() {
-        // Test with integers
+        
         let mut arr1 = vec![67, 34, 29, 15, 21, 9, 99];
         intro_sort(&mut arr1);
         assert_eq!(arr1, vec![9, 15, 21, 29, 34, 67, 99]);
 
-        // Test with strings
+        
         let mut arr2 = vec!["sydney", "london", "tokyo", "beijing", "mumbai"];
         intro_sort(&mut arr2);
         assert_eq!(arr2, vec!["beijing", "london", "mumbai", "sydney", "tokyo"]);
 
-        // Test with an empty array
+        
         let mut arr3: Vec<i32> = vec![];
         intro_sort(&mut arr3);
         assert_eq!(arr3, vec![]);

@@ -1,6 +1,6 @@
-// Based on the TheAlgorithms/Python
-// RFC 3526 - More Modular Exponential (MODP) Diffie-Hellman groups for
-// Internet Key Exchange (IKE) https://tools.ietf.org/html/rfc3526
+
+
+
 
 use num_bigint::BigUint;
 use num_traits::{Num, Zero};
@@ -10,11 +10,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-// A map of predefined prime numbers for different bit lengths, as specified in RFC 3526
+
 static PRIMES: LazyLock<HashMap<u8, BigUint>> = LazyLock::new(|| {
     let mut m: HashMap<u8, BigUint> = HashMap::new();
     m.insert(
-        // 1536-bit
+        
         5,
         BigUint::parse_bytes(
             b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1\
@@ -30,7 +30,7 @@ static PRIMES: LazyLock<HashMap<u8, BigUint>> = LazyLock::new(|| {
         .unwrap(),
     );
     m.insert(
-        // 2048-bit
+        
         14,
         BigUint::parse_bytes(
             b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1\
@@ -50,7 +50,7 @@ static PRIMES: LazyLock<HashMap<u8, BigUint>> = LazyLock::new(|| {
     );
 
     m.insert(
-        // 3072-bit
+        
         15,
         BigUint::parse_bytes(
             b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1\
@@ -74,7 +74,7 @@ static PRIMES: LazyLock<HashMap<u8, BigUint>> = LazyLock::new(|| {
         .unwrap(),
     );
     m.insert(
-        // 4096-bit
+        
         16,
         BigUint::parse_bytes(
             b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1\
@@ -104,7 +104,7 @@ static PRIMES: LazyLock<HashMap<u8, BigUint>> = LazyLock::new(|| {
         .unwrap(),
     );
     m.insert(
-        // 6144-bit
+        
         17,
         BigUint::parse_bytes(
             b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E08\
@@ -141,7 +141,7 @@ static PRIMES: LazyLock<HashMap<u8, BigUint>> = LazyLock::new(|| {
     );
 
     m.insert(
-        // 8192-bit
+        
         18,
         BigUint::parse_bytes(
             b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1\
@@ -194,7 +194,7 @@ static PRIMES: LazyLock<HashMap<u8, BigUint>> = LazyLock::new(|| {
     m
 });
 
-/// Generating random number, should use num_bigint::RandomBits if possible.
+
 fn rand() -> usize {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -210,22 +210,22 @@ pub struct DiffieHellman {
 }
 
 impl DiffieHellman {
-    // Diffie-Hellman key exchange algorithm is based on the following mathematical concepts:
+    
 
-    //  - A large prime number p (known as the prime modulus) is chosen and shared by both parties.
+    
 
-    //  - A base number g (known as the generator) is chosen and shared by both parties.
+    
 
-    //  - Each party generates a private key a or b (which are secret and only known to that party) and calculates a corresponding public key A or B using the following formulas:
-    //          - A = g^a mod p
-    //          - B = g^b mod p
+    
+    
+    
 
-    //  - Each party then exchanges their public keys with each other.
+    
 
-    //  - Each party then calculates the shared secret key s using the following formula:
-    //          - s = B^a mod p or s = A^b mod p
+    
+    
 
-    // Both parties now have the same shared secret key s which can be used for encryption or authentication.
+    
 
     pub fn new(group: Option<u8>) -> Self {
         let mut _group: u8 = 14;
@@ -237,34 +237,34 @@ impl DiffieHellman {
             panic!("group not in primes")
         }
 
-        // generate private key
+        
         let private_key: BigUint = BigUint::from(rand());
 
         Self {
             prime: PRIMES[&_group].clone(),
             private_key,
-            generator: 2, // the generator is 2 for all the primes if this would not be the case it can be added to hashmap
+            generator: 2, 
             public_key: BigUint::default(),
         }
     }
 
-    /// get private key as hexadecimal String
+    
     pub fn get_private_key(&self) -> String {
         self.private_key.to_str_radix(16)
     }
 
-    /// Generate public key A = g**a mod p
+    
     pub fn generate_public_key(&mut self) -> String {
         self.public_key = BigUint::from(self.generator).modpow(&self.private_key, &self.prime);
         self.public_key.to_str_radix(16)
     }
 
     pub fn is_valid_public_key(&self, key_str: &str) -> bool {
-        // the unwrap_or_else will make sure it is false, because 2 <= 0 and therefor False is returned
+        
         let key = BigUint::from_str_radix(key_str, 16)
             .unwrap_or_else(|_| BigUint::parse_bytes(b"0", 16).unwrap());
 
-        // Check if the other public key is valid based on NIST SP800-56
+        
         if BigUint::from(2_u8) <= key
             && key <= &self.prime - BigUint::from(2_u8)
             && !key
@@ -279,7 +279,7 @@ impl DiffieHellman {
         false
     }
 
-    /// Generate the shared key
+    
     pub fn generate_shared_key(self, other_key_str: &str) -> Option<String> {
         let other_key = BigUint::from_str_radix(other_key_str, 16)
             .unwrap_or_else(|_| BigUint::parse_bytes(b"0", 16).unwrap());
@@ -331,15 +331,15 @@ mod tests {
         let mut alice = DiffieHellman::new(Some(16));
         let mut bob = DiffieHellman::new(Some(16));
 
-        // Private key not used, showed for illustrative purpose
+        
         let _alice_private = alice.get_private_key();
         let alice_public = alice.generate_public_key();
 
-        // Private key not used, showed for illustrative purpose
+        
         let _bob_private = bob.get_private_key();
         let bob_public = bob.generate_public_key();
 
-        // generating shared key using the struct implemenations
+        
         let alice_shared = alice.generate_shared_key(bob_public.as_str()).unwrap();
         let bob_shared = bob.generate_shared_key(alice_public.as_str()).unwrap();
         assert_eq!(alice_shared, bob_shared);

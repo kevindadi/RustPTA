@@ -1,18 +1,18 @@
-//! # Hinge Loss
-//!
-//! The `hng_loss` function calculates the Hinge loss, which is a
-//! loss function used for classification problems in machine learning.
-//!
-//! ## Formula
-//!
-//! For a pair of actual and predicted values, represented as vectors `y_true` and
-//! `y_pred`, the Hinge loss is calculated as:
-//!
-//! - loss = `max(0, 1 - y_true * y_pred)`.
-//!
-//! It returns the average loss by dividing the `total_loss` by total no. of
-//! elements.
-//!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn hng_loss(y_true: &[f64], y_pred: &[f64]) -> f64 {
     let mut total_loss: f64 = 0.0;
     for (p, a) in y_pred.iter().zip(y_true.iter()) {

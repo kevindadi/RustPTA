@@ -17,14 +17,14 @@ because alpha(n) < 5 for n < 10 ^ 600
 
 use super::DisjointSetUnion;
 pub struct LowestCommonAncestorOnline {
-    // Make members public to allow the user to fill them themself.
+    
     pub parents_sparse_table: Vec<Vec<usize>>,
     pub height: Vec<usize>,
 }
 
 impl LowestCommonAncestorOnline {
-    // Should be called once as:
-    // fill_sparse_table(tree_root, 0, 0, adjacency_list)
+    
+    
     #[inline]
     fn get_parent(&self, v: usize, i: usize) -> usize {
         self.parents_sparse_table[v][i]
@@ -59,7 +59,7 @@ impl LowestCommonAncestorOnline {
         }
         for &child in adj[vertex].iter() {
             if child == parent {
-                // It isn't a child!
+                
                 continue;
             }
             self.fill_sparse_table(child, vertex, height + 1, adj);
@@ -70,7 +70,7 @@ impl LowestCommonAncestorOnline {
         if self.height[v] < self.height[u] {
             std::mem::swap(&mut v, &mut u);
         }
-        // Bring v up to so that it has the same height as u
+        
         let height_diff = self.height[v] - self.height[u];
         for i in 0..63 {
             let bit = 1 << i;
@@ -84,7 +84,7 @@ impl LowestCommonAncestorOnline {
         if u == v {
             return u;
         }
-        // `self.num_parents` of u and v should be equal
+        
         for i in (0..self.num_parents(v)).rev() {
             let nv = self.get_parent(v, i);
             let nu = self.get_parent(u, i);
@@ -129,8 +129,8 @@ impl LowestCommonAncestorOffline {
         }
     }
     pub fn add_query(&mut self, u: usize, v: usize, query_id: usize) {
-        // We should add this query to both vertices, and it will be answered
-        // the second time it is seen in DFS.
+        
+        
         self.queries[u].push(LCAQuery { other: v, query_id });
         if u == v {
             return;
@@ -158,7 +158,7 @@ impl LowestCommonAncestorOffline {
         self.dsu_parent[vertex] |= 0b1;
         for &query in self.queries[vertex].iter() {
             if self.dsu_parent[query.other] & 1 != 0 {
-                // It has been visited
+                
                 answers.push(QueryAnswer {
                     query_id: query.query_id,
                     answer: (self.dsu_parent[self.dsu.find_set(query.other)] >> 1) as usize,
@@ -191,11 +191,11 @@ mod tests {
         let mut online_answers: Vec<QueryAnswer> = Vec::new();
         let mut online = LowestCommonAncestorOnline::new(num_verts);
         let mut offline = LowestCommonAncestorOffline::new(num_verts);
-        let mut query_id = 314; // A random number, doesn't matter
+        let mut query_id = 314; 
         online.fill_sparse_table(1, 0, 0, &tree);
         for i in 1..=num_verts {
             for j in 1..i {
-                // Query every possible pair
+                
                 online_answers.push(QueryAnswer {
                     query_id,
                     answer: online.get_ancestor(i, j),

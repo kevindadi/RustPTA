@@ -1,47 +1,47 @@
-//! This module provides functionality to solve the knapsack problem using dynamic programming.
-//! It includes structures for items and solutions, and functions to compute the optimal solution.
+
+
 
 use std::cmp::Ordering;
 
-/// Represents an item with a weight and a value.
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Item {
     weight: usize,
     value: usize,
 }
 
-/// Represents the solution to the knapsack problem.
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct KnapsackSolution {
-    /// The optimal profit obtained.
+    
     optimal_profit: usize,
-    /// The total weight of items included in the solution.
+    
     total_weight: usize,
-    /// The indices of items included in the solution. Indices might not be unique.
+    
     item_indices: Vec<usize>,
 }
 
-/// Solves the knapsack problem and returns the optimal profit, total weight, and indices of items included.
-///
-/// # Arguments:
-/// * `capacity` - The maximum weight capacity of the knapsack.
-/// * `items` - A vector of `Item` structs, each representing an item with weight and value.
-///
-/// # Returns:
-/// A `KnapsackSolution` struct containing:
-/// - `optimal_profit` - The maximum profit achievable with the given capacity and items.
-/// - `total_weight` - The total weight of items included in the solution.
-/// - `item_indices` - Indices of items included in the solution. Indices might not be unique.
-///
-/// # Note:
-/// The indices of items in the solution might not be unique.
-/// This function assumes that `items` is non-empty.
-///
-/// # Complexity:
-/// - Time complexity: O(num_items * capacity)
-/// - Space complexity: O(num_items * capacity)
-///
-/// where `num_items` is the number of items and `capacity` is the knapsack capacity.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn knapsack(capacity: usize, items: Vec<Item>) -> KnapsackSolution {
     let num_items = items.len();
     let item_weights: Vec<usize> = items.iter().map(|item| item.weight).collect();
@@ -63,12 +63,12 @@ pub fn knapsack(capacity: usize, items: Vec<Item>) -> KnapsackSolution {
     }
 }
 
-/// Generates the knapsack matrix (`num_items`, `capacity`) with maximum values.
-///
-/// # Arguments:
-///   * `capacity` - knapsack capacity
-///   * `item_weights` - weights of each item
-///   * `item_values` - values of each item
+
+
+
+
+
+
 fn generate_knapsack_matrix(
     capacity: usize,
     item_weights: &[usize],
@@ -98,16 +98,16 @@ fn generate_knapsack_matrix(
     )
 }
 
-/// Retrieves the indices of items included in the optimal knapsack solution.
-///
-/// # Arguments:
-///   * `item_weights` - weights of each item
-///   * `knapsack_matrix` - knapsack matrix with maximum values
-///   * `item_index` - number of items to consider (initially the total number of items)
-///   * `remaining_capacity` - remaining capacity of the knapsack
-///
-/// # Returns
-/// A vector of item indices included in the optimal solution. The indices might not be unique.
+
+
+
+
+
+
+
+
+
+
 fn retrieve_knapsack_items(
     item_weights: &[usize],
     knapsack_matrix: &[Vec<usize>],

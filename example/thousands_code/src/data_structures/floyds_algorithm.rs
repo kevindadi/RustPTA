@@ -1,9 +1,9 @@
-// floyds_algorithm.rs
-// https://github.com/rust-lang/rust/blob/master/library/alloc/src/collections/linked_list.rs#L113
-// use std::collections::linked_list::LinkedList;
-// https://www.reddit.com/r/rust/comments/t7wquc/is_it_possible_to_solve_leetcode_problem141/
 
-use crate::data_structures::linked_list::LinkedList; // Import the LinkedList from linked_list.rs
+
+
+
+
+use crate::data_structures::linked_list::LinkedList; 
 
 pub fn detect_cycle<T>(linked_list: &LinkedList<T>) -> Option<usize> {
     let mut current = linked_list.head;
@@ -16,7 +16,7 @@ pub fn detect_cycle<T>(linked_list: &LinkedList<T>) -> Option<usize> {
         if steps_until_reset == 0 {
             checkpoint = current;
             times_reset += 1;
-            steps_until_reset = 1 << times_reset; // 2^times_reset
+            steps_until_reset = 1 << times_reset; 
         }
 
         unsafe {
@@ -42,19 +42,19 @@ pub fn has_cycle<T>(linked_list: &LinkedList<T>) -> bool {
             fast = fast_node.as_ref().next;
 
             if let Some(fast_next) = fast {
-                // fast = (*fast_next.as_ptr()).next;
+                
                 fast = fast_next.as_ref().next;
             } else {
-                return false; // If fast reaches the end, there's no cycle
+                return false; 
             }
 
             if slow == fast {
-                return true; // Cycle detected
+                return true; 
             }
         }
     }
-    // println!("{}", flag);
-    false // No cycle detected
+    
+    false 
 }
 
 #[cfg(test)]
@@ -80,7 +80,7 @@ mod tests {
         linked_list.insert_at_tail(2);
         linked_list.insert_at_tail(3);
 
-        // Create a cycle for testing
+        
         unsafe {
             if let Some(mut tail) = linked_list.tail {
                 if let Some(head) = linked_list.head {

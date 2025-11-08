@@ -15,7 +15,7 @@ pub fn encode(message: &str) -> String {
         .join(" ")
 }
 
-// Declarative macro for creating readable map declarations, for more info see https://doc.rust-lang.org/book/ch19-06-macros.html
+
 macro_rules! map {
     ($($key:expr => $value:expr),* $(,)?) => {
         std::iter::Iterator::collect(IntoIterator::into_iter([$(($key, $value),)*]))
@@ -99,10 +99,10 @@ fn _decode_part(string: &str) -> String {
     string.split(' ').map(_decode_token).collect::<String>()
 }
 
-/// Convert morse code to ascii.
-///
-/// Given a morse code, return the corresponding message.
-/// If the code is invalid, the undecipherable part of the code is replaced by `_`.
+
+
+
+
 pub fn decode(string: &str) -> Result<String, io::Error> {
     if !_check_all_parts(string) {
         return Err(io::Error::new(

@@ -1,4 +1,4 @@
-/// <https://en.wikipedia.org/wiki/Steinhaus%E2%80%93Johnson%E2%80%93Trotter_algorithm>
+
 pub fn steinhaus_johnson_trotter_permute<T: Clone>(array: &[T]) -> Vec<Vec<T>> {
     let len = array.len();
     let mut array = array.to_owned();
@@ -37,7 +37,7 @@ mod tests {
     fn test_3_different_values() {
         let original = vec![1, 2, 3];
         let res = steinhaus_johnson_trotter_permute(&original);
-        assert_eq!(res.len(), 6); // 3!
+        assert_eq!(res.len(), 6); 
         for permut in res {
             assert_valid_permutation(&original, &permut)
         }
@@ -47,7 +47,7 @@ mod tests {
     fn test_3_times_the_same_value() {
         let original = vec![1, 1, 1];
         let res = steinhaus_johnson_trotter_permute(&original);
-        assert_eq!(res.len(), 6); // 3!
+        assert_eq!(res.len(), 6); 
         for permut in res {
             assert_valid_permutation(&original, &permut)
         }

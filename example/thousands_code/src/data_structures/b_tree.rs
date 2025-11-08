@@ -12,8 +12,8 @@ pub struct BTree<T> {
     props: BTreeProps,
 }
 
-// Why to need a different Struct for props...
-// Check - http://smallcultfollowing.com/babysteps/blog/2018/11/01/after-nll-interprocedural-conflicts/#fnref:improvement
+
+
 struct BTreeProps {
     degree: usize,
     max_keys: usize,
@@ -55,15 +55,15 @@ impl BTreeProps {
         node.keys.len() == self.max_keys
     }
 
-    // Split Child expects the Child Node to be full
-    /// Move the middle_key to parent node and split the child_node's
-    /// keys/chilren_nodes into half
+    
+    
+    
     fn split_child<T: Ord + Copy + Default>(&self, parent: &mut Node<T>, child_index: usize) {
         let child = &mut parent.children[child_index];
         let middle_key = child.keys[self.mid_key_index];
         let right_keys = match child.keys.split_off(self.mid_key_index).split_first() {
             Some((_first, _others)) => {
-                // We don't need _first, as it will move to parent node.
+                
                 _others.to_vec()
             }
             None => Vec::with_capacity(self.max_keys),
@@ -87,7 +87,7 @@ impl BTreeProps {
 
         let mut u_index: usize = usize::try_from(index + 1).ok().unwrap();
         if node.is_leaf() {
-            // Just insert it, as we know this method will be called only when node is not full
+            
             node.keys.insert(u_index, key);
         } else {
             if self.is_maxed_out(&node.children[u_index]) {
@@ -107,8 +107,8 @@ impl BTreeProps {
             let _depth = depth + 1;
             for (index, key) in node.keys.iter().enumerate() {
                 Self::traverse_node(&node.children[index], _depth);
-                // Check https://doc.rust-lang.org/std/fmt/index.html
-                // And https://stackoverflow.com/a/35280799/2849127
+                
+                
                 print!("{0:{<1$}{2:?}{0:}<1$}", "", depth, key);
             }
             Self::traverse_node(node.children.last().unwrap(), _depth);
@@ -130,7 +130,7 @@ where
 
     pub fn insert(&mut self, key: T) {
         if self.props.is_maxed_out(&self.root) {
-            // Create an empty root and split the old root...
+            
             let mut new_root = Node::new(self.props.degree, None, None);
             mem::swap(&mut new_root, &mut self.root);
             self.root.children.insert(0, new_root);

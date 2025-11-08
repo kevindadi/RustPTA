@@ -1,11 +1,11 @@
-// Basic matrix operations using a Matrix type with internally uses
-// a vector representation to store matrix elements.
-// Generic using the MatrixElement trait, which can be implemented with
-// the matrix_element_type_def macro.
-// Wikipedia reference: https://www.wikiwand.com/en/Matrix_(mathematics)
+
+
+
+
+
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, Sub};
 
-// Define macro to build a matrix idiomatically
+
 #[macro_export]
 macro_rules! matrix {
     [$([$($x:expr),* $(,)*]),* $(,)*] => {{
@@ -13,21 +13,21 @@ macro_rules! matrix {
     }};
 }
 
-// Define a trait "alias" for suitable matrix elements
+
 pub trait MatrixElement:
     Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + AddAssign + Copy + From<u8>
 {
 }
 
-// Define a macro to implement the MatrixElement trait for desired types
+
 #[macro_export]
 macro_rules! matrix_element_type_def {
     ($T: ty) => {
-        // Implement trait for type
+        
         impl MatrixElement for $T {}
 
-        // Defining left-hand multiplication in this form
-        // prevents errors for uncovered types
+        
+        
         impl Mul<&Matrix<$T>> for $T {
             type Output = Matrix<$T>;
 
@@ -38,7 +38,7 @@ macro_rules! matrix_element_type_def {
     };
 
     ($T: ty, $($Ti: ty),+) => {
-        // Decompose type definitions recursively
+        
         matrix_element_type_def!($T);
         matrix_element_type_def!($($Ti),+);
     };
@@ -55,7 +55,7 @@ pub struct Matrix<T: MatrixElement> {
 
 impl<T: MatrixElement> Matrix<T> {
     pub fn new(data: Vec<T>, rows: usize, cols: usize) -> Self {
-        // Build a matrix from the internal vector representation
+        
         if data.len() != rows * cols {
             panic!("Inconsistent data and dimensions combination for matrix")
         }
@@ -63,7 +63,7 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     pub fn zero(rows: usize, cols: usize) -> Self {
-        // Build a matrix of zeros
+        
         Matrix {
             data: vec![0.into(); rows * cols],
             rows,
@@ -72,9 +72,9 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     pub fn identity(len: usize) -> Self {
-        // Build an identity matrix
+        
         let mut identity = Matrix::zero(len, len);
-        // Diagonal of ones
+        
         for i in 0..len {
             identity[[i, i]] = 1.into();
         }
@@ -82,7 +82,7 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     pub fn transpose(&self) -> Self {
-        // Transpose a matrix of any size
+        
         let mut result = Matrix::zero(self.cols, self.rows);
         for i in 0..self.rows {
             for j in 0..self.cols {
@@ -121,7 +121,7 @@ impl<T: MatrixElement> Add<&Matrix<T>> for &Matrix<T> {
     type Output = Matrix<T>;
 
     fn add(self, rhs: &Matrix<T>) -> Self::Output {
-        // Add two matrices. They need to have identical dimensions.
+        
         if self.rows != rhs.rows || self.cols != rhs.cols {
             panic!("Matrix dimensions do not match");
         }
@@ -140,7 +140,7 @@ impl<T: MatrixElement> Sub for &Matrix<T> {
     type Output = Matrix<T>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        // Subtract one matrix from another. They need to have identical dimensions.
+        
         if self.rows != rhs.rows || self.cols != rhs.cols {
             panic!("Matrix dimensions do not match");
         }
@@ -159,8 +159,8 @@ impl<T: MatrixElement> Mul for &Matrix<T> {
     type Output = Matrix<T>;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        // Multiply two matrices. The multiplier needs to have the same amount
-        // of columns as the multiplicand has rows.
+        
+        
         if self.cols != rhs.rows {
             panic!("Matrix dimensions do not match");
         }
@@ -185,7 +185,7 @@ impl<T: MatrixElement> Mul<T> for &Matrix<T> {
     type Output = Matrix<T>;
 
     fn mul(self, rhs: T) -> Self::Output {
-        // Multiply a matrix of any size with a scalar
+        
         let mut result = Matrix::zero(self.rows, self.cols);
         for i in 0..self.rows {
             for j in 0..self.cols {
@@ -201,7 +201,7 @@ impl<T: MatrixElement> From<Vec<Vec<T>>> for Matrix<T> {
         let rows = v.len();
         let cols = v.first().map_or(0, |row| row.len());
 
-        // Ensure consistent dimensions
+        
         for row in v.iter().skip(1) {
             if row.len() != cols {
                 panic!("Invalid matrix dimensions. Columns must be consistent.");
@@ -217,7 +217,7 @@ impl<T: MatrixElement> From<Vec<Vec<T>>> for Matrix<T> {
 }
 
 #[cfg(test)]
-// rustfmt skipped to prevent unformatting matrix definitions to a single line
+
 #[rustfmt::skip] 
 mod tests {
     use super::Matrix;

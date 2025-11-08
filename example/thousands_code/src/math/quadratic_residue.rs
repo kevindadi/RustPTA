@@ -1,12 +1,12 @@
-/// Cipolla algorithm
-///
-/// Solving quadratic residue problem:
-///     x^2 = a (mod p) , p is an odd prime
-/// with O(M*log(n)) time complexity, M depends on the complexity of complex numbers multiplication.
-///
-/// Wikipedia reference: https://en.wikipedia.org/wiki/Cipolla%27s_algorithm
-/// When a is the primitive root modulo n, the answer is unique.
-/// Otherwise it will return the smallest positive solution
+
+
+
+
+
+
+
+
+
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -58,9 +58,9 @@ impl CustomComplexNumber {
         let mut result = CustomComplexNumber::new(1, 0, base.f.clone());
         while power != 0 {
             if (power & 1) != 0 {
-                result.mult_other(&base); // result *= base;
+                result.mult_other(&base); 
             }
-            base.mult_self(); // base *= base;
+            base.mult_self(); 
             power >>= 1;
         }
         result
@@ -72,11 +72,11 @@ fn is_residue(x: u64, modulus: u64) -> bool {
     x != 0 && fast_power(x as usize, power as usize, modulus as usize) == 1
 }
 
-/// The Legendre symbol `(a | p)`
-///
-/// Returns 0 if a = 0 mod p, 1 if a is a square mod p, -1 if it not a square mod p.
-///
-/// <https://en.wikipedia.org/wiki/Legendre_symbol>
+
+
+
+
+
 pub fn legendre_symbol(a: u64, odd_prime: u64) -> i64 {
     debug_assert!(odd_prime % 2 != 0, "prime must be odd");
     if a == 0 {
@@ -88,11 +88,11 @@ pub fn legendre_symbol(a: u64, odd_prime: u64) -> i64 {
     }
 }
 
-// return two solutions (x1, x2) for Quadratic Residue problem x^2 = a (mod p), where p is an odd prime
-// if a is Quadratic Nonresidues, return None
+
+
 pub fn cipolla(a: u32, p: u32, seed: Option<u64>) -> Option<(u32, u32)> {
-    // The params should be kept in u32 range for multiplication overflow issue
-    // But inside we use u64 for convenience
+    
+    
     let a = a as u64;
     let p = p as u64;
     if a == 0 {
@@ -127,21 +127,21 @@ pub fn cipolla(a: u32, p: u32, seed: Option<u64>) -> Option<(u32, u32)> {
     }
 }
 
-/// Returns one of the two possible solutions of _x² = a mod p_, if any.
-///
-/// The other solution is _-x mod p_. If there is no solution, returns `None`.
-///
-/// Reference: H. Cohen, _A course in computational algebraic number theory_, Algorithm 1.4.3
-///
-/// ## Implementation details
-///
-/// To avoid multiplication overflows, internally the algorithm uses the `128`-bit arithmetic.
-///
-/// Also see [`cipolla`].
+
+
+
+
+
+
+
+
+
+
+
 pub fn tonelli_shanks(a: i64, odd_prime: u64) -> Option<u64> {
     let p: u128 = odd_prime as u128;
     let e = (p - 1).trailing_zeros();
-    let q = (p - 1) >> e; // p = 2^e * q, with q odd
+    let q = (p - 1) >> e; 
 
     let a = if a < 0 {
         a.rem_euclid(p as i64) as u128
@@ -151,7 +151,7 @@ pub fn tonelli_shanks(a: i64, odd_prime: u64) -> Option<u64> {
 
     let power_mod_p = |b, e| fast_power(b as usize, e as usize, p as usize) as u128;
 
-    // find generator: choose a random non-residue n mod p
+    
     let mut rng = rand::thread_rng();
     let n = loop {
         let n = rng.gen_range(0..p);
@@ -161,7 +161,7 @@ pub fn tonelli_shanks(a: i64, odd_prime: u64) -> Option<u64> {
     };
     let z = power_mod_p(n, q);
 
-    // init
+    
     let mut y = z;
     let mut r = e;
     let mut x = power_mod_p(a, (q - 1) / 2) % p;
@@ -169,7 +169,7 @@ pub fn tonelli_shanks(a: i64, odd_prime: u64) -> Option<u64> {
     x = (a * x) % p;
 
     while b % p != 1 {
-        // find exponent
+        
         let m = (1..r)
             .scan(b, |prev, m| {
                 *prev = (*prev * *prev) % p;
@@ -177,10 +177,10 @@ pub fn tonelli_shanks(a: i64, odd_prime: u64) -> Option<u64> {
             })
             .find_map(|(m, cond)| cond.then_some(m));
         let Some(m) = m else {
-            return None; // non-residue
+            return None; 
         };
 
-        // reduce exponent
+        
         let t = power_mod_p(y as u128, 2_u128.pow(r - m - 1));
         y = (t * t) % p;
         r = m;

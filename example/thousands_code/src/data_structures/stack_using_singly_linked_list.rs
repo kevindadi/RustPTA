@@ -1,4 +1,4 @@
-// The public struct can hide the implementation detail
+
 pub struct Stack<T> {
     head: Link<T>,
 }
@@ -11,38 +11,38 @@ struct Node<T> {
 }
 
 impl<T> Stack<T> {
-    // Self is an alias for Stack
-    // We implement associated function name new for single-linked-list
+    
+    
     pub fn new() -> Self {
-        // for new function we need to return a new instance
+        
         Self {
-            // we refer to variants of an enum using :: the namespacing operator
+            
             head: None,
-        } // we need to return the variant, so there without the ;
+        } 
     }
 
-    // Here are the primary forms that self can take are: self, &mut self and &self.
-    // Since push will modify the linked list, we need a mutable reference `&mut`.
-    // The push method which the signature's first parameter is self
+    
+    
+    
     pub fn push(&mut self, elem: T) {
         let new_node = Box::new(Node {
             elem,
             next: self.head.take(),
         });
-        // don't forget replace the head with new node for stack
+        
         self.head = Some(new_node);
     }
 
-    /// The pop function removes the head and returns its value.
-    ///
-    /// To do so, we'll need to match the `head` of the list, which is of enum type `Option<T>`.\
-    /// It has two variants: `Some(T)` and `None`.
-    /// * `None` - the list is empty:
-    ///   * return an enum `Result` of variant `Err()`, as there is nothing to pop.
-    /// * `Some(node)` - the list is not empty:
-    ///   * remove the head of the list,
-    ///   * relink the list's head `head` to its following node `next`,
-    ///   * return `Ok(elem)`.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     pub fn pop(&mut self) -> Result<T, &str> {
         match self.head.take() {
             None => Err("Stack is empty"),
@@ -54,12 +54,12 @@ impl<T> Stack<T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        // Returns true if head is of variant `None`.
+        
         self.head.is_none()
     }
 
     pub fn peek(&self) -> Option<&T> {
-        // Converts from &Option<T> to Option<&T>.
+        
         match self.head.as_ref() {
             None => None,
             Some(node) => Some(&node.elem),
@@ -81,7 +81,7 @@ impl<T> Stack<T> {
             next: self.head.as_deref(),
         }
     }
-    // '_ is the "explicitly elided lifetime" syntax of Rust
+    
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
         IterMut {
             next: self.head.as_deref_mut(),
@@ -95,38 +95,38 @@ impl<T> Default for Stack<T> {
     }
 }
 
-/// The drop method of singly linked list.
-///
-/// Here's a question: *Do we need to worry about cleaning up our list?*\
-/// With the help of the ownership mechanism, the type `List` will be cleaned up automatically (dropped) after it goes out of scope.\
-/// The Rust Compiler does so automacally. In other words, the `Drop` trait is implemented automatically.\
-///
-/// The `Drop` trait is implemented for our type `List` with the following order: `List->Link->Box<Node>->Node`.\
-/// The `.drop()` method is tail recursive and will clean the element one by one, this recursion will stop at `Box<Node>`\
-/// <https://rust-unofficial.github.io/too-many-lists/first-drop.html>
-///
-/// We wouldn't be able to drop the contents contained by the box after deallocating, so we need to manually write the iterative drop.
+
+
+
+
+
+
+
+
+
+
+
 impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         let mut cur_link = self.head.take();
         while let Some(mut boxed_node) = cur_link {
             cur_link = boxed_node.next.take();
-            // boxed_node goes out of scope and gets dropped here;
-            // but its Node's `next` field has been set to None
-            // so no unbound recursion occurs.
+            
+            
+            
         }
     }
 }
 
-// Rust has nothing like a yield statement, and there are actually 3 different iterator traits to be implemented
 
-// Collections are iterated in Rust using the Iterator trait, we define a struct implement Iterator
+
+
 pub struct IntoIter<T>(Stack<T>);
 
 impl<T> Iterator for IntoIter<T> {
-    // This is declaring that every implementation of iterator has an associated type called Item
+    
     type Item = T;
-    // the reason iterator yield Option<self::Item> is because the interface coalesces the `has_next` and `get_next` concepts
+    
     fn next(&mut self) -> Option<Self::Item> {
         self.0.pop().ok()
     }
@@ -140,7 +140,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
         self.next.map(|node| {
-            // as_deref: Converts from Option<T> (or &Option<T>) to Option<&T::Target>.
+            
             self.next = node.next.as_deref();
             &node.elem
         })
@@ -154,7 +154,7 @@ pub struct IterMut<'a, T> {
 impl<'a, T> Iterator for IterMut<'a, T> {
     type Item = &'a mut T;
     fn next(&mut self) -> Option<Self::Item> {
-        // we add take() here due to &mut self isn't Copy(& and Option<&> is Copy)
+        
         self.next.take().map(|node| {
             self.next = node.next.as_deref_mut();
             &mut node.elem

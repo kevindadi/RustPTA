@@ -36,7 +36,7 @@ mod tests {
         let mut arr1 = vec![64, 25, 12, 22, 11];
         let mut arr2 = vec![5, 4, 3, 2, 1];
         let mut arr3 = vec![1, 2, 3, 4, 5];
-        let mut arr4: Vec<i32> = vec![]; // Explicitly specify the type for arr4
+        let mut arr4: Vec<i32> = vec![]; 
 
         binary_insertion_sort(&mut arr1);
         binary_insertion_sort(&mut arr2);

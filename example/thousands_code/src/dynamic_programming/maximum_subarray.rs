@@ -1,32 +1,32 @@
-//! This module provides a function to find the largest sum of the subarray
-//! in a given array of integers using dynamic programming. It also includes
-//! tests to verify the correctness of the implementation.
 
-/// Custom error type for maximum subarray
+
+
+
+
 #[derive(Debug, PartialEq)]
 pub enum MaximumSubarrayError {
     EmptyArray,
 }
 
-/// Finds the subarray (containing at least one number) which has the largest sum
-/// and returns its sum.
-///
-/// A subarray is a contiguous part of an array.
-///
-/// # Arguments
-///
-/// * `array` - A slice of integers.
-///
-/// # Returns
-///
-/// A `Result` which is:
-/// * `Ok(isize)` representing the largest sum of a contiguous subarray.
-/// * `Err(MaximumSubarrayError)` if the array is empty.
-///
-/// # Complexity
-///
-/// * Time complexity: `O(array.len())`
-/// * Space complexity: `O(1)`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub fn maximum_subarray(array: &[isize]) -> Result<isize, MaximumSubarrayError> {
     if array.is_empty() {
         return Err(MaximumSubarrayError::EmptyArray);

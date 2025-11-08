@@ -1,24 +1,24 @@
-//! Implements Tim sort algorithm.
-//!
-//! Tim sort is a hybrid sorting algorithm derived from merge sort and insertion sort.
-//! It is designed to perform well on many kinds of real-world data.
+
+
+
+
 
 use crate::sorting::insertion_sort;
 use std::cmp;
 
 static MIN_MERGE: usize = 32;
 
-/// Calculates the minimum run length for Tim sort based on the length of the array.
-///
-/// The minimum run length is determined using a heuristic that ensures good performance.
-///
-/// # Arguments
-///
-/// * `array_length` - The length of the array.
-///
-/// # Returns
-///
-/// The minimum run length.
+
+
+
+
+
+
+
+
+
+
+
 fn compute_min_run_length(array_length: usize) -> usize {
     let mut remaining_length = array_length;
     let mut result = 0;
@@ -31,16 +31,16 @@ fn compute_min_run_length(array_length: usize) -> usize {
     remaining_length + result
 }
 
-/// Merges two sorted subarrays into a single sorted subarray.
-///
-/// This function merges two sorted subarrays of the provided slice into a single sorted subarray.
-///
-/// # Arguments
-///
-/// * `arr` - The slice containing the subarrays to be merged.
-/// * `left` - The starting index of the first subarray.
-/// * `mid` - The ending index of the first subarray.
-/// * `right` - The ending index of the second subarray.
+
+
+
+
+
+
+
+
+
+
 fn merge<T: Ord + Copy>(arr: &mut [T], left: usize, mid: usize, right: usize) {
     let left_slice = arr[left..=mid].to_vec();
     let right_slice = arr[mid + 1..=right].to_vec();
@@ -59,14 +59,14 @@ fn merge<T: Ord + Copy>(arr: &mut [T], left: usize, mid: usize, right: usize) {
         k += 1;
     }
 
-    // Copy any remaining elements from the left subarray
+    
     while i < left_slice.len() {
         arr[k] = left_slice[i];
         k += 1;
         i += 1;
     }
 
-    // Copy any remaining elements from the right subarray
+    
     while j < right_slice.len() {
         arr[k] = right_slice[j];
         k += 1;
@@ -74,25 +74,25 @@ fn merge<T: Ord + Copy>(arr: &mut [T], left: usize, mid: usize, right: usize) {
     }
 }
 
-/// Sorts a slice using Tim sort algorithm.
-///
-/// This function sorts the provided slice in-place using the Tim sort algorithm.
-///
-/// # Arguments
-///
-/// * `arr` - The slice to be sorted.
+
+
+
+
+
+
+
 pub fn tim_sort<T: Ord + Copy>(arr: &mut [T]) {
     let n = arr.len();
     let min_run = compute_min_run_length(MIN_MERGE);
 
-    // Perform insertion sort on small subarrays
+    
     let mut i = 0;
     while i < n {
         insertion_sort(&mut arr[i..cmp::min(i + MIN_MERGE, n)]);
         i += min_run;
     }
 
-    // Merge sorted subarrays
+    
     let mut size = min_run;
     while size < n {
         let mut left = 0;

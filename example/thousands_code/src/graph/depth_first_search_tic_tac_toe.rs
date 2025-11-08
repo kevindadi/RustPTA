@@ -24,11 +24,11 @@ SOFTWARE.
 #[allow(unused_imports)]
 use std::io;
 
-//Interactive Tic-Tac-Toe play needs the "rand = "0.8.3" crate.
-//#[cfg(not(test))]
-//extern crate rand;
-//#[cfg(not(test))]
-//use rand::Rng;
+
+
+
+
+
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct Position {
@@ -86,7 +86,7 @@ fn main() {
             }
         }
 
-        //Take the validated user input coordinate and use it.
+        
         if let Some(move_pos) = move_position {
             let open_positions = available_positions(&board);
 
@@ -105,13 +105,13 @@ fn main() {
                 }
             }
 
-            //Find the best game plays from the current board state
+            
             let recusion_result = minimax(Players::PlayerO, &board);
             match recusion_result {
                 Some(x) => {
-                    //Interactive Tic-Tac-Toe play needs the "rand = "0.8.3" crate.
-                    //#[cfg(not(test))]
-                    //let random_selection = rand::thread_rng().gen_range(0..x.positions.len());
+                    
+                    
+                    
                     let random_selection = 0;
 
                     let response_pos = x.positions[random_selection];
@@ -170,7 +170,7 @@ fn win_check(player: Players, board: &[Vec<Players>]) -> bool {
         return false;
     }
 
-    //Check for a win on the diagonals.
+    
     if (board[0][0] == board[1][1]) && (board[1][1] == board[2][2]) && (board[2][2] == player)
         || (board[2][0] == board[1][1]) && (board[1][1] == board[0][2]) && (board[0][2] == player)
     {
@@ -178,12 +178,12 @@ fn win_check(player: Players, board: &[Vec<Players>]) -> bool {
     }
 
     for i in 0..3 {
-        //Check for a win on the horizontals.
+        
         if (board[i][0] == board[i][1]) && (board[i][1] == board[i][2]) && (board[i][2] == player) {
             return true;
         }
 
-        //Check for a win on the verticals.
+        
         if (board[0][i] == board[1][i]) && (board[1][i] == board[2][i]) && (board[2][i] == player) {
             return true;
         }
@@ -192,9 +192,9 @@ fn win_check(player: Players, board: &[Vec<Players>]) -> bool {
     false
 }
 
-//Minimize the actions of the opponent while maximizing the game state of the current player.
+
 pub fn minimax(side: Players, board: &[Vec<Players>]) -> Option<PlayActions> {
-    //Check that board is in a valid state.
+    
     if win_check(Players::PlayerX, board) || win_check(Players::PlayerO, board) {
         return None;
     }
@@ -210,14 +210,14 @@ pub fn minimax(side: Players, board: &[Vec<Players>]) -> Option<PlayActions> {
         return None;
     }
 
-    //Play position
+    
     let mut best_move: Option<PlayActions> = None;
 
     for pos in positions {
         let mut board_next = board.to_owned();
         board_next[pos.y as usize][pos.x as usize] = side;
 
-        //Check for a win condition before recursion to determine if this node is terminal.
+        
         if win_check(Players::PlayerX, &board_next) {
             append_playaction(
                 side,
@@ -260,7 +260,7 @@ pub fn minimax(side: Players, board: &[Vec<Players>]) -> Option<PlayActions> {
     best_move
 }
 
-//Promote only better or collate equally scored game plays
+
 fn append_playaction(
     current_side: Players,
     opt_play_actions: &mut Option<PlayActions>,
@@ -276,11 +276,11 @@ fn append_playaction(
 
     let play_actions = opt_play_actions.as_mut().unwrap();
 
-    //New game action is scored from the current side and the current saved best score against the new game action.
+    
     match (current_side, play_actions.side, appendee.side) {
         (Players::Blank, _, _) => panic!("Unreachable state."),
 
-        //Winning scores
+        
         (Players::PlayerX, Players::PlayerX, Players::PlayerX) => {
             play_actions.positions.push(appendee.position);
         }
@@ -290,7 +290,7 @@ fn append_playaction(
         }
         (Players::PlayerO, Players::PlayerO, _) => {}
 
-        //Non-winning to Winning scores
+        
         (Players::PlayerX, _, Players::PlayerX) => {
             play_actions.side = Players::PlayerX;
             play_actions.positions.clear();
@@ -302,7 +302,7 @@ fn append_playaction(
             play_actions.positions.push(appendee.position);
         }
 
-        //Losing to Neutral scores
+        
         (Players::PlayerX, Players::PlayerO, Players::Blank) => {
             play_actions.side = Players::Blank;
             play_actions.positions.clear();
@@ -315,11 +315,11 @@ fn append_playaction(
             play_actions.positions.push(appendee.position);
         }
 
-        //Ignoring lower scored plays
+        
         (Players::PlayerX, Players::Blank, Players::PlayerO) => {}
         (Players::PlayerO, Players::Blank, Players::PlayerX) => {}
 
-        //No change hence append only
+        
         (_, _, _) => {
             assert!(play_actions.side == appendee.side);
             play_actions.positions.push(appendee.position);

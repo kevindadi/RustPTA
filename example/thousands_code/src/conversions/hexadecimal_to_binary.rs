@@ -1,8 +1,8 @@
-// Author : cyrixninja
-// Hexadecimal to Binary Converter : Converts Hexadecimal to Binary
-// Wikipedia References  : 1. https://en.wikipedia.org/wiki/Hexadecimal
-//                         2. https://en.wikipedia.org/wiki/Binary_number
-// Other References for Testing : https://www.rapidtables.com/convert/number/hex-to-binary.html
+
+
+
+
+
 
 pub fn hexadecimal_to_binary(hex_str: &str) -> Result<String, String> {
     let hex_chars = hex_str.chars().collect::<Vec<char>>();

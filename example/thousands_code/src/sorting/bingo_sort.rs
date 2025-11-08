@@ -1,6 +1,6 @@
 use std::cmp::{max, min};
 
-// Function for finding the maximum and minimum element of the Array
+
 fn max_min(vec: &[i32], bingo: &mut i32, next_bingo: &mut i32) {
     for &element in vec.iter().skip(1) {
         *bingo = min(*bingo, element);

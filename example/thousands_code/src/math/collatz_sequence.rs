@@ -1,4 +1,4 @@
-// collatz conjecture : https://en.wikipedia.org/wiki/Collatz_conjecture
+
 pub fn sequence(mut n: usize) -> Option<Vec<usize>> {
     if n == 0 {
         return None;

@@ -1,4 +1,4 @@
-// sorts through swapping the first value until it is at the right position, and repeating for all the following.
+
 
 pub fn exchange_sort(arr: &mut [i32]) {
     let length = arr.len();

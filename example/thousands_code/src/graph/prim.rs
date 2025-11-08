@@ -9,7 +9,7 @@ fn add_edge<V: Ord + Copy, E: Ord + Add + Copy>(graph: &mut Graph<V, E>, v1: V, 
     graph.entry(v2).or_default().insert(v1, c);
 }
 
-// selects a start and run the algorithm from it
+
 pub fn prim<V: Ord + Copy + std::fmt::Debug, E: Ord + Add + Copy + std::fmt::Debug>(
     graph: &Graph<V, E>,
 ) -> Graph<V, E> {
@@ -19,32 +19,32 @@ pub fn prim<V: Ord + Copy + std::fmt::Debug, E: Ord + Add + Copy + std::fmt::Deb
     }
 }
 
-// only works for a connected graph
-// if the given graph is not connected it will return the MST of the connected subgraph
+
+
 pub fn prim_with_start<V: Ord + Copy, E: Ord + Add + Copy>(
     graph: &Graph<V, E>,
     start: V,
 ) -> Graph<V, E> {
-    // will contain the MST
+    
     let mut mst: Graph<V, E> = Graph::new();
-    // a priority queue based on a binary heap, used to get the cheapest edge
-    // the elements are an edge: the cost, destination and source
+    
+    
     let mut prio = BinaryHeap::new();
 
     mst.insert(start, BTreeMap::new());
 
     for (v, c) in &graph[&start] {
-        // the heap is a max heap, we have to use Reverse when adding to simulate a min heap
+        
         prio.push(Reverse((*c, v, start)));
     }
 
     while let Some(Reverse((dist, t, prev))) = prio.pop() {
-        // the destination of the edge has already been seen
+        
         if mst.contains_key(t) {
             continue;
         }
 
-        // the destination is a new vertex
+        
         add_edge(&mut mst, prev, *t, dist);
 
         for (v, c) in &graph[t] {

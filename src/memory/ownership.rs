@@ -6,7 +6,6 @@ use rustc_middle::ty::TyCtxt;
 
 use rustc_middle::ty::{GenericArg, List};
 
-/// y = Arc::clone(x)
 pub fn is_arc_or_rc_clone<'tcx>(
     def_id: DefId,
     substs: &List<GenericArg<'tcx>>,
@@ -35,13 +34,11 @@ pub fn is_rc(arg_ty_name: &str) -> bool {
     arg_ty_name.starts_with("std::rc::Rc<")
 }
 
-/// y = std::ptr::read::<T>(x)
 #[inline]
 pub fn is_ptr_read(def_id: DefId, tcx: TyCtxt<'_>) -> bool {
     tcx.def_path_str(def_id).starts_with("std::ptr::read::<")
 }
 
-/// z = <_ as Index<_>>::index(x, y)
 #[inline]
 pub fn is_index(def_id: DefId, tcx: TyCtxt<'_>) -> bool {
     tcx.def_path_str(def_id).ends_with("::index")
