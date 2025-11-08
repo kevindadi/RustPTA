@@ -23,8 +23,8 @@ use petgraph::{Directed, Direction, Graph};
 use crate::concurrency::atomic::is_atomic_ptr_store;
 use crate::concurrency::blocking::{CondVarId, LockGuardId};
 use crate::concurrency::channel::ChannelId;
-use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::memory::ownership;
+use crate::translate::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 
 pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,

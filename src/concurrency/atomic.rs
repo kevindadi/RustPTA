@@ -14,8 +14,8 @@ use rustc_middle::mir::{
 use rustc_middle::ty::{self, GenericArg, Instance, List, Ty, TyCtxt, TyKind};
 use serde_json::json;
 
-use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::pointsto::AliasId;
+use crate::translate::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::util::format_name;
 
 static ATOMIC_PTR_STORE: Lazy<Regex> =

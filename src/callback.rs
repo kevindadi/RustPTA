@@ -1,15 +1,11 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use crate::detect::atomicity_violation::AtomicityViolationDetector;
-use crate::detect::datarace::DataRaceDetector;
-use crate::detect::deadlock::DeadlockDetector;
-use crate::extern_tools::lola::LolaAnalyzer;
-use crate::extern_tools::tina::TinaAnalyzer;
-use crate::graph::callgraph::CallGraph;
-use crate::graph::pn::PetriNet;
-use crate::graph::state_graph::StateGraph;
+// use crate::detect::atomicity_violation::AtomicityViolationDetector;
+// use crate::detect::datarace::DataRaceDetector;
+// use crate::detect::deadlock::DeadlockDetector;
 use crate::options::{AnalysisTool, Options, OwnCrateType};
+use crate::translate::callgraph::CallGraph;
 use crate::util::mem_watcher::MemoryWatcher;
 use crate::util::{parse_api_spec, ApiSpec};
 use crate::DetectorKind;
@@ -139,19 +135,19 @@ impl PTACallbacks {
                     ApiSpec::default()
                 });
 
-            let mut pn = PetriNet::new(
-                &self.options,
-                tcx,
-                &callgraph,
-                api_spec,
-                false,
-                self.output_directory.clone(),
-                true,
-                false,
-                false,
-            );
-            pn.construct();
-            pn.save_petri_net_to_file();
+            // let mut pn = PetriNet::new(
+            //     &self.options,
+            //     tcx,
+            //     &callgraph,
+            //     api_spec,
+            //     false,
+            //     self.output_directory.clone(),
+            //     true,
+            //     false,
+            //     false,
+            // );
+            // pn.construct();
+            // pn.save_petri_net_to_file();
             // let terminal_states = pn.get_terminal_states();
 
             // let mut state_graph = StateGraph::new(
@@ -170,125 +166,115 @@ impl PTACallbacks {
 
         match &self.options.detector_kind {
             DetectorKind::DataRace => {
-                let mut pn = PetriNet::new(
-                    &self.options,
-                    tcx,
-                    &callgraph,
-                    ApiSpec::default(),
-                    true,
-                    self.output_directory.clone(),
-                    false,
-                    false,
-                    true,
-                );
+                // let mut pn = PetriNet::new(
+                //     &self.options,
+                //     tcx,
+                //     &callgraph,
+                //     ApiSpec::default(),
+                //     true,
+                //     self.output_directory.clone(),
+                //     false,
+                //     false,
+                //     true,
+                // );
 
-                pn.construct();
-                pn.save_petri_net_to_file();
-                let terminal_states = pn.get_terminal_states();
-                let mut state_graph = StateGraph::new(
-                    pn.net.clone(),
-                    pn.get_current_mark(),
-                    pn.function_counter.clone(),
-                    self.options.clone(),
-                    terminal_states,
-                );
-                state_graph.generate_states();
-                let detector = DataRaceDetector::new(&state_graph);
-                let data_races = detector.detect();
+                // pn.construct();
+                // pn.save_petri_net_to_file();
+                // let terminal_states = pn.get_terminal_states();
+                // let mut state_graph = StateGraph::new(
+                //     pn.net.clone(),
+                //     pn.get_current_mark(),
+                //     pn.function_counter.clone(),
+                //     self.options.clone(),
+                //     terminal_states,
+                // );
+                // state_graph.generate_states();
+                // let detector = DataRaceDetector::new(&state_graph);
+                // let data_races = detector.detect();
 
-                println!("Data Race: {}", data_races);
-                if self.options.dump_options.dump_points_to {
-                    pn.alias.borrow_mut().print_all_points_to_relations();
-                }
+                // println!("Data Race: {}", data_races);
+                // if self.options.dump_options.dump_points_to {
+                //     pn.alias.borrow_mut().print_all_points_to_relations();
+                // }
             }
             DetectorKind::AtomicityViolation => {
                 log::debug!("Starting atomic operation collection");
-                let mut pn = PetriNet::new(
-                    &self.options,
-                    tcx,
-                    &callgraph,
-                    ApiSpec::default(),
-                    true,
-                    self.output_directory.clone(),
-                    false,
-                    true,
-                    false,
-                );
+                // let mut pn = PetriNet::new(
+                //     &self.options,
+                //     tcx,
+                //     &callgraph,
+                //     ApiSpec::default(),
+                //     true,
+                //     self.output_directory.clone(),
+                //     false,
+                //     true,
+                //     false,
+                // );
 
-                pn.construct();
-                pn.save_petri_net_to_file();
-                let terminal_states = pn.get_terminal_states();
-                let mut state_graph = StateGraph::new(
-                    pn.net.clone(),
-                    pn.get_current_mark(),
-                    pn.function_counter.clone(),
-                    self.options.clone(),
-                    terminal_states,
-                );
-                state_graph.generate_states();
-                let detector = AtomicityViolationDetector::new(&state_graph);
-                let atomicity_violation = detector.detect();
+                // pn.construct();
+                // pn.save_petri_net_to_file();
+                // let terminal_states = pn.get_terminal_states();
+                // let mut state_graph = StateGraph::new(
+                //     pn.net.clone(),
+                //     pn.get_current_mark(),
+                //     pn.function_counter.clone(),
+                //     self.options.clone(),
+                //     terminal_states,
+                // );
+                // state_graph.generate_states();
+                // let detector = AtomicityViolationDetector::new(&state_graph);
+                // let atomicity_violation = detector.detect();
 
-                println!("atomicity_violation: {}", atomicity_violation);
+                // println!("atomicity_violation: {}", atomicity_violation);
 
-                if self.options.dump_options.dump_points_to {
-                    pn.alias.borrow_mut().print_all_points_to_relations();
-                }
+                // if self.options.dump_options.dump_points_to {
+                //     pn.alias.borrow_mut().print_all_points_to_relations();
+                // }
             }
             _ => {
-                let mut pn = PetriNet::new(
-                    &self.options,
-                    tcx,
-                    &callgraph,
-                    ApiSpec::default(),
-                    false,
-                    self.output_directory.clone(),
-                    true,
-                    false,
-                    false,
-                );
+                // let mut pn = PetriNet::new(
+                //     &self.options,
+                //     tcx,
+                //     &callgraph,
+                //     ApiSpec::default(),
+                //     false,
+                //     self.output_directory.clone(),
+                //     true,
+                //     false,
+                //     false,
+                // );
 
-                pn.construct();
-                pn.save_petri_net_to_file();
+                // pn.construct();
+                // pn.save_petri_net_to_file();
 
                 match self.options.analysis_tool {
-                    AnalysisTool::LoLA => {
-                        let analyzer = LolaAnalyzer::new(
-                            "lola".to_string(),
-                            "pn.lola".to_string(),
-                            self.output_directory.clone(),
-                        );
-                        log::info!("Lola Result: {:?}", analyzer.analyze_petri_net(&pn));
-                    }
-                    AnalysisTool::Tina => {
-                        let analyzer = TinaAnalyzer::new(
-                            "tina".to_string(),
-                            "pn.tina".to_string(),
-                            self.output_directory.clone(),
-                        );
-                        println!("Tina Result: {}", analyzer.get_analysis_info().unwrap());
-                    }
                     AnalysisTool::RPN => {
-                        let mut state_graph = StateGraph::new(
-                            pn.net.clone(),
-                            pn.get_current_mark(),
-                            pn.function_counter.clone(),
-                            self.options.clone(),
-                            pn.get_terminal_states(),
+                        // let mut state_graph = StateGraph::new(
+                        //     pn.net.clone(),
+                        //     pn.get_current_mark(),
+                        //     pn.function_counter.clone(),
+                        //     self.options.clone(),
+                        //     pn.get_terminal_states(),
+                        // );
+
+                        // state_graph.generate_states();
+                        // state_graph.dot().unwrap();
+                        // let deadlock_detector = DeadlockDetector::new(&state_graph);
+                        // let result = deadlock_detector.detect();
+
+                        // println!("deadlock state: {}", result);
+                    }
+                    _ => {
+                        log::error!(
+                            "Unsupported analysis tool: {:?}",
+                            self.options.analysis_tool
                         );
-
-                        state_graph.generate_states();
-                        state_graph.dot().unwrap();
-                        let deadlock_detector = DeadlockDetector::new(&state_graph);
-                        let result = deadlock_detector.detect();
-
-                        println!("deadlock state: {}", result);
                     }
                 }
 
-                if self.options.dump_options.dump_points_to {
-                    pn.alias.borrow_mut().print_all_points_to_relations();
-                }
+                // if self.options.dump_options.dump_points_to {
+                //     pn.alias.borrow_mut().print_all_points_to_relations();
+                // }
             }
         }
         mem_watcher.stop();

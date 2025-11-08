@@ -10,7 +10,7 @@ use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::{self, Instance, TyCtxt};
 use rustc_span::Span;
 
-use crate::graph::callgraph::InstanceId;
+use crate::translate::callgraph::InstanceId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LockGuardId {
