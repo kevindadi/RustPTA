@@ -6,8 +6,12 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
+use crate::memory::pointsto::AliasId;
+use crate::concurrency::atomic::AtomicOrdering;
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::index_vec::IndexVec;
+use petgraph::graph::NodeIndex;
+use rustc_middle::mir::Local;
 
 pub type Weight = u64;
 
@@ -61,6 +65,7 @@ pub enum TransitionType {
     Unlock(usize),
     DropRead(usize),
     DropWrite(usize),
+    Drop,
     Assert,
 
     UnsafeRead(usize, String, usize, String),
@@ -72,9 +77,25 @@ pub enum TransitionType {
     Notify(usize),
     Wait,
 
-    // AtomicLoad(AliasId, AtomicOrdering, String, usize),
-    // AtomicStore(AliasId, AtomicOrdering, String, usize),
-    // AtomicCmpXchg(AliasId, AtomicOrdering, AtomicOrdering, String, usize),
+    AtomicLoad(
+        #[serde(with = "alias_id_serde")] AliasId,
+        #[serde(with = "atomic_ordering_serde")] AtomicOrdering,
+        String,
+        usize,
+    ),
+    AtomicStore(
+        #[serde(with = "alias_id_serde")] AliasId,
+        #[serde(with = "atomic_ordering_serde")] AtomicOrdering,
+        String,
+        usize,
+    ),
+    AtomicCmpXchg(
+        #[serde(with = "alias_id_serde")] AliasId,
+        #[serde(with = "atomic_ordering_serde")] AtomicOrdering,
+        #[serde(with = "atomic_ordering_serde")] AtomicOrdering,
+        String,
+        usize,
+    ),
     Spawn(String),
     Join(String),
 
@@ -232,5 +253,64 @@ impl Marking {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+mod alias_id_serde {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &AliasId, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let tuple = (value.instance_id.index(), value.local.index());
+        tuple.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<AliasId, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let (instance_idx, local_idx) = <(usize, usize)>::deserialize(deserializer)?;
+        let instance = NodeIndex::new(instance_idx);
+        let local = Local::from_usize(local_idx);
+        Ok(AliasId::new(instance, local))
+    }
+}
+
+mod atomic_ordering_serde {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &AtomicOrdering, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(match value {
+            AtomicOrdering::Relaxed => "Relaxed",
+            AtomicOrdering::Release => "Release",
+            AtomicOrdering::Acquire => "Acquire",
+            AtomicOrdering::AcqRel => "AcqRel",
+            AtomicOrdering::SeqCst => "SeqCst",
+        })
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<AtomicOrdering, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "Relaxed" => Ok(AtomicOrdering::Relaxed),
+            "Release" => Ok(AtomicOrdering::Release),
+            "Acquire" => Ok(AtomicOrdering::Acquire),
+            "AcqRel" => Ok(AtomicOrdering::AcqRel),
+            "SeqCst" => Ok(AtomicOrdering::SeqCst),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["Relaxed", "Release", "Acquire", "AcqRel", "SeqCst"],
+            )),
+        }
     }
 }

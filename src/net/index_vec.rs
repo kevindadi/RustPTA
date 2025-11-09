@@ -65,6 +65,14 @@ where
         self.data.iter_mut()
     }
 
+    pub fn get(&self, index: I) -> Option<&T> {
+        self.data.get(index.index())
+    }
+
+    pub fn get_mut(&mut self, index: I) -> Option<&mut T> {
+        self.data.get_mut(index.index())
+    }
+
     pub fn into_vec(self) -> Vec<T> {
         self.data
     }

@@ -27,8 +27,6 @@ use log::debug;
 use options::Options;
 use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
 
-use crate::options::DetectorKind;
-
 fn main() {
     let handler = EarlyDiagCtxt::new(ErrorOutputType::default());
 

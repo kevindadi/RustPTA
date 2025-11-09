@@ -1,122 +1,530 @@
-use crate::net::core::Net;
-use crate::net::structure::{Place, PlaceType};
-use crate::net::PlaceId;
-use crate::translate::callgraph::CallGraph;
-use crate::translate::mir_to_pn::BodyToPetriNet;
+use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
+use crate::concurrency::channel::{ChannelCollector, ChannelId, ChannelInfo, EndpointType};
+use crate::net::structure::PlaceType;
+use crate::translate::key_api::KeyApiRegex;
+use crate::memory::pointsto::AliasId;
+use crate::memory::unsafe_memory::UnsafeAnalyzer;
+use crate::options::OwnCrateType;
 use crate::util::format_name;
 use crate::Options;
-
+use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
-use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::path::PathBuf;
 
-use crate::memory::pointsto::AliasAnalysis;
+use rustc_hash::FxHashMap;
+use rustc_hir::def_id::DefId;
+use serde_json::json;
+use std::cell::RefCell;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
+
+use crate::net::{Net, Place, PlaceId};
+
+use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use crate::translate::mir_to_pn::BodyToPetriNet;
+use crate::concurrency::blocking::{
+    BlockingCollector, CondVarId, LockGuardId, LockGuardMap, LockGuardTy,
+};
+use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
+
+fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
+    let mut current = x;
+    while union_find[current] != *current {
+        current = &union_find[current];
+    }
+    current.clone()
+}
+
+fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
+    let root_x = find(union_find, x);
+    let root_y = find(union_find, y);
+    if root_x != root_y {
+        union_find.insert(root_y, root_x);
+    }
+}
 
 pub struct PetriNet<'compilation, 'pn, 'tcx> {
     options: &'compilation Options,
-    _output_directory: PathBuf,
-    tcx: TyCtxt<'tcx>,
+    tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: Net,
     callgraph: &'pn CallGraph<'tcx>,
     pub alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
     pub function_counter: HashMap<DefId, (PlaceId, PlaceId)>,
-    pub entry_exit: Option<(PlaceId, PlaceId)>,
+    pub function_vec: HashMap<DefId, Vec<PlaceId>>,
+    locks_counter: HashMap<LockGuardId, PlaceId>,
+    lock_info: LockGuardMap<'tcx>,
+
+    condvars: HashMap<CondVarId, PlaceId>,
+    atomic_places: HashMap<AliasId, PlaceId>,
+    atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
+    pub entry_exit: (PlaceId, PlaceId),
+    pub unsafe_places: HashMap<AliasId, PlaceId>,
+    pub channel_places: HashMap<ChannelId, PlaceId>,
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         options: &'compilation Options,
-        tcx: TyCtxt<'tcx>,
+        tcx: rustc_middle::ty::TyCtxt<'tcx>,
         callgraph: &'pn CallGraph<'tcx>,
-        _api_spec: crate::util::ApiSpec,
-        av: bool,
-        output_directory: PathBuf,
     ) -> Self {
-        let alias = RefCell::new(AliasAnalysis::new(tcx, callgraph, av));
+        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
         Self {
             options,
-            _output_directory: output_directory,
             tcx,
             net: Net::empty(),
             callgraph,
             alias,
-            function_counter: HashMap::new(),
-            entry_exit: None,
+            function_counter: HashMap::<DefId, (PlaceId, PlaceId)>::new(),
+            function_vec: HashMap::<DefId, Vec<PlaceId>>::new(),
+            locks_counter: HashMap::<LockGuardId, PlaceId>::new(),
+            lock_info: HashMap::default(),
+            condvars: HashMap::<CondVarId, PlaceId>::new(),
+            atomic_places: HashMap::<AliasId, PlaceId>::new(),
+            atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
+            entry_exit: (PlaceId::new(0), PlaceId::new(0)),
+    
+            unsafe_places: HashMap::default(),
+            channel_places: HashMap::default(),
         }
     }
 
-    pub fn construct(&mut self) {
-        self.construct_function_places();
+    pub fn construct_channel_resources(&mut self) {
+        let mut channel_collector =
+            ChannelCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
+        channel_collector.analyze();
+        channel_collector.to_json_pretty().unwrap();
 
-        for (_node_idx, caller) in self.callgraph.graph.node_references() {
-            let def_id = caller.instance().def_id();
-            if !self.tcx.is_mir_available(def_id) {
-                continue;
+        let mut span_groups: HashMap<String, Vec<(ChannelId, ChannelInfo<'tcx>)>> = HashMap::new();
+
+        for (id, info) in channel_collector.channels {
+            let key_string = format!("{:?}", info.span)
+                .split(":")
+                .take(2)
+                .collect::<Vec<&str>>()
+                .join("");
+            span_groups.entry(key_string).or_default().push((id, info));
+        }
+
+        for (i, (span, endpoints)) in span_groups.iter().enumerate() {
+            if endpoints.len() == 2 {
+                let has_pair = endpoints
+                    .iter()
+                    .any(|(_, info)| info.endpoint_type == EndpointType::Sender)
+                    && endpoints
+                        .iter()
+                        .any(|(_, info)| info.endpoint_type == EndpointType::Receiver);
+
+                if has_pair {
+                    let channel_id = format!("channel_{}", i);
+                    let channel_place = Place::new(channel_id, 0, 100, PlaceType::Resources, span.clone());
+                    let channel_node = self.net.add_place(channel_place);
+
+                    for (id, _) in endpoints {
+                        self.channel_places.insert(id.clone(), channel_node);
+                    }
+
+                    log::debug!(
+                        "Created shared channel place for endpoints at span: {}",
+                        span
+                    );
+                }
             }
-            if !format_name(def_id).starts_with(&self.options.crate_name) {
-                continue;
-            }
-            let Some(entry_exit) = self.function_counter.get(&def_id).copied() else {
-                continue;
-            };
-            let body = self.tcx.optimized_mir(def_id);
-            if body.source.promoted.is_some() {
-                continue;
-            }
-            let mut translator =
-                BodyToPetriNet::new(caller.instance(), body, self.tcx, &mut self.net, entry_exit);
-            translator.translate();
         }
     }
 
-    fn construct_function_places(&mut self) {
+    pub fn construct_atomic_resources(&mut self) {
+        let mut atomic_collector =
+            AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
+
+        if atomic_collector.atomic_vars.is_empty() {
+            return;
+        }
+        let atomic_vars = atomic_collector.analyze();
+
+        atomic_collector.to_json_pretty().unwrap();
+        for (_, atomic_info) in atomic_vars {
+            let atomic_type = atomic_info.var_type.clone();
+            let alias_id = atomic_info.get_alias_id();
+            if !atomic_type.starts_with("&") {
+                let atomic_name = atomic_type.clone();
+                let atomic_place = Place::new(
+                    atomic_name,
+                    1,
+                    1,
+                    PlaceType::Resources,
+                    atomic_info.span.clone(),
+                );
+                let atomic_node = self.net.add_place(atomic_place);
+
+                self.atomic_places.insert(alias_id, atomic_node);
+            } else {
+                log::debug!(
+                    "Adding atomic ordering: {:?} -> {:?}",
+                    alias_id,
+                    atomic_info.operations[0].ordering
+                );
+                self.atomic_order_maps
+                    .insert(alias_id, atomic_info.operations[0].ordering);
+            }
+        }
+    }
+
+    fn construct_unsafe_blocks(&mut self) {
+        let unsafe_analyzer =
+            UnsafeAnalyzer::new(self.tcx, self.callgraph, self.options.crate_name.clone());
+        let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
+        unsafe_info.iter().for_each(|(def_id, info)| {
+            log::debug!(
+                "{}:\n{}",
+                format_name(*def_id),
+                serde_json::to_string_pretty(&json!({
+                    "unsafe_fn": info.is_unsafe_fn,
+                    "unsafe_blocks": info.unsafe_blocks,
+                    "unsafe_places": info.unsafe_places
+                }))
+                .unwrap()
+            )
+        });
+        log::debug!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
+
+        let mut next_alias_id: u32 = 0;
+        let mut alias_groups: HashMap<u32, Vec<(AliasId, String)>> = HashMap::new();
+        let places_data: Vec<_> = unsafe_data
+            .unsafe_places
+            .iter()
+            .map(|(local, info)| (*local, info.clone()))
+            .collect();
+
+        for i in 0..places_data.len() {
+            let (local_i, info_i) = &places_data[i];
+
+            if alias_groups
+                .values()
+                .any(|group| group.iter().any(|(l, _)| l == local_i))
+            {
+                continue;
+            }
+
+            let mut current_group = vec![(local_i.clone(), info_i.clone())];
+
+            for j in i + 1..places_data.len() {
+                let (local_j, info_j) = &places_data[j];
+                match self.alias.borrow_mut().alias(*local_i, *local_j) {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+                        current_group.push((local_j.clone(), info_j.clone()));
+                    }
+                    _ => {}
+                }
+            }
+
+            if !current_group.is_empty() {
+                alias_groups.insert(next_alias_id, current_group);
+                next_alias_id += 1;
+            }
+        }
+
+        for (_, group) in alias_groups {
+            let unsafe_span = group[0].1.clone();
+            let unsafe_local = group[0].0.clone();
+            let unsafe_name = format!("{:?}", unsafe_local);
+
+            let place = Place::new(unsafe_name, 1, 1, PlaceType::Resources, unsafe_span);
+            let place_id = self.net.add_place(place);
+            self.unsafe_places.insert(unsafe_local, place_id);
+            
+            for (local, _) in group {
+                self.unsafe_places.insert(local, place_id);
+            }
+        }
+    }
+
+    pub fn construct(&mut self /*alias_analysis: &'pn RefCell<AliasAnalysis<'pn, 'tcx>>*/) {
+        let start_time = Instant::now();
+
+        log::info!("Construct Function Start and End Places");
+        self.construct_func();
+
+
+        self.construct_lock_with_dfs();
+        log::info!("Collector Block Primitive!");
+        self.construct_channel_resources();
+        log::info!("Collector Channel Resources!");
+
+        self.construct_atomic_resources();
+        log::info!("Collector Atomic Variable!");
+        self.construct_unsafe_blocks();
+        log::info!("Collector Unsafe Blocks!");
+
+        let key_api_regex = KeyApiRegex::new();
+
+        let mut visited_func_id = HashSet::<DefId>::new();
+        for (node, caller) in self.callgraph.graph.node_references() {
+            if self.tcx.is_mir_available(caller.instance().def_id())
+                && format_name(caller.instance().def_id()).starts_with(&self.options.crate_name)
+            {
+                log::debug!(
+                    "Current visitor function body: {:?}",
+                    format_name(caller.instance().def_id())
+                );
+                if visited_func_id.contains(&caller.instance().def_id()) {
+                    continue;
+                }
+                self.visitor_function_body(node, caller, &key_api_regex);
+                visited_func_id.insert(caller.instance().def_id());
+            }
+        }
+
+        log::info!("Visitor Function Body Complete!");
+        log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
+    }
+
+    pub fn visitor_function_body(
+        &mut self,
+        node: NodeIndex,
+        caller: &CallGraphNode<'tcx>,
+        key_api_regex: &KeyApiRegex,
+    ) {
+        let body = self.tcx.optimized_mir(caller.instance().def_id());
+
+        if body.source.promoted.is_some() {
+            return;
+        }
+        let lock_infos = self.lock_info.clone();
+
+        let mut func_body = BodyToPetriNet::new(
+            node,
+            caller.instance(),
+            body,
+            self.tcx,
+            &self.callgraph,
+            &mut self.net,
+            &mut self.alias,
+            lock_infos,
+            &self.function_counter,
+            &self.locks_counter,
+            &self.condvars,
+            &self.atomic_places,
+            &self.atomic_order_maps,
+            self.entry_exit,
+            &self.unsafe_places,
+            key_api_regex,
+            &self.channel_places,
+        );
+        func_body.translate();
+    }
+
+    pub fn construct_func(&mut self) {
+        match self.options.crate_type {
+            OwnCrateType::Bin => self.construct_bin_funcs(),
+            _ => {
+                todo!()
+            }
+        }
+    }
+
+    fn construct_bin_funcs(&mut self) {
+        let main_func = match self.tcx.entry_fn(()) {
+            Some((main_func, _)) => main_func,
+            None => {
+                log::debug!("cargo pta need a entry point!");
+                return;
+            }
+        };
+
+        self.process_functions(|self_, func_id, func_name| {
+            if func_id == main_func {
+                let (start, end) = self_.create_function_places(func_name, true);
+                self_.entry_exit = (start, end);
+                (start, end)
+            } else {
+                self_.create_function_places(func_name, false)
+            }
+        });
+    }
+
+
+    fn process_functions<F>(&mut self, create_places: F)
+    where
+        F: Fn(&mut Self, DefId, String) -> (PlaceId, PlaceId),
+    {
         for node_idx in self.callgraph.graph.node_indices() {
-            let func_node = self.callgraph.graph.node_weight(node_idx).unwrap();
-            let instance = func_node.instance();
-            let def_id = instance.def_id();
-            let func_name = format_name(def_id);
-            if !func_name.starts_with(&self.options.crate_name) {
+            let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
+            let func_id = func_instance.instance().def_id();
+            let func_name = format_name(func_id);
+            if !func_name.starts_with(&self.options.crate_name)
+                || self.function_counter.contains_key(&func_id)
+                || func_name.contains("::deserialize")
+                || func_name.contains("::serialize")
+                || func_name.contains("::visit_seq")
+                || func_name.contains("::visit_map")
+            {
                 continue;
             }
-            if self.function_counter.contains_key(&def_id) {
-                continue;
-            }
 
-            let with_initial_token =
-                matches!(self.options.crate_type, crate::options::OwnCrateType::Bin)
-                    && matches!(self.tcx.entry_fn(()), Some((entry, _)) if entry == def_id);
-
-            let start_place = self.create_place(
-                format!("{}_start", func_name),
-                if with_initial_token { 1 } else { 0 },
-                PlaceType::FunctionStart,
-            );
-            let end_place =
-                self.create_place(format!("{}_end", func_name), 0, PlaceType::FunctionEnd);
-
-            self.function_counter
-                .insert(def_id, (start_place, end_place));
-
-            if with_initial_token {
-                self.entry_exit = Some((start_place, end_place));
-            }
-        }
-
-        if self.entry_exit.is_none() {
-            // provide a default entry/exit for library crates
-            let start_place =
-                self.create_place("crate_start".to_string(), 0, PlaceType::FunctionStart);
-            let end_place = self.create_place("crate_end".to_string(), 0, PlaceType::FunctionEnd);
-            self.entry_exit = Some((start_place, end_place));
+            let (start, end) = create_places(self, func_id, func_name);
+            self.function_counter.insert(func_id, (start, end));
+            self.function_vec.insert(func_id, vec![start]);
         }
     }
 
-    fn create_place(&mut self, name: String, tokens: u64, place_type: PlaceType) -> PlaceId {
-        let place = Place::new(name, tokens, u64::MAX, place_type, String::new());
-        self.net.add_place(place)
+    fn create_function_places(
+        &mut self,
+        func_name: String,
+        with_token: bool,
+    ) -> (PlaceId, PlaceId) {
+        let start = if with_token {
+            Place::new(format!("{}_start", func_name), 1, 1, PlaceType::FunctionStart, String::default())
+        } else {
+            Place::new(format!("{}_start", func_name), 0, 1, PlaceType::FunctionStart, String::default())
+        };
+        let end = Place::new(format!("{}_end", func_name), 0, 1, PlaceType::FunctionEnd, String::default());
+
+        let start_id = self.net.add_place(start);
+        let end_id = self.net.add_place(end);
+
+        (start_id, end_id)
     }
+
+    pub fn construct_lock_with_dfs(&mut self) {
+        let lockguards = self.collect_blocking_primitives();
+        let mut info = FxHashMap::default();
+
+        for (_, map) in lockguards.into_iter() {
+            info.extend(map);
+        }
+
+        let mut union_find: HashMap<LockGuardId, LockGuardId> = HashMap::new();
+        let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect();
+
+        for lock_id in &lockid_vec {
+            union_find.insert(lock_id.clone(), lock_id.clone());
+        }
+
+        log::debug!("=== 检测到的别名关系 ===");
+        for i in 0..lockid_vec.len() {
+            for j in i + 1..lockid_vec.len() {
+                match self
+                    .alias
+                    .borrow_mut()
+                    .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
+                {
+                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
+                        log::debug!("锁 {:?} 和 {:?} 存在别名关系", lockid_vec[i], lockid_vec[j]);
+                        union(&mut union_find, &lockid_vec[i], &lockid_vec[j]);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut temp_groups: HashMap<LockGuardId, Vec<LockGuardId>> = HashMap::new();
+        for lock_id in &lockid_vec {
+            let root = find(&union_find, lock_id);
+            temp_groups.entry(root).or_default().push(lock_id.clone());
+        }
+
+        println!("\n=== 锁的分组结果 ===");
+        for (group_id, (root, group)) in temp_groups.iter().enumerate() {
+            println!("组 {}: ", group_id);
+            println!("  根节点: {:?}", root);
+            println!("  组内成员:");
+            for lock in group {
+                let lock_type = match &info[lock].lockguard_ty {
+                    LockGuardTy::StdMutex(_) => "StdMutex",
+                    LockGuardTy::ParkingLotMutex(_) => "ParkingLotMutex",
+                    LockGuardTy::SpinMutex(_) => "SpinMutex",
+                    _ => "RwLock",
+                };
+                println!("    - {:?} (类型: {})", lock, lock_type);
+            }
+        }
+
+        let mut group_id = 0;
+        for group in temp_groups.values() {
+            match &info[&group[0]].lockguard_ty {
+                LockGuardTy::StdMutex(_)
+                | LockGuardTy::ParkingLotMutex(_)
+                | LockGuardTy::SpinMutex(_) => {
+                    let lock_name = format!("Mutex_{}", group_id);
+                    let lock_p = Place::new(lock_name.clone(), 1, 1, PlaceType::Resources, String::default());
+                    let lock_node = self.net.add_place(lock_p);
+                    log::debug!("创建 Mutex 节点: {}", lock_name);
+                    for lock in group {
+                        self.locks_counter.insert(lock.clone(), lock_node);
+                    }
+                }
+                _ => {
+                    let lock_name = format!("RwLock_{}", group_id);
+                    let lock_p = Place::new(lock_name.clone(), 10, 10, PlaceType::Resources, String::default());
+                    let lock_node = self.net.add_place(lock_p);
+                    log::debug!("创建 RwLock 节点: {}", lock_name);
+                    for lock in group {
+                        self.locks_counter.insert(lock.clone(), lock_node);
+                    }
+                }
+            }
+            group_id += 1;
+        }
+        log::info!("总共发现 {} 个锁组", group_id);
+    }
+
+    fn collect_blocking_primitives(&mut self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
+        let mut lockguards = FxHashMap::default();
+        let mut condvars = FxHashMap::default();
+
+        for (instance_id, node) in self.callgraph.graph.node_references() {
+            let instance = match node {
+                CallGraphNode::WithBody(instance) => instance,
+                _ => continue,
+            };
+
+            if !instance.def_id().is_local() {
+                continue;
+            }
+
+            let body = self.tcx.instance_mir(instance.def);
+            let mut collector = BlockingCollector::new(instance_id, instance, body, self.tcx);
+            collector.analyze();
+
+            if !collector.lockguards.is_empty() {
+                lockguards.insert(instance_id, collector.lockguards.clone());
+                self.lock_info.extend(collector.lockguards);
+            }
+
+            if !collector.condvars.is_empty() {
+                condvars.insert(instance_id, collector.condvars);
+            }
+        }
+
+        if !condvars.is_empty() {
+            for condvar_map in condvars.into_values() {
+                for (condvar_id, span) in condvar_map {
+                    let condvar_name = format!("Condvar:{}", span);
+                    let condvar_p = Place::new(condvar_name, 1, 1, PlaceType::Resources, String::default());
+                    let condvar_node = self.net.add_place(condvar_p);
+                    self.condvars.insert(condvar_id, condvar_node);
+                }
+            }
+        } else {
+            log::debug!("Not Found Condvars In This Crate");
+        }
+
+        lockguards
+    }
+
+    pub fn get_or_insert_node(&mut self, def_id: DefId) -> (PlaceId, PlaceId) {
+        match self.function_counter.entry(def_id) {
+            Entry::Occupied(node) => node.get().to_owned(),
+            Entry::Vacant(v) => {
+                let func_name = self.tcx.def_path_str(def_id);
+                let func_start = Place::new(format!("{}_start", func_name), 0, 1, PlaceType::FunctionStart, String::default());
+                let func_start_node_id = self.net.add_place(func_start);
+                let func_end = Place::new(format!("{}_end", func_name), 0, 1, PlaceType::FunctionEnd, String::default());
+                let func_end_node_id = self.net.add_place(func_end);
+                *v.insert((func_start_node_id, func_end_node_id))
+            }
+        }
+    }
+
 }

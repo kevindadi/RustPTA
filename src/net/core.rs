@@ -181,6 +181,7 @@ impl Net {
         transition_id
     }
 
+
     pub fn set_input_weight(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         self.pre.set(place, transition, weight);
     }
@@ -203,6 +204,22 @@ impl Net {
         }
         let entry = self.post.get_mut(place, transition);
         *entry += weight;
+    }
+
+    pub fn get_place(&self, place: PlaceId) -> Option<&Place> {
+        self.places.get(place)
+    }
+
+    pub fn get_place_mut(&mut self, place: PlaceId) -> Option<&mut Place> {
+        self.places.get_mut(place)
+    }
+
+    pub fn get_transition(&self, transition: TransitionId) -> Option<&Transition> {
+        self.transitions.get(transition)
+    }
+
+    pub fn get_transition_mut(&mut self, transition: TransitionId) -> Option<&mut Transition> {
+        self.transitions.get_mut(transition)
     }
 
     #[cfg(feature = "inhibitor")]
