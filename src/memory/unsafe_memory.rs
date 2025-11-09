@@ -16,9 +16,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct UnsafeBlockInfo {
     pub span: String,
-
     pub block: usize,
-
     pub locations: Vec<String>,
 }
 
@@ -35,22 +33,16 @@ pub enum UnsafeOperation {
 #[derive(Debug, Clone, Serialize)]
 pub struct UnsafePlaceInfo {
     pub local: usize,
-
     pub ty_string: String,
-
     pub span: String,
-
     pub is_param: bool,
-
     pub operations: Vec<UnsafeOperation>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UnsafeInfo {
     pub is_unsafe_fn: bool,
-
     pub unsafe_blocks: Vec<UnsafeBlockInfo>,
-
     pub unsafe_places: FxHashMap<usize, UnsafePlaceInfo>,
 }
 

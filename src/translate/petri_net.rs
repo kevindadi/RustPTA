@@ -4,7 +4,6 @@ use crate::net::structure::PlaceType;
 use crate::translate::structure::{KeyApiRegex, FunctionRegistry, ResourceRegistry};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
-use crate::options::OwnCrateType;
 use crate::util::format_name;
 use crate::Options;
 use petgraph::graph::NodeIndex;
@@ -12,7 +11,6 @@ use petgraph::visit::IntoNodeReferences;
 
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
-use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -136,6 +134,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
 
         if atomic_collector.atomic_vars.is_empty() {
+            log::debug!("Not Found Atomic Variables In This Crate");
             return;
         }
         let atomic_vars = atomic_collector.analyze();
@@ -173,19 +172,23 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         let unsafe_analyzer =
             UnsafeAnalyzer::new(self.tcx, self.callgraph, self.options.crate_name.clone());
         let (unsafe_info, unsafe_data) = unsafe_analyzer.analyze();
-        unsafe_info.iter().for_each(|(def_id, info)| {
-            log::debug!(
-                "{}:\n{}",
-                format_name(*def_id),
-                serde_json::to_string_pretty(&json!({
-                    "unsafe_fn": info.is_unsafe_fn,
-                    "unsafe_blocks": info.unsafe_blocks,
-                    "unsafe_places": info.unsafe_places
-                }))
-                .unwrap()
-            )
-        });
-        log::debug!("unsafe_data size: {:?}", unsafe_data.unsafe_places.len());
+        if unsafe_info.is_empty() {
+            log::debug!("Not Found Unsafe Blocks In This Crate");
+            return;
+        }
+        
+        // unsafe_info.iter().for_each(|(def_id, info)| {
+        //     log::debug!(
+        //         "{}:\n{}",
+        //         format_name(*def_id),
+        //         serde_json::to_string_pretty(&json!({
+        //             "unsafe_fn": info.is_unsafe_fn,
+        //             "unsafe_blocks": info.unsafe_blocks,
+        //             "unsafe_places": info.unsafe_places
+        //         }))
+        //         .unwrap()
+        //     )
+        // });
 
         let mut next_alias_id: u32 = 0;
         let mut alias_groups: HashMap<u32, Vec<(AliasId, String)>> = HashMap::new();
@@ -312,15 +315,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn construct_func(&mut self) {
-        match self.options.crate_type {
-            OwnCrateType::Bin => self.construct_bin_funcs(),
-            _ => {
-                todo!()
-            }
-        }
-    }
-
-    fn construct_bin_funcs(&mut self) {
         let main_func = match self.tcx.entry_fn(()) {
             Some((main_func, _)) => main_func,
             None => {
@@ -384,6 +378,11 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
     pub fn construct_lock_with_dfs(&mut self) {
         let lockguards = self.collect_blocking_primitives();
+        if lockguards.is_empty() {
+            log::debug!("Not Found Lockguards In This Crate");
+            return;
+        }
+        
         let mut info = FxHashMap::default();
 
         for (_, map) in lockguards.into_iter() {
@@ -397,7 +396,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             union_find.insert(lock_id.clone(), lock_id.clone());
         }
 
-        log::debug!("=== 检测到的别名关系 ===");
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
                 match self
@@ -418,22 +416,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         for lock_id in &lockid_vec {
             let root = find(&union_find, lock_id);
             temp_groups.entry(root).or_default().push(lock_id.clone());
-        }
-
-        println!("\n=== 锁的分组结果 ===");
-        for (group_id, (root, group)) in temp_groups.iter().enumerate() {
-            println!("组 {}: ", group_id);
-            println!("  根节点: {:?}", root);
-            println!("  组内成员:");
-            for lock in group {
-                let lock_type = match &info[lock].lockguard_ty {
-                    LockGuardTy::StdMutex(_) => "StdMutex",
-                    LockGuardTy::ParkingLotMutex(_) => "ParkingLotMutex",
-                    LockGuardTy::SpinMutex(_) => "SpinMutex",
-                    _ => "RwLock",
-                };
-                println!("    - {:?} (类型: {})", lock, lock_type);
-            }
         }
 
         let mut group_id = 0;

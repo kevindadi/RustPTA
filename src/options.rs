@@ -26,32 +26,6 @@ pub enum DetectorKind {
     DataRace,
 }
 
-#[derive(Debug, Clone)]
-pub enum AnalysisTool {
-    LoLA,
-    Tina,
-    RPN,
-}
-
-impl Default for AnalysisTool {
-    fn default() -> Self {
-        AnalysisTool::RPN
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum PetriNetType {
-    PTNet,
-    CPN,
-    TPN,
-}
-
-impl Default for PetriNetType {
-    fn default() -> Self {
-        PetriNetType::PTNet
-    }
-}
-
 fn make_options_parser() -> clap::Command {
     let parser = Command::new("PN")
         .no_binary_name(true)
@@ -77,33 +51,6 @@ fn make_options_parser() -> clap::Command {
                 .short('p')
                 .long("pn-crate")
                 .help("Target crate for analysis"),
-        )
-        .arg(
-            Arg::new("crate_type")
-                .long("type")
-                .help("Target crate type")
-                .value_parser(["binary", "library"])
-                .default_value("binary"),
-        )
-        .arg(
-            Arg::new("api_spec")
-                .long("api-spec")
-                .value_name("PATH")
-                .help("Path to library API specification file"),
-        )
-        .arg(
-            Arg::new("analysis_tool")
-                .long("tool")
-                .help("Choose analysis tool: lola, tina, or rpn")
-                .value_parser(["lola", "tina", "rpn"])
-                .default_value("rpn")
-                .hide_default_value(true),
-        )
-        .arg(
-            Arg::new("petri_net_test")
-                .long("pn-test")
-                .help("Test mode")
-                .action(clap::ArgAction::SetTrue),
         )
         .group(
             ArgGroup::new("visualization")
@@ -153,11 +100,7 @@ pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: Option<PathBuf>,
     pub crate_name: String,
-    pub crate_type: OwnCrateType,
-    pub lib_apis_path: Option<String>,
     pub dump_options: DumpOptions,
-    pub analysis_tool: AnalysisTool,
-    pub test: bool,
 }
 
 impl Default for Options {
@@ -166,19 +109,9 @@ impl Default for Options {
             detector_kind: DetectorKind::Deadlock,
             output: Option::default(),
             crate_name: String::new(),
-            crate_type: OwnCrateType::Bin,
-            lib_apis_path: None,
             dump_options: DumpOptions::default(),
-            analysis_tool: AnalysisTool::RPN,
-            test: false,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OwnCrateType {
-    Bin,
-    Lib,
 }
 
 #[derive(Debug, Clone)]
@@ -247,30 +180,6 @@ impl Options {
             .cloned()
             .map(PathBuf::from);
 
-        self.crate_type = match matches.get_one::<String>("crate_type").unwrap().as_str() {
-            "library" => OwnCrateType::Lib,
-            _ => OwnCrateType::Bin,
-        };
-
-        match self.crate_type {
-            OwnCrateType::Lib => {
-                self.lib_apis_path = Some(matches.get_one::<String>("api_spec").cloned().ok_or_else(|| {
-                    eprintln!("Error: Library crate requires API specification file path (--api-spec)");
-                    eprintln!("Usage: --api-spec <PATH> specifies the path to library API configuration");
-                    std::process::exit(1);
-                }).unwrap());
-            }
-            OwnCrateType::Bin => {
-                self.lib_apis_path = matches.get_one::<String>("api_spec").cloned();
-            }
-        }
-
-        self.analysis_tool = match matches.get_one::<String>("analysis_tool").unwrap().as_str() {
-            "tina" => AnalysisTool::Tina,
-            "lola" => AnalysisTool::LoLA,
-            _ => AnalysisTool::RPN,
-        };
-
         self.dump_options = DumpOptions {
             dump_call_graph: matches.get_flag("dump_callgraph"),
             dump_petri_net: matches.get_flag("dump_petrinet"),
@@ -278,8 +187,6 @@ impl Options {
             dump_unsafe_info: matches.get_flag("dump_unsafe"),
             dump_points_to: matches.get_flag("dump_points_to"),
         };
-
-        self.test = matches.get_flag("petri_net_test");
 
         rustc_args.to_vec()
     }
