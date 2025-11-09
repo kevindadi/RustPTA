@@ -10,6 +10,7 @@ use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::{self, Instance, TyCtxt};
 use rustc_span::Span;
 
+use crate::memory::pointsto::AliasId;
 use crate::translate::callgraph::InstanceId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -22,6 +23,10 @@ impl LockGuardId {
     pub fn new(instance_id: InstanceId, local: Local) -> Self {
         Self { instance_id, local }
     }
+
+    pub fn get_alias_id(&self) -> AliasId {
+        AliasId::new(self.instance_id, self.local)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -33,6 +38,10 @@ pub struct CondVarId {
 impl CondVarId {
     pub fn new(instance_id: InstanceId, local: Local) -> Self {
         Self { instance_id, local }
+    }
+
+    pub fn get_alias_id(&self) -> AliasId {
+        AliasId::new(self.instance_id, self.local)
     }
 }
 

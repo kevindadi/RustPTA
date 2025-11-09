@@ -1,10 +1,7 @@
 pub mod mem_watcher;
 
-use serde::{Deserialize, Serialize};
-use std::fs;
 use std::io::Write;
 use std::rc::Rc;
-use toml;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty;
@@ -73,64 +70,3 @@ pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ApiSpec {
-    pub apis: Vec<ApiEntry>,
-}
-
-impl Default for ApiSpec {
-    fn default() -> Self {
-        ApiSpec { apis: vec![] }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
-pub enum ApiEntry {
-    Single(String),
-
-    Group(Vec<String>),
-}
-
-impl ApiSpec {
-    pub fn parse(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = fs::read_to_string(path)?;
-        let spec: ApiSpec = toml::from_str(&content)?;
-        Ok(spec)
-    }
-
-    pub fn get_single_apis(&self) -> Vec<String> {
-        self.apis
-            .iter()
-            .filter_map(|entry| match entry {
-                ApiEntry::Single(api) => Some(api.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    pub fn get_api_groups(&self) -> Vec<Vec<String>> {
-        self.apis
-            .iter()
-            .filter_map(|entry| match entry {
-                ApiEntry::Group(apis) => Some(apis.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-}
-
-pub(crate) fn parse_api_spec(api_spec_path: &str) -> Result<ApiSpec, Box<dyn std::error::Error>> {
-    ApiSpec::parse(api_spec_path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_api_spec() {
-        let api_spec = parse_api_spec("tests/lib.toml").unwrap();
-        println!("{:?}", api_spec);
-    }
-}

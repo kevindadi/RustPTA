@@ -101,6 +101,7 @@ impl UnsafeInfo {
 }
 
 struct UnsafeCollector<'a, 'tcx> {
+    #[allow(unused)]
     instance: Instance<'tcx>,
     instance_id: Option<InstanceId>,
     body: &'a Body<'tcx>,

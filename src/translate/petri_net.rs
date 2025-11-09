@@ -1,7 +1,7 @@
-use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
-use crate::concurrency::channel::{ChannelCollector, ChannelId, ChannelInfo, EndpointType};
+use crate::concurrency::atomic::{AtomicCollector};
+use crate::concurrency::channel::{ChannelCollector, ChannelInfo, EndpointType};
 use crate::net::structure::PlaceType;
-use crate::translate::key_api::KeyApiRegex;
+use crate::translate::structure::{KeyApiRegex, FunctionRegistry, ResourceRegistry};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::options::OwnCrateType;
@@ -14,17 +14,13 @@ use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use serde_json::json;
 use std::cell::RefCell;
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::net::{Net, Place, PlaceId};
-
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::translate::mir_to_pn::BodyToPetriNet;
-use crate::concurrency::blocking::{
-    BlockingCollector, CondVarId, LockGuardId, LockGuardMap, LockGuardTy,
-};
+use crate::concurrency::blocking::{BlockingCollector, LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
 
 fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
@@ -49,20 +45,25 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     pub net: Net,
     callgraph: &'pn CallGraph<'tcx>,
     pub alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
-    pub function_counter: HashMap<DefId, (PlaceId, PlaceId)>,
-    pub function_vec: HashMap<DefId, Vec<PlaceId>>,
-    locks_counter: HashMap<LockGuardId, PlaceId>,
+    functions: FunctionRegistry,
     lock_info: LockGuardMap<'tcx>,
-
-    condvars: HashMap<CondVarId, PlaceId>,
-    atomic_places: HashMap<AliasId, PlaceId>,
-    atomic_order_maps: HashMap<AliasId, AtomicOrdering>,
+    resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
-    pub unsafe_places: HashMap<AliasId, PlaceId>,
-    pub channel_places: HashMap<ChannelId, PlaceId>,
+
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
+    fn create_resource_place(
+        &mut self,
+        name: String,
+        initial: u64,
+        capacity: u64,
+        span: String,
+    ) -> PlaceId {
+        let place = Place::new(name, initial, capacity, PlaceType::Resources, span);
+        self.net.add_place(place)
+    }
+
     pub fn new(
         options: &'compilation Options,
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
@@ -75,17 +76,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             net: Net::empty(),
             callgraph,
             alias,
-            function_counter: HashMap::<DefId, (PlaceId, PlaceId)>::new(),
-            function_vec: HashMap::<DefId, Vec<PlaceId>>::new(),
-            locks_counter: HashMap::<LockGuardId, PlaceId>::new(),
+            functions: FunctionRegistry::new(),
             lock_info: HashMap::default(),
-            condvars: HashMap::<CondVarId, PlaceId>::new(),
-            atomic_places: HashMap::<AliasId, PlaceId>::new(),
-            atomic_order_maps: HashMap::<AliasId, AtomicOrdering>::new(),
+            resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
-    
-            unsafe_places: HashMap::default(),
-            channel_places: HashMap::default(),
         }
     }
 
@@ -95,7 +89,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         channel_collector.analyze();
         channel_collector.to_json_pretty().unwrap();
 
-        let mut span_groups: HashMap<String, Vec<(ChannelId, ChannelInfo<'tcx>)>> = HashMap::new();
+        let mut span_groups: HashMap<String, Vec<(AliasId, ChannelInfo<'tcx>)>> = HashMap::new();
 
         for (id, info) in channel_collector.channels {
             let key_string = format!("{:?}", info.span)
@@ -103,7 +97,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 .take(2)
                 .collect::<Vec<&str>>()
                 .join("");
-            span_groups.entry(key_string).or_default().push((id, info));
+            span_groups
+                .entry(key_string)
+                .or_default()
+                .push((AliasId::from(id), info));
         }
 
         for (i, (span, endpoints)) in span_groups.iter().enumerate() {
@@ -117,11 +114,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
 
                 if has_pair {
                     let channel_id = format!("channel_{}", i);
-                    let channel_place = Place::new(channel_id, 0, 100, PlaceType::Resources, span.clone());
-                    let channel_node = self.net.add_place(channel_place);
+                    let channel_node = self.create_resource_place(channel_id, 0, 100, span.clone());
 
                     for (id, _) in endpoints {
-                        self.channel_places.insert(id.clone(), channel_node);
+                        self.resources
+                            .channel_places_mut()
+                            .insert(*id, channel_node);
                     }
 
                     log::debug!(
@@ -148,23 +146,24 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let alias_id = atomic_info.get_alias_id();
             if !atomic_type.starts_with("&") {
                 let atomic_name = atomic_type.clone();
-                let atomic_place = Place::new(
+                let atomic_node = self.create_resource_place(
                     atomic_name,
                     1,
                     1,
-                    PlaceType::Resources,
                     atomic_info.span.clone(),
                 );
-                let atomic_node = self.net.add_place(atomic_place);
 
-                self.atomic_places.insert(alias_id, atomic_node);
+                self.resources
+                    .atomic_places_mut()
+                    .insert(alias_id, atomic_node);
             } else {
                 log::debug!(
                     "Adding atomic ordering: {:?} -> {:?}",
                     alias_id,
                     atomic_info.operations[0].ordering
                 );
-                self.atomic_order_maps
+                self.resources
+                    .atomic_orders_mut()
                     .insert(alias_id, atomic_info.operations[0].ordering);
             }
         }
@@ -229,12 +228,15 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let unsafe_local = group[0].0.clone();
             let unsafe_name = format!("{:?}", unsafe_local);
 
-            let place = Place::new(unsafe_name, 1, 1, PlaceType::Resources, unsafe_span);
-            let place_id = self.net.add_place(place);
-            self.unsafe_places.insert(unsafe_local, place_id);
+            let place_id = self.create_resource_place(unsafe_name, 1, 1, unsafe_span);
+            self.resources
+                .unsafe_places_mut()
+                .insert(unsafe_local, place_id);
             
             for (local, _) in group {
-                self.unsafe_places.insert(local, place_id);
+                self.resources
+                    .unsafe_places_mut()
+                    .insert(local, place_id);
             }
         }
     }
@@ -301,15 +303,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             &mut self.net,
             &mut self.alias,
             lock_infos,
-            &self.function_counter,
-            &self.locks_counter,
-            &self.condvars,
-            &self.atomic_places,
-            &self.atomic_order_maps,
+            &self.functions,
+            &self.resources,
             self.entry_exit,
-            &self.unsafe_places,
             key_api_regex,
-            &self.channel_places,
         );
         func_body.translate();
     }
@@ -353,7 +350,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let func_id = func_instance.instance().def_id();
             let func_name = format_name(func_id);
             if !func_name.starts_with(&self.options.crate_name)
-                || self.function_counter.contains_key(&func_id)
+                || self.functions.contains(&func_id)
                 || func_name.contains("::deserialize")
                 || func_name.contains("::serialize")
                 || func_name.contains("::visit_seq")
@@ -363,8 +360,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
 
             let (start, end) = create_places(self, func_id, func_name);
-            self.function_counter.insert(func_id, (start, end));
-            self.function_vec.insert(func_id, vec![start]);
+            self.functions.insert(func_id, start, end);
         }
     }
 
@@ -447,20 +443,22 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
                 | LockGuardTy::ParkingLotMutex(_)
                 | LockGuardTy::SpinMutex(_) => {
                     let lock_name = format!("Mutex_{}", group_id);
-                    let lock_p = Place::new(lock_name.clone(), 1, 1, PlaceType::Resources, String::default());
-                    let lock_node = self.net.add_place(lock_p);
+                    let lock_node =
+                        self.create_resource_place(lock_name.clone(), 1, 1, String::default());
                     log::debug!("创建 Mutex 节点: {}", lock_name);
                     for lock in group {
-                        self.locks_counter.insert(lock.clone(), lock_node);
+                        let alias_id = lock.get_alias_id();
+                        self.resources.locks_mut().insert(alias_id, lock_node);
                     }
                 }
                 _ => {
                     let lock_name = format!("RwLock_{}", group_id);
-                    let lock_p = Place::new(lock_name.clone(), 10, 10, PlaceType::Resources, String::default());
-                    let lock_node = self.net.add_place(lock_p);
+                    let lock_node =
+                        self.create_resource_place(lock_name.clone(), 10, 10, String::default());
                     log::debug!("创建 RwLock 节点: {}", lock_name);
                     for lock in group {
-                        self.locks_counter.insert(lock.clone(), lock_node);
+                        let alias_id = lock.get_alias_id();
+                        self.resources.locks_mut().insert(alias_id, lock_node);
                     }
                 }
             }
@@ -501,9 +499,12 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             for condvar_map in condvars.into_values() {
                 for (condvar_id, span) in condvar_map {
                     let condvar_name = format!("Condvar:{}", span);
-                    let condvar_p = Place::new(condvar_name, 1, 1, PlaceType::Resources, String::default());
-                    let condvar_node = self.net.add_place(condvar_p);
-                    self.condvars.insert(condvar_id, condvar_node);
+                    let condvar_node =
+                        self.create_resource_place(condvar_name, 1, 1, String::default());
+                    let condvar_alias = condvar_id.get_alias_id();
+                    self.resources
+                        .condvars_mut()
+                        .insert(condvar_alias, condvar_node);
                 }
             }
         } else {
@@ -514,17 +515,34 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn get_or_insert_node(&mut self, def_id: DefId) -> (PlaceId, PlaceId) {
-        match self.function_counter.entry(def_id) {
-            Entry::Occupied(node) => node.get().to_owned(),
-            Entry::Vacant(v) => {
-                let func_name = self.tcx.def_path_str(def_id);
-                let func_start = Place::new(format!("{}_start", func_name), 0, 1, PlaceType::FunctionStart, String::default());
-                let func_start_node_id = self.net.add_place(func_start);
-                let func_end = Place::new(format!("{}_end", func_name), 0, 1, PlaceType::FunctionEnd, String::default());
-                let func_end_node_id = self.net.add_place(func_end);
-                *v.insert((func_start_node_id, func_end_node_id))
-            }
-        }
+        self.functions.get_or_insert(def_id, || {
+            let func_name = self.tcx.def_path_str(def_id);
+            let func_start = Place::new(
+                format!("{}_start", func_name),
+                0,
+                1,
+                PlaceType::FunctionStart,
+                String::default(),
+            );
+            let func_start_node_id = self.net.add_place(func_start);
+            let func_end = Place::new(
+                format!("{}_end", func_name),
+                0,
+                1,
+                PlaceType::FunctionEnd,
+                String::default(),
+            );
+            let func_end_node_id = self.net.add_place(func_end);
+            (func_start_node_id, func_end_node_id)
+        })
+    }
+
+    pub fn unsafe_places(&self) -> &HashMap<AliasId, PlaceId> {
+        self.resources.unsafe_places()
+    }
+
+    pub fn channel_places(&self) -> &HashMap<AliasId, PlaceId> {
+        self.resources.channel_places()
     }
 
 }
