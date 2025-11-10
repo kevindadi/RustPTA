@@ -44,7 +44,7 @@ fn make_options_parser() -> clap::Command {
                 .long("pn-analysis-dir")
                 .value_name("PATH")
                 .help("Directory for Petri net analysis outputs (default: ./tmp/<crate_name>)")
-                .default_value("/tmp"),
+                .default_value("./tmp"),
         )
         .arg(
             Arg::new("target_crate")

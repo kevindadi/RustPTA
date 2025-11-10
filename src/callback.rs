@@ -4,7 +4,7 @@ extern crate rustc_hir;
 // use crate::detect::atomicity_violation::AtomicityViolationDetector;
 // use crate::detect::datarace::DataRaceDetector;
 // use crate::detect::deadlock::DeadlockDetector;
-use crate::options::{Options};
+use crate::options::{DumpOptions, Options};
 use crate::translate::callgraph::CallGraph;
 use crate::translate::petri_net::PetriNet;
 use crate::util::mem_watcher::MemoryWatcher;
@@ -127,11 +127,7 @@ impl PTACallbacks {
         let mut callgraph = CallGraph::new();
         callgraph.analyze(instances.clone(), tcx);
 
-        let mut pn = PetriNet::new(
-            &self.options,
-            tcx,
-            &callgraph,
-        );
+        let mut pn = PetriNet::new(&self.options, tcx, &callgraph);
 
         pn.construct();
 
@@ -143,12 +139,24 @@ impl PTACallbacks {
         //     terminal_states,
         // );
         // state_graph.generate_states();
-        
-        if self.options.dump_options.dump_points_to {
-            pn.alias.borrow_mut().print_all_points_to_relations();
+
+
+        match self.options.dump_options {
+            DumpOptions { dump_call_graph: true, .. } => {
+                callgraph.write_dot(&self.output_directory.join("callgraph.dot")).unwrap();
+            }
+            DumpOptions { dump_petri_net: true, .. } => {
+                todo!()
+            }
+            DumpOptions { dump_unsafe_info: true, .. } => {
+                todo!()
+            }
+            DumpOptions { dump_points_to: true, .. } => {
+                todo!()
+            }
+            _ => {}
         }
 
-       
         mem_watcher.stop();
     }
 }

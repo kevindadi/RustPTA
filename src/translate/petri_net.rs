@@ -1,9 +1,9 @@
-use crate::concurrency::atomic::{AtomicCollector};
+use crate::concurrency::atomic::AtomicCollector;
 use crate::concurrency::channel::{ChannelCollector, ChannelInfo, EndpointType};
-use crate::net::structure::PlaceType;
-use crate::translate::structure::{KeyApiRegex, FunctionRegistry, ResourceRegistry};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
+use crate::net::structure::PlaceType;
+use crate::translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry};
 use crate::util::format_name;
 use crate::Options;
 use petgraph::graph::NodeIndex;
@@ -15,11 +15,11 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use crate::net::{Net, Place, PlaceId};
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use crate::translate::mir_to_pn::BodyToPetriNet;
 use crate::concurrency::blocking::{BlockingCollector, LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
+use crate::net::{Net, Place, PlaceId};
+use crate::translate::mir_to_pn::BodyToPetriNet;
 
 fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
     let mut current = x;
@@ -47,7 +47,6 @@ pub struct PetriNet<'compilation, 'pn, 'tcx> {
     lock_info: LockGuardMap<'tcx>,
     resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
-
 }
 
 impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
@@ -145,12 +144,8 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let alias_id = atomic_info.get_alias_id();
             if !atomic_type.starts_with("&") {
                 let atomic_name = atomic_type.clone();
-                let atomic_node = self.create_resource_place(
-                    atomic_name,
-                    1,
-                    1,
-                    atomic_info.span.clone(),
-                );
+                let atomic_node =
+                    self.create_resource_place(atomic_name, 1, 1, atomic_info.span.clone());
 
                 self.resources
                     .atomic_places_mut()
@@ -176,7 +171,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::debug!("Not Found Unsafe Blocks In This Crate");
             return;
         }
-        
+
         // unsafe_info.iter().for_each(|(def_id, info)| {
         //     log::debug!(
         //         "{}:\n{}",
@@ -235,11 +230,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             self.resources
                 .unsafe_places_mut()
                 .insert(unsafe_local, place_id);
-            
+
             for (local, _) in group {
-                self.resources
-                    .unsafe_places_mut()
-                    .insert(local, place_id);
+                self.resources.unsafe_places_mut().insert(local, place_id);
             }
         }
     }
@@ -250,16 +243,10 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         log::info!("Construct Function Start and End Places");
         self.construct_func();
 
-
         self.construct_lock_with_dfs();
-        log::info!("Collector Block Primitive!");
         self.construct_channel_resources();
-        log::info!("Collector Channel Resources!");
-
         self.construct_atomic_resources();
-        log::info!("Collector Atomic Variable!");
         self.construct_unsafe_blocks();
-        log::info!("Collector Unsafe Blocks!");
 
         let key_api_regex = KeyApiRegex::new();
 
@@ -334,7 +321,6 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         });
     }
 
-
     fn process_functions<F>(&mut self, create_places: F)
     where
         F: Fn(&mut Self, DefId, String) -> (PlaceId, PlaceId),
@@ -345,10 +331,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             let func_name = format_name(func_id);
             if !func_name.starts_with(&self.options.crate_name)
                 || self.functions.contains(&func_id)
-                || func_name.contains("::deserialize")
-                || func_name.contains("::serialize")
-                || func_name.contains("::visit_seq")
-                || func_name.contains("::visit_map")
+                || Self::should_ignore_function(&func_name)
             {
                 continue;
             }
@@ -358,17 +341,67 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
         }
     }
 
+    fn should_ignore_function(func_name: &str) -> bool {
+        const IGNORED_SUBSTRINGS: &[&str] = &[
+            "::serialize",
+            "::serialize_",
+            "::deserialize",
+            "::deserialize_",
+            "::serde",
+            "::serde_json",
+            "::serde_yaml",
+            "::serde_with",
+            "::__serde",
+            "::__private",
+            "::Serializer::",
+            "::Deserializer::",
+            "::Serialize::",
+            "::Deserialize::",
+            "::visit_",
+            "::Visitor::visit",
+            "::fmt::",
+            "::Debug::fmt",
+            "::core::fmt",
+            "::alloc::fmt",
+            "::tests::",
+            "::test::",
+            "::bench",
+        ];
+
+        IGNORED_SUBSTRINGS
+            .iter()
+            .any(|pattern| func_name.contains(pattern))
+    }
+
     fn create_function_places(
         &mut self,
         func_name: String,
         with_token: bool,
     ) -> (PlaceId, PlaceId) {
         let start = if with_token {
-            Place::new(format!("{}_start", func_name), 1, 1, PlaceType::FunctionStart, String::default())
+            Place::new(
+                format!("{}_start", func_name),
+                1,
+                1,
+                PlaceType::FunctionStart,
+                String::default(),
+            )
         } else {
-            Place::new(format!("{}_start", func_name), 0, 1, PlaceType::FunctionStart, String::default())
+            Place::new(
+                format!("{}_start", func_name),
+                0,
+                1,
+                PlaceType::FunctionStart,
+                String::default(),
+            )
         };
-        let end = Place::new(format!("{}_end", func_name), 0, 1, PlaceType::FunctionEnd, String::default());
+        let end = Place::new(
+            format!("{}_end", func_name),
+            0,
+            1,
+            PlaceType::FunctionEnd,
+            String::default(),
+        );
 
         let start_id = self.net.add_place(start);
         let end_id = self.net.add_place(end);
@@ -382,7 +415,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             log::debug!("Not Found Lockguards In This Crate");
             return;
         }
-        
+
         let mut info = FxHashMap::default();
 
         for (_, map) in lockguards.into_iter() {
@@ -446,7 +479,7 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
             }
             group_id += 1;
         }
-        log::info!("总共发现 {} 个锁组", group_id);
+        log::debug!("总共发现 {} 个锁组", group_id);
     }
 
     fn collect_blocking_primitives(&mut self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
@@ -526,5 +559,4 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     pub fn channel_places(&self) -> &HashMap<AliasId, PlaceId> {
         self.resources.channel_places()
     }
-
 }

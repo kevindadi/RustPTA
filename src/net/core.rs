@@ -181,7 +181,6 @@ impl Net {
         transition_id
     }
 
-
     pub fn set_input_weight(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         self.pre.set(place, transition, weight);
     }

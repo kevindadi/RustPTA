@@ -5,6 +5,9 @@ use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction::Incoming;
 use petgraph::{Directed, Graph};
 
+use std::fs;
+use std::path::Path;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
@@ -202,6 +205,14 @@ impl<'tcx> CallGraph<'tcx> {
             "{:?}",
             Dot::with_config(&self.graph, &[Config::EdgeNoLabel])
         )
+    }
+
+    pub fn write_dot<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        let dot = self.dot();
+        if let Some(parent) = path.as_ref().parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, dot)
     }
 }
 

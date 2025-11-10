@@ -1,11 +1,11 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
 use regex::Regex;
 use rustc_hir::def_id::DefId;
 
-use crate::{memory::pointsto::AliasId, net::PlaceId};
 use crate::concurrency::atomic::AtomicOrdering;
+use crate::{memory::pointsto::AliasId, net::PlaceId};
 
 pub struct ResourceRegistry {
     locks: HashMap<AliasId, PlaceId>,

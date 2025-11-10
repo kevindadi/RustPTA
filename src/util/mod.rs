@@ -69,4 +69,3 @@ pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
         let _ = stdout.flush();
     }
 }
-

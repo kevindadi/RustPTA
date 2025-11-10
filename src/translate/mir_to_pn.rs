@@ -92,10 +92,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn find_atomic_match(&mut self, current_id: &AliasId) -> Option<(AliasId, PlaceId)> {
         for (alias_id, place_id) in self.resources.atomic_places().iter() {
-            let alias_kind = self
-                .alias
-                .borrow_mut()
-                .alias_atomic(*current_id, *alias_id);
+            let alias_kind = self.alias.borrow_mut().alias_atomic(*current_id, *alias_id);
             if matches!(
                 alias_kind,
                 ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
@@ -127,8 +124,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 current_id.instance_id.index(),
                 bb_idx.index()
             );
-            let intermediate_place =
-                Place::new(intermediate_name, 0, 1, PlaceType::BasicBlock, span_owned.clone());
+            let intermediate_place = Place::new(
+                intermediate_name,
+                0,
+                1,
+                PlaceType::BasicBlock,
+                span_owned.clone(),
+            );
             let intermediate_id = self.net.add_place(intermediate_place);
             self.net.add_input_arc(intermediate_id, bb_end, 1);
 
@@ -140,17 +142,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     order,
                     bb_idx.index()
                 );
-                let transition_type =
-                    transition_builder(&alias_id, order, span_owned.clone());
+                let transition_type = transition_builder(&alias_id, order, span_owned.clone());
                 let transition =
                     Transition::new_with_transition_type(transition_name, transition_type);
                 let transition_id = self.net.add_transition(transition);
 
-                self.net
-                    .add_output_arc(intermediate_id, transition_id, 1);
+                self.net.add_output_arc(intermediate_id, transition_id, 1);
                 self.net.add_input_arc(resource_place, transition_id, 1);
-                self.net
-                    .add_output_arc(resource_place, transition_id, 1);
+                self.net.add_output_arc(resource_place, transition_id, 1);
 
                 if let Some(t) = target {
                     self.net
@@ -698,10 +697,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
 
             self.net.add_output_arc(
-                self.functions_map()
-                    .get(&spawn_def_id.unwrap())
-                    .unwrap()
-                    .1,
+                self.functions_map().get(&spawn_def_id.unwrap()).unwrap().1,
                 bb_end,
                 1,
             );
@@ -995,11 +991,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let condvar_alias = condvar_id.get_alias_id();
 
             for (id, node) in self.resources.condvars().iter() {
-                match self
-                    .alias
-                    .borrow_mut()
-                    .alias_atomic(condvar_alias, *id)
-                {
+                match self.alias.borrow_mut().alias_atomic(condvar_alias, *id) {
                     ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {
                         self.net.add_input_arc(*node, bb_end, 1);
 
@@ -1034,11 +1026,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let condvar_alias = condvar_id.get_alias_id();
 
             for (id, node) in self.resources.condvars().iter() {
-                match self
-                    .alias
-                    .borrow_mut()
-                    .alias_atomic(condvar_alias, *id)
-                {
+                match self.alias.borrow_mut().alias_atomic(condvar_alias, *id) {
                     ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {
                         self.net.add_output_arc(*node, bb_ret, 1);
                     }
@@ -1191,8 +1179,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     LockGuardTy::StdMutex(_)
                     | LockGuardTy::ParkingLotMutex(_)
                     | LockGuardTy::SpinMutex(_) => {
-                        self.net
-                            .add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_input_arc(*lock_node, bb_end, 1);
 
                         match self.net.get_transition_mut(bb_end) {
                             Some(transition) => {
@@ -1206,8 +1193,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     LockGuardTy::StdRwLockRead(_)
                     | LockGuardTy::ParkingLotRead(_)
                     | LockGuardTy::SpinRead(_) => {
-                        self.net
-                            .add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_input_arc(*lock_node, bb_end, 1);
 
                         match self.net.get_transition_mut(bb_end) {
                             Some(transition) => {
@@ -1218,8 +1204,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         }
                     }
                     _ => {
-                        self.net
-                            .add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_input_arc(*lock_node, bb_end, 1);
                         match self.net.get_transition_mut(bb_end) {
                             Some(transition) => {
                                 transition.transition_type =
@@ -1244,17 +1229,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-       
         if self.handle_atomic_call(&callee_func_name, args, bb_end, target, &bb_idx, span) {
             log::debug!("callee_func_name with atomic: {:?}", callee_func_name);
             return;
         }
-        
 
         log::debug!("callee_func_name with normal: {:?}", callee_func_name);
         if callee_func_name.contains("core::panic") {
-            self.net
-                .add_output_arc(self.entry_exit.1, bb_end, 1);
+            self.net.add_output_arc(self.entry_exit.1, bb_end, 1);
             return;
         }
         self.handle_normal_call(bb_end, target, name, bb_idx, span, &callee_def_id, args);
@@ -1269,7 +1251,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb: &BasicBlockData<'tcx>,
     ) {
         let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "drop");
-        let bb_term_transition = Transition::new_with_transition_type(bb_term_name, TransitionType::Drop);
+        let bb_term_transition =
+            Transition::new_with_transition_type(bb_term_name, TransitionType::Drop);
         let bb_end = self.net.add_transition(bb_term_transition);
 
         self.net
@@ -1288,12 +1271,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     | LockGuardTy::StdRwLockRead(_)
                     | LockGuardTy::ParkingLotRead(_)
                     | LockGuardTy::SpinRead(_) => {
-                        self.net
-                            .add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_input_arc(*lock_node, bb_end, 1);
                     }
                     _ => {
-                        self.net
-                            .add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_input_arc(*lock_node, bb_end, 1);
                     }
                 }
 
@@ -1386,7 +1367,12 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     format!("{}_read_{:?}_in:{}", fn_name, place_id.local, span_str);
                 let read_t = Transition::new_with_transition_type(
                     transition_name.clone(),
-                    TransitionType::UnsafeRead(alias_result.1.index(), span_str.to_string(), bb_idx.index(), place_ty),
+                    TransitionType::UnsafeRead(
+                        alias_result.1.index(),
+                        span_str.to_string(),
+                        bb_idx.index(),
+                        place_ty,
+                    ),
                 );
                 let unsafe_read_t = self.net.add_transition(read_t);
 
@@ -1394,16 +1380,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.net.add_output_arc(last_node, unsafe_read_t, 1);
 
                 let unsafe_place = alias_result.1;
-                self.net
-                    .add_output_arc(unsafe_place, unsafe_read_t, 1);
-                self.net
-                    .add_input_arc(unsafe_place, unsafe_read_t, 1);
+                self.net.add_output_arc(unsafe_place, unsafe_read_t, 1);
+                self.net.add_input_arc(unsafe_place, unsafe_read_t, 1);
 
                 let place_name = format!("{}_rready", &transition_name.as_str());
-                let temp_place = Place::new(place_name, 0, 1, PlaceType::BasicBlock, span_str.to_string());
+                let temp_place = Place::new(
+                    place_name,
+                    0,
+                    1,
+                    PlaceType::BasicBlock,
+                    span_str.to_string(),
+                );
                 let temp_place_node = self.net.add_place(temp_place);
-                self.net
-                    .add_input_arc(temp_place_node, unsafe_read_t, 1);
+                self.net.add_input_arc(temp_place_node, unsafe_read_t, 1);
 
                 self.bb_graph.push(bb_idx, temp_place_node);
             }
@@ -1425,7 +1414,12 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let transition_name = format!("{}_write_{:?}_in:{}", fn_name, place_id.local, span_str);
             let write_t = Transition::new_with_transition_type(
                 transition_name.clone(),
-                TransitionType::UnsafeWrite(alias_result.1.index(), span_str.to_string(), bb_idx.index(), place_ty),
+                TransitionType::UnsafeWrite(
+                    alias_result.1.index(),
+                    span_str.to_string(),
+                    bb_idx.index(),
+                    place_ty,
+                ),
             );
             let unsafe_write_t = self.net.add_transition(write_t);
 
@@ -1433,16 +1427,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_output_arc(last_node, unsafe_write_t, 1);
 
             let unsafe_place = alias_result.1;
-            self.net
-                .add_output_arc(unsafe_place, unsafe_write_t, 1);
-            self.net
-                .add_input_arc(unsafe_place, unsafe_write_t, 1);
+            self.net.add_output_arc(unsafe_place, unsafe_write_t, 1);
+            self.net.add_input_arc(unsafe_place, unsafe_write_t, 1);
 
             let place_name = format!("{}_wready", &transition_name.as_str());
-            let temp_place = Place::new(place_name, 0, 1, PlaceType::BasicBlock, span_str.to_string());
+            let temp_place = Place::new(
+                place_name,
+                0,
+                1,
+                PlaceType::BasicBlock,
+                span_str.to_string(),
+            );
             let temp_place_node = self.net.add_place(temp_place);
-            self.net
-                .add_input_arc(temp_place_node, unsafe_write_t, 1);
+            self.net.add_input_arc(temp_place_node, unsafe_write_t, 1);
 
             self.bb_graph.push(bb_idx, temp_place_node);
         }

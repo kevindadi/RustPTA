@@ -6,8 +6,8 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::pointsto::AliasId;
 use crate::concurrency::atomic::AtomicOrdering;
+use crate::memory::pointsto::AliasId;
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::index_vec::IndexVec;
 use petgraph::graph::NodeIndex;

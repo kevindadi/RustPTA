@@ -378,7 +378,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
 struct ConstraintGraphCollector<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
-    graph: ConstraintGraph<'tcx>,       
+    graph: ConstraintGraph<'tcx>,
 }
 
 impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
