@@ -2,14 +2,15 @@
 #![feature(box_patterns)]
 #![warn(non_snake_case)]
 
+pub mod analysis;
 pub mod callback;
 pub mod concurrency;
 pub mod detect;
-pub mod extern_tools;
-pub mod graph;
 pub mod memory;
+pub mod net;
 pub mod options;
 pub mod report;
+pub mod translate;
 pub mod util;
 
 extern crate rustc_abi;
@@ -26,8 +27,6 @@ extern crate rustc_symbol_mangling;
 use log::debug;
 use options::Options;
 use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
-
-use crate::options::DetectorKind;
 
 fn main() {
     let handler = EarlyDiagCtxt::new(ErrorOutputType::default());
