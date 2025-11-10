@@ -56,7 +56,7 @@ pub struct Transition {
     pub transition_type: TransitionType,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TransitionType {
     Start(usize),
     Goto,

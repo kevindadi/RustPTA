@@ -125,10 +125,12 @@ pub fn map_result<T>(result: IResult<&str, T>) -> Result<T> {
     }
 }
 
+#[allow(unused)]
 fn parse_usize(input: &str) -> IResult<&str, usize> {
     map_res(digit1, |s: &str| s.parse::<usize>()).parse(input)
 }
 
+#[allow(unused)]
 fn parse_statm(input: &str) -> IResult<&str, Statm> {
     (count(terminated(parse_usize, tag(" ")), 6), parse_usize)
         .parse(input)
@@ -144,6 +146,7 @@ fn parse_statm(input: &str) -> IResult<&str, Statm> {
         })
 }
 
+#[allow(unused)]
 fn statm_file(file: &mut File) -> Result<Statm> {
     let mut buf = String::new();
     file.read_to_string(&mut buf)

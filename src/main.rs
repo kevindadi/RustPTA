@@ -4,6 +4,7 @@
 
 pub mod callback;
 pub mod concurrency;
+pub mod analysis;
 // pub mod detect;
 pub mod memory;
 pub mod net;

@@ -43,6 +43,7 @@ pub mod incidence;
 pub mod index_vec;
 pub mod io;
 pub mod structure;
+pub mod reduce;
 
 pub use core::{FireError, Net, ReachabilityEdge, ReachabilityGraph};
 pub use ids::{PlaceId, TransitionId};

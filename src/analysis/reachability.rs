@@ -1,466 +1,395 @@
-use super::net_structure::{PetriNetEdge, PetriNetNode};
-use crate::detect::atomicity_violation::AtomicOpType;
-use crate::detect::atomicity_violation::AtomicRaceInfo;
-use crate::detect::atomicity_violation::AtomicRaceOperation;
-use crate::graph::net_structure::CallType;
-use crate::graph::net_structure::ControlType;
-use crate::options::Options;
-use petgraph::dot::Dot;
+use crate::net::ids::{PlaceId, TransitionId};
+use crate::net::structure::{Marking, Place, PlaceType, Transition, TransitionType};
+use crate::net::Net;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
-use petgraph::{Direction, Graph};
-use rustc_hir::def_id::DefId;
-use serde::Serialize;
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::Hash;
-use std::hash::Hasher;
-use std::io::Write;
-use std::rc::Rc;
+use petgraph::stable_graph::StableGraph;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::hash_map::Entry;
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
-pub struct StateEdge {
-    pub label: String,
-    pub transition: NodeIndex,
-    pub transition_type: StateEdgeType,
-    pub weight: u32,
+pub struct StatePlaceSnapshot {
+    pub place: PlaceId,
+    pub name: String,
+    pub place_type: PlaceType,
+    pub span: String,
+    pub tokens: u64,
+    pub capacity: u64,
 }
 
-#[derive(Debug, Clone)]
-pub enum StateEdgeType {
-    ControlFlow,
-    ThreadOperate,
-    LockOperate,
-    AtomicOperate,
-    UnsafeOperate,
-}
-
-impl Default for StateEdgeType {
-    fn default() -> Self {
-        StateEdgeType::ControlFlow
+impl StatePlaceSnapshot {
+    fn new(place_id: PlaceId, place: &Place, tokens: u64) -> Self {
+        Self {
+            place: place_id,
+            name: place.name.clone(),
+            place_type: place.place_type.clone(),
+            span: place.span.clone(),
+            tokens,
+            capacity: place.capacity,
+        }
     }
 }
 
-impl StateEdge {
-    pub fn new(label: String, transition: NodeIndex, weight: u32) -> Self {
+#[derive(Debug, Clone)]
+pub struct TokenChange {
+    pub place: PlaceId,
+    pub name: String,
+    pub before: u64,
+    pub after: u64,
+    pub delta: i64,
+}
+
+impl TokenChange {
+    fn new(place_id: PlaceId, place: &Place, before: u64, after: u64) -> Option<Self> {
+        if before == after {
+            return None;
+        }
+        Some(Self {
+            place: place_id,
+            name: place.name.clone(),
+            before,
+            after,
+            delta: after as i64 - before as i64,
+        })
+    }
+}
+
+/// 弧类型，区分普通输入/输出及特殊弧。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArcKind {
+    Input,
+    Output,
+    #[cfg(feature = "inhibitor")]
+    Inhibitor,
+    #[cfg(feature = "reset")]
+    Reset,
+}
+
+/// 迁移关联的弧快照。
+#[derive(Debug, Clone)]
+pub struct ArcSnapshot {
+    pub place: PlaceId,
+    pub name: String,
+    pub kind: ArcKind,
+    pub weight: u64,
+}
+
+impl ArcSnapshot {
+    fn new(place_id: PlaceId, place: &Place, kind: ArcKind, weight: u64) -> Self {
         Self {
-            label,
-            transition,
-            transition_type: StateEdgeType::default(),
+            place: place_id,
+            name: place.name.clone(),
+            kind,
             weight,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct StateNode {
-    pub mark: Vec<(usize, u8)>,
-    pub node_index: HashSet<NodeIndex>,
+pub struct TransitionSummary {
+    pub id: TransitionId,
+    pub name: String,
+    pub transition_type: TransitionType,
 }
 
-impl Hash for StateNode {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.mark.hash(state)
-    }
-}
-
-impl PartialEq for StateNode {
-    fn eq(&self, other: &Self) -> bool {
-        self.mark == other.mark
-    }
-}
-
-impl Eq for StateNode {}
-
-impl StateNode {
-    pub fn new(mark: Vec<(usize, u8)>, node_index: HashSet<NodeIndex>) -> Self {
-        Self { mark, node_index }
-    }
-}
-
-pub fn normalize_state(mark: &HashSet<(NodeIndex, u8)>) -> Vec<(usize, u8)> {
-    let mut state: Vec<(usize, u8)> = mark.iter().map(|(n, t)| (n.index(), *t)).collect();
-    state.sort();
-    state
-}
-
-pub fn insert_with_comparison(
-    set: &mut HashSet<Vec<(usize, u8)>>,
-    value: &Vec<(usize, u8)>,
-) -> bool {
-    for existing_value in set.iter() {
-        if existing_value == value {
-            return false;
+impl TransitionSummary {
+    fn new(id: TransitionId, transition: &Transition) -> Self {
+        Self {
+            id,
+            name: transition.name.clone(),
+            transition_type: transition.transition_type.clone(),
         }
     }
-    set.insert(value.clone());
-    return true;
 }
 
-#[derive(Debug, Serialize)]
-pub struct DeadlockInfo {
-    pub function_id: String,
-    pub start_state: usize,
-    pub deadlock_path: Vec<usize>,
+/// 状态图上的节点。`marking` 保留完整标识，`places` 仅用于可视化。
+#[derive(Debug, Clone)]
+pub struct StateNode {
+    pub index: usize,
+    pub marking: Marking,
+    pub places: Vec<StatePlaceSnapshot>,
+    pub enabled: Vec<TransitionSummary>,
+}
+
+impl StateNode {
+    fn new(index: usize, marking: Marking, net: &Net, include_zero_tokens: bool) -> Self {
+        let mut places = Vec::new();
+        for (place_id, place) in net.places.iter_enumerated() {
+            let tokens = marking.tokens(place_id);
+            if tokens > 0 || include_zero_tokens {
+                places.push(StatePlaceSnapshot::new(place_id, place, tokens));
+            }
+        }
+        Self {
+            index,
+            marking,
+            places,
+            enabled: Vec::new(),
+        }
+    }
+
+    fn update_enabled(&mut self, net: &Net, transitions: &[TransitionId]) {
+        self.enabled = transitions
+            .iter()
+            .map(|&id| TransitionSummary::new(id, &net.transitions[id]))
+            .collect();
+    }
+}
+
+/// 状态图上的边。
+#[derive(Debug, Clone)]
+pub struct StateEdge {
+    pub transition: TransitionSummary,
+    pub changes: Vec<TokenChange>,
+    pub arcs: Vec<ArcSnapshot>,
+}
+
+impl StateEdge {
+    fn new(
+        net: &Net,
+        transition_id: TransitionId,
+        before: &Marking,
+        after: &Marking,
+    ) -> Self {
+        let transition = TransitionSummary::new(transition_id, &net.transitions[transition_id]);
+        let mut changes = Vec::new();
+        let mut arcs = Vec::new();
+
+        for (place_id, place) in net.places.iter_enumerated() {
+            let before_tokens = before.tokens(place_id);
+            let after_tokens = after.tokens(place_id);
+            if let Some(change) = TokenChange::new(place_id, place, before_tokens, after_tokens) {
+                changes.push(change);
+            }
+
+            let input_weight = *net.pre.get(place_id, transition_id);
+            if input_weight > 0 {
+                arcs.push(ArcSnapshot::new(place_id, place, ArcKind::Input, input_weight));
+            }
+
+            let output_weight = *net.post.get(place_id, transition_id);
+            if output_weight > 0 {
+                arcs.push(ArcSnapshot::new(place_id, place, ArcKind::Output, output_weight));
+            }
+
+            #[cfg(feature = "inhibitor")]
+            if let Some(matrix) = net.inhibitor.as_ref() {
+                if matrix.get(place_id, transition_id) {
+                    arcs.push(ArcSnapshot::new(place_id, place, ArcKind::Inhibitor, 1));
+                }
+            }
+
+            #[cfg(feature = "reset")]
+            if let Some(matrix) = net.reset.as_ref() {
+                if matrix.get(place_id, transition_id) {
+                    arcs.push(ArcSnapshot::new(place_id, place, ArcKind::Reset, 1));
+                }
+            }
+        }
+
+        Self {
+            transition,
+            changes,
+            arcs,
+        }
+    }
+}
+
+/// 构建可达图时记录的失败信息。
+#[derive(Debug, Clone)]
+pub struct TransitionFailure {
+    pub source: NodeIndex,
+    pub transition: TransitionId,
+    pub transition_name: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone)]
+pub struct StateGraphStats {
+    pub state_count: usize,
+    pub edge_count: usize,
+    pub deadlock_count: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateGraphConfig {
+    /// 最多探索的状态数量。`None` 表示不设上限。
+    pub state_limit: Option<usize>,
+    /// 是否在节点快照中保留 token 为 0 的库所。
+    pub include_zero_tokens: bool,
+}
+
+impl Default for StateGraphConfig {
+    fn default() -> Self {
+        Self {
+            state_limit: None,
+            include_zero_tokens: false,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct StateGraph {
-    pub graph: Graph<StateNode, StateEdge>,
-    pub initial_net: Rc<RefCell<Graph<PetriNetNode, PetriNetEdge>>>,
-    pub initial_mark: HashSet<(NodeIndex, u8)>,
-    pub deadlock_marks: HashSet<Vec<(usize, u8)>>,
-    pub atomic_races: Vec<AtomicRaceInfo>,
-    pub apis_deadlock_marks: HashMap<String, HashSet<Vec<(usize, u8)>>>,
-    pub apis_graph: HashMap<String, Box<Graph<StateNode, StateEdge>>>,
-    pub function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
-    pub options: Options,
-    pub terminal_states: Vec<(usize, u8)>,
+    pub graph: StableGraph<StateNode, StateEdge>,
+    pub initial: NodeIndex,
+    pub deadlocks: FxHashSet<NodeIndex>,
+    pub truncated: bool,
+    pub failures: Vec<TransitionFailure>,
+    pub markings: FxHashMap<Marking, NodeIndex>,
 }
 
 impl StateGraph {
-    pub fn new(
-        initial_net: Graph<PetriNetNode, PetriNetEdge>,
-        initial_mark: HashSet<(NodeIndex, u8)>,
-        function_counter: HashMap<DefId, (NodeIndex, NodeIndex)>,
-        options: Options,
-        terminal_states: Vec<(usize, u8)>,
-    ) -> Self {
-        Self {
-            graph: Graph::<StateNode, StateEdge>::new(),
-            initial_net: Rc::new(RefCell::new(initial_net)),
-            initial_mark,
-            deadlock_marks: HashSet::new(),
-            atomic_races: Vec::new(),
-            apis_deadlock_marks: HashMap::new(),
-            apis_graph: HashMap::new(),
-            function_counter,
-            options,
-            terminal_states,
-        }
+    pub fn from_net(net: &Net) -> Self {
+        Self::with_config(net, StateGraphConfig::default())
     }
 
-    pub fn generate_states(&mut self) {
+    /// 指定构建配置。
+    pub fn with_config(net: &Net, config: StateGraphConfig) -> Self {
+        let mut graph = StableGraph::new();
+        let mut markings: FxHashMap<Marking, NodeIndex> = FxHashMap::default();
         let mut queue = VecDeque::new();
-        let mut state_index_map = HashMap::<StateNode, NodeIndex>::new();
-        let mut visited_states: HashSet<Vec<(usize, u8)>> = HashSet::new();
+        let mut deadlocks = FxHashSet::default();
+        let mut failures = Vec::new();
+        let mut truncated = false;
 
-        queue.push_back(self.initial_mark.clone());
-        let initial_state = StateNode::new(
-            normalize_state(&self.initial_mark),
-            self.initial_mark.iter().map(|(n, _)| *n).collect(),
-        );
+        let initial_marking = net.initial_marking();
+        let initial_index = graph.add_node(StateNode::new(
+            0,
+            initial_marking.clone(),
+            net,
+            config.include_zero_tokens,
+        ));
+        markings.insert(initial_marking.clone(), initial_index);
+        queue.push_back(initial_index);
 
-        let initial_node = self.graph.add_node(initial_state.clone());
-        state_index_map.insert(initial_state.clone(), initial_node);
+        while let Some(state_index) = queue.pop_front() {
+            let current_marking = graph[state_index].marking.clone();
+            let enabled = net.enabled_transitions(&current_marking);
+            graph[state_index].update_enabled(net, &enabled);
 
-        while let Some(state_mark) = queue.pop_front() {
-            let enabled_transitions = self.get_enabled_transitions(&state_mark);
-            let current_state_normalized = normalize_state(&state_mark);
-
-            if enabled_transitions.is_empty() {
-                self.deadlock_marks.insert(current_state_normalized.clone());
+            if enabled.is_empty() {
+                deadlocks.insert(state_index);
                 continue;
             }
 
-            let current_state_node = StateNode::new(
-                current_state_normalized.clone(),
-                state_mark.iter().map(|(n, _)| *n).collect(),
-            );
-
-            if visited_states.contains(&current_state_normalized) {
-                continue;
-            }
-            visited_states.insert(current_state_normalized.clone());
-
-            if let Some(race_info) =
-                self.check_atomic_race(&enabled_transitions, &normalize_state(&state_mark))
-            {
-                self.atomic_races.push(race_info);
-            }
-
-            let current_node = match state_index_map.get(&current_state_node) {
-                Some(&node) => node,
-                None => {
-                    log::error!(
-                        "Current state not found in index map: {:?}",
-                        current_state_node
-                    );
-                    continue;
-                }
-            };
-
-            for transition in enabled_transitions {
-                match self.fire_transition(&state_mark, transition) {
-                    Ok(new_mark) => {
-                        let mark_node_index = new_mark.iter().map(|(n, _)| *n).collect();
-                        let new_state = StateNode::new(normalize_state(&new_mark), mark_node_index);
-
-                        if let Some(&existing_node) = state_index_map.get(&new_state) {
-                            self.graph.add_edge(
-                                current_node,
-                                existing_node,
-                                StateEdge::new(format!("{:?}", transition), transition, 1),
-                            );
-                        } else {
-                            queue.push_back(new_mark);
-                            let new_node = self.graph.add_node(new_state.clone());
-                            state_index_map.insert(new_state, new_node);
-
-                            self.graph.add_edge(
-                                current_node,
-                                new_node,
-                                StateEdge::new(format!("{:?}", transition), transition, 1),
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        log::debug!("跳过无效变迁: {}", e);
-                        continue;
-                    }
-                }
-            }
-        }
-    }
-
-    fn check_atomic_race(
-        &mut self,
-        enabled_transitions: &[NodeIndex],
-        current_state: &Vec<(usize, u8)>,
-    ) -> Option<AtomicRaceInfo> {
-        let mut operations = Vec::new();
-        let mut has_race = false;
-
-        for &t in enabled_transitions {
-            if let Some(PetriNetNode::T(transition)) = self.initial_net.borrow().node_weight(t) {
-                match &transition.transition_type {
-                    ControlType::Call(CallType::AtomicLoad(var_id, ordering, span, _)) => {
-                        operations.push(AtomicRaceOperation {
-                            op_type: AtomicOpType::Load,
-                            transition: t,
-                            var_id: var_id.clone(),
-                            ordering: format!("{:?}", ordering),
-                            span: span.clone(),
-                        });
-                    }
-                    ControlType::Call(CallType::AtomicStore(var_id, ordering, span, _)) => {
-                        operations.push(AtomicRaceOperation {
-                            op_type: AtomicOpType::Store,
-                            transition: t,
-                            var_id: var_id.clone(),
-                            ordering: format!("{:?}", ordering),
-                            span: span.clone(),
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        for i in 0..operations.len() {
-            for j in i + 1..operations.len() {
-                if operations[i].var_id == operations[j].var_id {
-                    if operations[i].op_type == AtomicOpType::Store
-                        && operations[j].op_type == AtomicOpType::Store
-                    {
-                        has_race = true;
-                    } else if (operations[i].op_type == AtomicOpType::Store
-                        && operations[j].op_type == AtomicOpType::Load
-                        && operations[j].ordering == "Relaxed")
-                        || (operations[i].op_type == AtomicOpType::Load
-                            && operations[j].op_type == AtomicOpType::Store
-                            && operations[i].ordering == "Relaxed")
-                    {
-                        has_race = true;
-                    }
-                }
-            }
-        }
-
-        if has_race {
-            Some(AtomicRaceInfo {
-                state: current_state.clone(),
-                operations,
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn detect_deadlock(&self) -> String {
-        use crate::detect::deadlock::DeadlockDetector;
-
-        let detector = DeadlockDetector::new(self);
-        let report = detector.detect();
-
-        format!("{}", report)
-    }
-
-    #[allow(dead_code)]
-    pub fn dot(&self) -> std::io::Result<()> {
-        if self.options.dump_options.dump_state_graph {
-            let output_path = self
-                .options
-                .output
-                .as_ref()
-                .unwrap()
-                .join("state_graph.dot");
-
-            let mut file = std::fs::File::create(&output_path)?;
-
-            write!(file, "{:?}", Dot::new(&self.graph))?;
-
-            log::info!("State graph saved to {}", output_path.display());
-        }
-        Ok(())
-    }
-
-    fn set_current_mark(&self, mark: &HashSet<(NodeIndex, u8)>) {
-        for node_index in self.initial_net.borrow().node_indices() {
-            if let Some(PetriNetNode::P(place)) = self.initial_net.borrow().node_weight(node_index)
-            {
-                *place.tokens.borrow_mut() = 0u8;
-            }
-        }
-
-        for (node_index, token_count) in mark {
-            if let Some(PetriNetNode::P(place)) = self.initial_net.borrow().node_weight(*node_index)
-            {
-                *place.tokens.borrow_mut() = *token_count;
-                assert!(
-                    *place.tokens.borrow() <= place.capacity,
-                    "Token count ({}) exceeds capacity ({}) at node index {}, and token_count is {} ",
-                    *place.tokens.borrow(),
-                    place.capacity,
-                    node_index.index(),
-                    token_count
-                );
-            }
-        }
-    }
-
-    pub fn fire_transition(
-        &mut self,
-        mark: &HashSet<(NodeIndex, u8)>,
-        transition: NodeIndex,
-    ) -> Result<HashSet<(NodeIndex, u8)>, String> {
-        self.set_current_mark(mark);
-        let mut new_state = HashSet::<(NodeIndex, u8)>::new();
-        log::debug!("The transition to fire is: {}", transition.index());
-
-        log::debug!("sub token to source node!");
-        for edge in self
-            .initial_net
-            .borrow()
-            .edges_directed(transition, Direction::Incoming)
-        {
-            match self
-                .initial_net
-                .borrow()
-                .node_weight(edge.source())
-                .unwrap()
-            {
-                PetriNetNode::P(place) => {
-                    let label = edge.weight().label;
-                    if *place.tokens.borrow() < label {
-                        return Err(format!(
-                            "库所 {} 的token数量不足: 需要 {}, 实际 {}",
-                            place.name,
-                            label,
-                            *place.tokens.borrow()
-                        ));
-                    }
-                    *place.tokens.borrow_mut() -= label;
-                }
-                PetriNetNode::T(_) => {
-                    return Err("发现输入边连接到变迁节点".to_string());
-                }
-            }
-        }
-
-        log::debug!("add token to target node!");
-        for edge in self
-            .initial_net
-            .borrow()
-            .edges_directed(transition, Direction::Outgoing)
-        {
-            match self
-                .initial_net
-                .borrow()
-                .node_weight(edge.target())
-                .unwrap()
-            {
-                PetriNetNode::P(place) => {
-                    let mut tokens = place.tokens.borrow_mut();
-                    *tokens += edge.weight().label;
-                    if *tokens > place.capacity {
-                        *tokens = place.capacity;
-                    }
-                    assert!(place.capacity > 0);
-                }
-                PetriNetNode::T(_) => {
-                    log::error!("{}", "this error!");
-                }
-            }
-        }
-
-        log::debug!("generate new state!");
-        for node in self.initial_net.borrow().node_indices() {
-            match &self.initial_net.borrow()[node] {
-                PetriNetNode::P(place) => {
-                    let tokens = *place.tokens.borrow();
-                    if tokens > 0 {
-                        let final_tokens = tokens.min(place.capacity);
-                        new_state.insert((node, final_tokens));
-                    }
-                }
-                PetriNetNode::T(_) => {}
-            }
-        }
-
-        Ok(new_state)
-    }
-
-    pub fn get_enabled_transitions(&mut self, mark: &HashSet<(NodeIndex, u8)>) -> Vec<NodeIndex> {
-        let mut sched_transiton = Vec::<NodeIndex>::new();
-
-        self.set_current_mark(mark);
-
-        for node_index in self.initial_net.borrow().node_indices() {
-            match self.initial_net.borrow().node_weight(node_index) {
-                Some(PetriNetNode::T(_)) => {
-                    let mut enabled = true;
-                    for edge in self
-                        .initial_net
-                        .borrow()
-                        .edges_directed(node_index, Direction::Incoming)
-                    {
-                        match self
-                            .initial_net
-                            .borrow()
-                            .node_weight(edge.source())
-                            .unwrap()
-                        {
-                            PetriNetNode::P(place) => {
-                                let tokens = place.tokens.borrow();
-                                if *tokens < edge.weight().label {
-                                    enabled = false;
-                                    break;
+            for transition_id in enabled {
+                match net.fire_transition(&current_marking, transition_id) {
+                    Ok(next_marking) => {
+                        let target_index = match markings.entry(next_marking.clone()) {
+                            Entry::Occupied(entry) => *entry.get(),
+                            Entry::Vacant(entry) => {
+                                if let Some(limit) = config.state_limit {
+                                    if graph.node_count() >= limit {
+                                        truncated = true;
+                                        continue;
+                                    }
                                 }
+                                let index = graph.add_node(StateNode::new(
+                                    graph.node_count(),
+                                    next_marking.clone(),
+                                    net,
+                                    config.include_zero_tokens,
+                                ));
+                                entry.insert(index);
+                                queue.push_back(index);
+                                index
                             }
-                            _ => {
-                                log::error!("The predecessor set of transition is not place");
-                            }
-                        }
+                        };
+
+                        let edge = StateEdge::new(net, transition_id, &current_marking, &next_marking);
+                        graph.add_edge(state_index, target_index, edge);
                     }
-                    if enabled {
-                        sched_transiton.push(node_index);
+                    Err(err) => {
+                        failures.push(TransitionFailure {
+                            source: state_index,
+                            transition: transition_id,
+                            transition_name: net.transitions[transition_id].name.clone(),
+                            reason: err.to_string(),
+                        });
                     }
                 }
-                _ => continue,
             }
         }
 
-        sched_transiton
+        Self {
+            graph,
+            initial: initial_index,
+            deadlocks,
+            truncated,
+            failures,
+            markings,
+        }
+    }
+
+    pub fn stats(&self) -> StateGraphStats {
+        StateGraphStats {
+            state_count: self.graph.node_count(),
+            edge_count: self.graph.edge_count(),
+            deadlock_count: self.deadlocks.len(),
+            truncated: self.truncated,
+        }
+    }
+
+    /// 按 NodeIndex 访问节点。
+    pub fn node(&self, index: NodeIndex) -> &StateNode {
+        &self.graph[index]
+    }
+
+    /// 快速判断某个标识是否已被探索。
+    pub fn contains_marking(&self, marking: &Marking) -> bool {
+        self.markings.contains_key(marking)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::structure::PlaceType;
+
+    fn build_simple_net() -> Net {
+        let mut net = Net::empty();
+        let p0 = net.add_place(Place::new("p0", 1, 1, PlaceType::BasicBlock, String::new()));
+        let p1 = net.add_place(Place::new("p1", 0, 1, PlaceType::BasicBlock, String::new()));
+        let t0 = net.add_transition(Transition::new("t0"));
+
+        net.set_input_weight(p0, t0, 1);
+        net.set_output_weight(p1, t0, 1);
+
+        net
+    }
+
+    #[test]
+    fn state_graph_matches_core_reachability() {
+        let net = build_simple_net();
+
+        let reachability = net.reachability_graph(None);
+        let state_graph = StateGraph::from_net(&net);
+
+        assert_eq!(reachability.markings.len(), state_graph.graph.node_count());
+        assert_eq!(reachability.edges.len(), state_graph.graph.edge_count());
+        assert_eq!(reachability.deadlocks.len(), state_graph.deadlocks.len());
+        assert_eq!(reachability.truncated, state_graph.truncated);
+
+        for marking in reachability.markings.iter() {
+            assert!(
+                state_graph.contains_marking(marking),
+                "missing marking {:?}",
+                marking
+            );
+        }
+    }
+
+    #[test]
+    fn state_limit_truncates_graph() {
+        let net = build_simple_net();
+        let config = StateGraphConfig {
+            state_limit: Some(1),
+            include_zero_tokens: false,
+        };
+        let state_graph = StateGraph::with_config(&net, config);
+
+        assert!(state_graph.truncated);
+        assert_eq!(state_graph.graph.node_count(), 1);
     }
 }
