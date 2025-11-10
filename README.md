@@ -11,7 +11,6 @@ This repository accompanies the paper:
 **"Rust-PN: Petri Net-based Static Analysis for Rust Programs"**  
 [arXiv:2212.02754](https://arxiv.org/abs/2212.02754)
 
-> The paper is currently under review.
 
 ---
 
