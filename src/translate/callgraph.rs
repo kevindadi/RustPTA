@@ -5,6 +5,7 @@ use petgraph::visit::IntoNodeReferences;
 use petgraph::Direction::Incoming;
 use petgraph::{Directed, Graph};
 
+use std::collections::hash_map::RandomState;
 use std::fs;
 use std::path::Path;
 
@@ -195,7 +196,7 @@ impl<'tcx> CallGraph<'tcx> {
     }
 
     pub fn all_simple_paths(&self, source: InstanceId, target: InstanceId) -> Vec<Vec<InstanceId>> {
-        algo::all_simple_paths::<Vec<_>, _>(&self.graph, source, target, 0, None)
+        algo::all_simple_paths::<Vec<_>, _, RandomState>(&self.graph, source, target, 0, None)
             .collect::<Vec<_>>()
     }
 

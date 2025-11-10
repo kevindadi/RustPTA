@@ -1,11 +1,14 @@
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::structure::{Marking, Place, PlaceType, Transition, TransitionType};
 use crate::net::Net;
+use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct StatePlaceSnapshot {
@@ -54,7 +57,7 @@ impl TokenChange {
     }
 }
 
-/// 弧类型，区分普通输入/输出及特殊弧。
+/// 弧类型,区分普通输入/输出及特殊弧.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArcKind {
     Input,
@@ -65,7 +68,6 @@ pub enum ArcKind {
     Reset,
 }
 
-/// 迁移关联的弧快照。
 #[derive(Debug, Clone)]
 pub struct ArcSnapshot {
     pub place: PlaceId,
@@ -102,7 +104,7 @@ impl TransitionSummary {
     }
 }
 
-/// 状态图上的节点。`marking` 保留完整标识，`places` 仅用于可视化。
+/// marking 保留完整标识,places 仅用于可视化.
 #[derive(Debug, Clone)]
 pub struct StateNode {
     pub index: usize,
@@ -136,7 +138,6 @@ impl StateNode {
     }
 }
 
-/// 状态图上的边。
 #[derive(Debug, Clone)]
 pub struct StateEdge {
     pub transition: TransitionSummary,
@@ -145,12 +146,7 @@ pub struct StateEdge {
 }
 
 impl StateEdge {
-    fn new(
-        net: &Net,
-        transition_id: TransitionId,
-        before: &Marking,
-        after: &Marking,
-    ) -> Self {
+    fn new(net: &Net, transition_id: TransitionId, before: &Marking, after: &Marking) -> Self {
         let transition = TransitionSummary::new(transition_id, &net.transitions[transition_id]);
         let mut changes = Vec::new();
         let mut arcs = Vec::new();
@@ -164,12 +160,22 @@ impl StateEdge {
 
             let input_weight = *net.pre.get(place_id, transition_id);
             if input_weight > 0 {
-                arcs.push(ArcSnapshot::new(place_id, place, ArcKind::Input, input_weight));
+                arcs.push(ArcSnapshot::new(
+                    place_id,
+                    place,
+                    ArcKind::Input,
+                    input_weight,
+                ));
             }
 
             let output_weight = *net.post.get(place_id, transition_id);
             if output_weight > 0 {
-                arcs.push(ArcSnapshot::new(place_id, place, ArcKind::Output, output_weight));
+                arcs.push(ArcSnapshot::new(
+                    place_id,
+                    place,
+                    ArcKind::Output,
+                    output_weight,
+                ));
             }
 
             #[cfg(feature = "inhibitor")]
@@ -195,7 +201,7 @@ impl StateEdge {
     }
 }
 
-/// 构建可达图时记录的失败信息。
+/// 构建可达图时记录的失败信息.
 #[derive(Debug, Clone)]
 pub struct TransitionFailure {
     pub source: NodeIndex,
@@ -214,9 +220,9 @@ pub struct StateGraphStats {
 
 #[derive(Debug, Clone)]
 pub struct StateGraphConfig {
-    /// 最多探索的状态数量。`None` 表示不设上限。
+    /// 最多探索的状态数量.None表示不设上限.
     pub state_limit: Option<usize>,
-    /// 是否在节点快照中保留 token 为 0 的库所。
+    /// 是否在节点快照中保留 token 为 0 的库所.
     pub include_zero_tokens: bool,
 }
 
@@ -240,11 +246,61 @@ pub struct StateGraph {
 }
 
 impl StateGraph {
+    pub fn dot(&self) -> String {
+        fn escape(s: &str) -> String {
+            s.replace('\\', "\\\\").replace('"', "\\\"")
+        }
+
+        let mut edge_attr = |_, edge: petgraph::stable_graph::EdgeReference<StateEdge>| -> String {
+            let label = escape(&edge.weight().transition.name);
+            format!("label=\"{}\"", label)
+        };
+
+        let mut node_attr = |_, (_idx, node): (NodeIndex, &StateNode)| -> String {
+            let marking_lines: Vec<String> = node
+                .places
+                .iter()
+                .map(|place| format!("{}:{}", place.name, place.tokens))
+                .collect();
+            let enabled: Vec<String> = node
+                .enabled
+                .iter()
+                .map(|trans| escape(&trans.name))
+                .collect();
+            let mut label = format!(
+                "s{}\\nmarking: {}",
+                node.index,
+                escape(&marking_lines.join(", "))
+            );
+            if !enabled.is_empty() {
+                label.push_str(&format!("\\nenabled: {}", enabled.join(", ")));
+            }
+            format!("label=\"{}\"", label)
+        };
+
+        format!(
+            "{:?}",
+            Dot::with_attr_getters(
+                &self.graph,
+                &[Config::EdgeNoLabel],
+                &mut edge_attr,
+                &mut node_attr
+            )
+        )
+    }
+
+    pub fn write_dot<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        let dot = self.dot();
+        if let Some(parent) = path.as_ref().parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, dot)
+    }
+
     pub fn from_net(net: &Net) -> Self {
         Self::with_config(net, StateGraphConfig::default())
     }
 
-    /// 指定构建配置。
     pub fn with_config(net: &Net, config: StateGraphConfig) -> Self {
         let mut graph = StableGraph::new();
         let mut markings: FxHashMap<Marking, NodeIndex> = FxHashMap::default();
@@ -297,7 +353,8 @@ impl StateGraph {
                             }
                         };
 
-                        let edge = StateEdge::new(net, transition_id, &current_marking, &next_marking);
+                        let edge =
+                            StateEdge::new(net, transition_id, &current_marking, &next_marking);
                         graph.add_edge(state_index, target_index, edge);
                     }
                     Err(err) => {
@@ -331,12 +388,12 @@ impl StateGraph {
         }
     }
 
-    /// 按 NodeIndex 访问节点。
+    /// 按 NodeIndex 访问节点.
     pub fn node(&self, index: NodeIndex) -> &StateNode {
         &self.graph[index]
     }
 
-    /// 快速判断某个标识是否已被探索。
+    /// 快速判断某个标识是否已被探索.
     pub fn contains_marking(&self, marking: &Marking) -> bool {
         self.markings.contains_key(marking)
     }
@@ -357,27 +414,6 @@ mod tests {
         net.set_output_weight(p1, t0, 1);
 
         net
-    }
-
-    #[test]
-    fn state_graph_matches_core_reachability() {
-        let net = build_simple_net();
-
-        let reachability = net.reachability_graph(None);
-        let state_graph = StateGraph::from_net(&net);
-
-        assert_eq!(reachability.markings.len(), state_graph.graph.node_count());
-        assert_eq!(reachability.edges.len(), state_graph.graph.edge_count());
-        assert_eq!(reachability.deadlocks.len(), state_graph.deadlocks.len());
-        assert_eq!(reachability.truncated, state_graph.truncated);
-
-        for marking in reachability.markings.iter() {
-            assert!(
-                state_graph.contains_marking(marking),
-                "missing marking {:?}",
-                marking
-            );
-        }
     }
 
     #[test]

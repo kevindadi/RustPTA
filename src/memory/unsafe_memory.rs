@@ -160,7 +160,7 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
 
     fn check_unsafe_fn(&self) -> bool {
         // TODO: 需要找到新的方法来检查函数是否为 unsafe
-        // 暂时返回 false，因为 hir() 方法在当前版本中不可用
+        // 暂时返回 false,因为 hir() 方法在当前版本中不可用
         false
     }
 
@@ -298,7 +298,7 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafeCollector<'a, 'tcx> {
                     if self.tcx.is_mir_available(*def_id) {
                         if def_id.is_local() {
                             // TODO: 需要找到新的方法来检查函数是否为 unsafe
-                            // 暂时跳过检查，因为 hir() 方法在当前版本中不可用
+                            // 暂时跳过检查,因为 hir() 方法在当前版本中不可用
                             // let hir_id = self.tcx.local_def_id_to_hir_id(def_id.expect_local());
                             // if matches!(
                             //     self.tcx

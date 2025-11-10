@@ -1,6 +1,4 @@
-//! 运行时: 可发生集、发生语义与冲突检测定义。
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, VecDeque};
+//! 运行时: 可发生集、发生语义与冲突检测定义.
 use std::fmt;
 
 use thiserror::Error;
@@ -42,46 +40,6 @@ pub enum FireError {
     Deadlock,
     #[error("fire_plan contains non-sequential step with {0} transitions")]
     NonSequentialStep(usize),
-}
-
-#[derive(Debug, Clone)]
-pub struct ReachabilityEdge {
-    pub source: usize,
-    pub transition: TransitionId,
-    pub target: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReachabilityGraph {
-    pub markings: Vec<Marking>,
-    pub edges: Vec<ReachabilityEdge>,
-    pub deadlocks: Vec<usize>,
-    pub truncated: bool,
-}
-
-impl ReachabilityGraph {
-    pub fn new() -> Self {
-        Self {
-            markings: Vec::new(),
-            edges: Vec::new(),
-            deadlocks: Vec::new(),
-            truncated: false,
-        }
-    }
-
-    pub fn add_marking(&mut self, marking: Marking) -> usize {
-        let idx = self.markings.len();
-        self.markings.push(marking);
-        idx
-    }
-
-    pub fn add_edge(&mut self, source: usize, transition: TransitionId, target: usize) {
-        self.edges.push(ReachabilityEdge {
-            source,
-            transition,
-            target,
-        });
-    }
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -341,53 +299,6 @@ impl Net {
         Ok(next)
     }
 
-    pub fn reachability_graph(&self, limit: Option<usize>) -> ReachabilityGraph {
-        let mut graph = ReachabilityGraph::new();
-        let mut visited = HashMap::<Marking, usize>::new();
-        let mut queue = VecDeque::new();
-        let mut truncated = false;
-
-        let initial = self.initial_marking();
-        let initial_idx = graph.add_marking(initial.clone());
-        visited.insert(initial, initial_idx);
-        queue.push_back(initial_idx);
-
-        while let Some(current_idx) = queue.pop_front() {
-            let current_marking = graph.markings[current_idx].clone();
-            let enabled = self.enabled_transitions(&current_marking);
-            if enabled.is_empty() {
-                graph.deadlocks.push(current_idx);
-            }
-
-            for transition in enabled {
-                match self.fire_transition(&current_marking, transition) {
-                    Ok(next_marking) => {
-                        let target_idx = match visited.entry(next_marking.clone()) {
-                            Entry::Occupied(entry) => *entry.get(),
-                            Entry::Vacant(entry) => {
-                                if let Some(limit) = limit {
-                                    if graph.markings.len() >= limit {
-                                        truncated = true;
-                                        continue;
-                                    }
-                                }
-                                let idx = graph.add_marking(next_marking.clone());
-                                entry.insert(idx);
-                                queue.push_back(idx);
-                                idx
-                            }
-                        };
-                        graph.add_edge(current_idx, transition, target_idx);
-                    }
-                    Err(_) => continue,
-                }
-            }
-        }
-
-        graph.truncated = truncated;
-        graph
-    }
-
     fn is_transition_enabled(&self, transition: TransitionId, marking: &Marking) -> bool {
         if transition.index() >= self.transitions_len() {
             return false;
@@ -626,23 +537,6 @@ mod tests {
         assert_eq!(net.transitions_len(), 1);
         assert_eq!(*net.pre.get(p, t), 1);
         assert_eq!(*net.post.get(p, t), 1);
-    }
-
-    #[test]
-    fn reachability_graph_builds_states() {
-        let mut net = Net::empty();
-        let p0 = net.add_place(Place::new("p0", 1, 1, PlaceType::BasicBlock, String::new()));
-        let p1 = net.add_place(Place::new("p1", 0, 1, PlaceType::BasicBlock, String::new()));
-        let t0 = net.add_transition(Transition::new("t0"));
-
-        net.set_input_weight(p0, t0, 1);
-        net.set_output_weight(p1, t0, 1);
-
-        let graph = net.reachability_graph(None);
-        assert_eq!(graph.markings.len(), 2);
-        assert_eq!(graph.edges.len(), 1);
-        assert_eq!(graph.deadlocks.len(), 1);
-        assert!(!graph.truncated);
     }
 
     #[cfg(feature = "invariants")]

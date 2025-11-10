@@ -1,9 +1,11 @@
-use crate::graph::net_structure::PetriNetNode;
-use crate::graph::net_structure::{CallType, ControlType};
-use crate::graph::state_graph::StateGraph;
+use crate::analysis::reachability::StateGraph;
+use crate::net::ids::TransitionId;
+use crate::net::index_vec::Idx;
+use crate::net::structure::TransitionType;
 use crate::report::{DeadlockReport, DeadlockState, DeadlockTrace};
-use petgraph::graph::{node_index, NodeIndex};
+use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -33,11 +35,11 @@ impl<'a> DeadlockDetector<'a> {
             report.has_deadlock = true;
             report.deadlock_count = all_deadlocks.len();
 
-            for (_, deadlock_state) in all_deadlocks.iter().enumerate() {
-                let state_info = self.format_deadlock_state(deadlock_state);
+            for deadlock_state in &all_deadlocks {
+                let state_info = self.format_deadlock_state(*deadlock_state);
                 report.deadlock_states.push(state_info);
 
-                let trace = self.create_deadlock_trace(deadlock_state);
+                let trace = self.create_deadlock_trace(*deadlock_state);
                 report.traces.push(trace);
             }
         }
@@ -48,29 +50,19 @@ impl<'a> DeadlockDetector<'a> {
         report
     }
 
-    fn detect_reachability_deadlock(&self) -> HashSet<Vec<(usize, u8)>> {
+    fn detect_reachability_deadlock(&self) -> HashSet<NodeIndex> {
         let mut deadlocks = HashSet::new();
 
         for node_idx in self.state_graph.graph.node_indices() {
-            let state = &self.state_graph.graph[node_idx];
-
+            let state = self.state_graph.node(node_idx);
             let is_terminal = self.state_graph.graph.edges(node_idx).count() == 0;
-
-            let is_normal_termination = state.mark.iter().any(|(idx, _)| {
-                if let Some(PetriNetNode::P(place)) = self
-                    .state_graph
-                    .initial_net
-                    .borrow()
-                    .node_weight(node_index(*idx))
-                {
-                    place.name.contains("main_end")
-                } else {
-                    false
-                }
-            });
+            let is_normal_termination = state
+                .places
+                .iter()
+                .any(|place| place.tokens > 0 && place.name.contains("main_end"));
 
             if is_terminal && !is_normal_termination {
-                deadlocks.insert(state.mark.clone());
+                deadlocks.insert(node_idx);
             }
         }
 
@@ -84,11 +76,11 @@ impl<'a> DeadlockDetector<'a> {
         deadlocks
     }
 
-    fn detect_cycle_deadlocks(&self) -> HashSet<Vec<(usize, u8)>> {
+    fn detect_cycle_deadlocks(&self) -> HashSet<NodeIndex> {
         let mut deadlocks = HashSet::new();
         let mut visited = HashSet::new();
         let mut stack = HashSet::new();
-        let mut cycle_groups = HashMap::new();
+        let mut cycle_groups: FxHashMap<Vec<usize>, HashSet<NodeIndex>> = FxHashMap::default();
 
         for start_node in self.state_graph.graph.node_indices() {
             if !visited.contains(&start_node) {
@@ -102,11 +94,9 @@ impl<'a> DeadlockDetector<'a> {
             }
         }
 
-        for (blocked_transitions, states) in cycle_groups {
-            if !blocked_transitions.is_empty() {
-                if let Some(state) = states.into_iter().next() {
-                    deadlocks.insert(state);
-                }
+        for (_blocked_transitions, states) in cycle_groups {
+            if let Some(state) = states.into_iter().next() {
+                deadlocks.insert(state);
             }
         }
 
@@ -118,7 +108,7 @@ impl<'a> DeadlockDetector<'a> {
         current: NodeIndex,
         visited: &mut HashSet<NodeIndex>,
         stack: &mut HashSet<NodeIndex>,
-        cycle_groups: &mut HashMap<Vec<NodeIndex>, HashSet<Vec<(usize, u8)>>>,
+        cycle_groups: &mut FxHashMap<Vec<usize>, HashSet<NodeIndex>>,
         current_path: &Vec<NodeIndex>,
     ) {
         visited.insert(current);
@@ -137,15 +127,12 @@ impl<'a> DeadlockDetector<'a> {
 
                 if let Some(blocked_trans) = self.get_consistently_blocked_transitions(cycle) {
                     if !blocked_trans.is_empty() {
+                        let mut key: Vec<_> = blocked_trans.into_iter().collect();
+                        key.sort_unstable();
                         cycle_groups
-                            .entry(blocked_trans.into_iter().collect::<Vec<_>>())
+                            .entry(key)
                             .or_insert_with(HashSet::new)
-                            .extend(cycle.iter().filter_map(|&node| {
-                                self.state_graph
-                                    .graph
-                                    .node_weight(node)
-                                    .map(|state| state.mark.clone())
-                            }));
+                            .extend(cycle);
                     }
                 }
             }
@@ -154,24 +141,17 @@ impl<'a> DeadlockDetector<'a> {
         stack.remove(&current);
     }
 
-    fn get_consistently_blocked_transitions(
-        &self,
-        cycle: &[NodeIndex],
-    ) -> Option<HashSet<NodeIndex>> {
+    fn get_consistently_blocked_transitions(&self, cycle: &[NodeIndex]) -> Option<HashSet<usize>> {
         let lock_transitions = self.collect_lock_transitions();
         let mut consistently_blocked = HashSet::new();
         let all_locks: HashSet<_> = lock_transitions.keys().cloned().collect();
 
         if let Some(&first_node) = cycle.first() {
             for (lock, transitions) in &lock_transitions {
-                let mut is_blocked = true;
-                for &trans in transitions {
-                    if self.is_transition_enabled(first_node, trans) {
-                        is_blocked = false;
-                        break;
-                    }
-                }
-                if is_blocked {
+                let blocked = transitions
+                    .iter()
+                    .all(|transition| !self.is_transition_enabled(first_node, *transition));
+                if blocked {
                     consistently_blocked.insert(*lock);
                 }
             }
@@ -181,14 +161,10 @@ impl<'a> DeadlockDetector<'a> {
             let mut current_blocked = HashSet::new();
             for &lock in &consistently_blocked {
                 if let Some(transitions) = lock_transitions.get(&lock) {
-                    let mut is_blocked = true;
-                    for &trans in transitions {
-                        if self.is_transition_enabled(node, trans) {
-                            is_blocked = false;
-                            break;
-                        }
-                    }
-                    if is_blocked {
+                    let blocked = transitions
+                        .iter()
+                        .all(|transition| !self.is_transition_enabled(node, *transition));
+                    if blocked {
                         current_blocked.insert(lock);
                     }
                 }
@@ -221,166 +197,69 @@ impl<'a> DeadlockDetector<'a> {
         }
     }
 
-    fn is_deadlock_cycle(&self, cycle: &[NodeIndex]) -> bool {
-        let has_terminal_state = cycle.iter().any(|&node| {
-            if let Some(state) = self.state_graph.graph.node_weight(node) {
-                state.mark.iter().any(|(idx, _)| {
-                    if let Some(PetriNetNode::P(place)) = self
-                        .state_graph
-                        .initial_net
-                        .borrow()
-                        .node_weight(node_index(*idx))
-                    {
-                        place.name.contains("main_end")
-                    } else {
-                        false
-                    }
-                })
-            } else {
-                false
-            }
-        });
+    fn collect_lock_transitions(&self) -> HashMap<usize, Vec<TransitionId>> {
+        let mut lock_transitions: HashMap<usize, Vec<TransitionId>> = HashMap::new();
 
-        if has_terminal_state {
-            return false;
-        }
-
-        let lock_transitions = self.collect_lock_transitions();
-        let mut consistently_blocked = HashSet::new();
-
-        if let Some(&first_node) = cycle.first() {
-            for (lock, transitions) in &lock_transitions {
-                let mut is_blocked = true;
-                for &trans in transitions {
-                    if self.is_transition_enabled(first_node, trans) {
-                        is_blocked = false;
-                        break;
-                    }
+        for edge in self.state_graph.graph.edge_weights() {
+            match &edge.transition.transition_type {
+                TransitionType::Lock(lock_id)
+                | TransitionType::RwLockWrite(lock_id)
+                | TransitionType::RwLockRead(lock_id) => {
+                    lock_transitions
+                        .entry(*lock_id)
+                        .or_default()
+                        .push(edge.transition.id);
                 }
-                if is_blocked {
-                    consistently_blocked.insert(*lock);
-                }
+                _ => {}
             }
         }
 
-        for &node in &cycle[1..] {
-            let mut current_blocked = HashSet::new();
-            for &lock in &consistently_blocked {
-                if let Some(transitions) = lock_transitions.get(&lock) {
-                    let mut is_blocked = true;
-                    for &trans in transitions {
-                        if self.is_transition_enabled(node, trans) {
-                            is_blocked = false;
-                            break;
-                        }
-                    }
-                    if is_blocked {
-                        current_blocked.insert(lock);
-                    }
-                }
-            }
-            consistently_blocked = consistently_blocked
-                .intersection(&current_blocked)
-                .cloned()
-                .collect();
-
-            if consistently_blocked.is_empty() {
-                return false;
-            }
-        }
-
-        let is_stable = cycle.iter().all(|&node| {
-            self.state_graph
-                .graph
-                .edges(node)
-                .all(|edge| cycle.contains(&edge.target()))
-        });
-
-        !consistently_blocked.is_empty() && is_stable
-    }
-
-    fn collect_lock_transitions(&self) -> HashMap<NodeIndex, Vec<NodeIndex>> {
-        let mut lock_transitions = HashMap::new();
-
-        for node in self.state_graph.initial_net.borrow().node_indices() {
-            if let PetriNetNode::T(transition) = &self.state_graph.initial_net.borrow()[node] {
-                match &transition.transition_type {
-                    ControlType::Call(CallType::Lock(lock_place))
-                    | ControlType::Call(CallType::RwLockWrite(lock_place))
-                    | ControlType::Call(CallType::RwLockRead(lock_place)) => {
-                        lock_transitions
-                            .entry(*lock_place)
-                            .or_insert_with(Vec::new)
-                            .push(node);
-                    }
-                    _ => {}
-                }
-            }
+        for transitions in lock_transitions.values_mut() {
+            transitions.sort_unstable_by_key(|id| id.index());
+            transitions.dedup_by_key(|id| id.index());
         }
 
         lock_transitions
     }
 
-    fn is_transition_enabled(&self, state: NodeIndex, transition: NodeIndex) -> bool {
-        if let Some(state_node) = self.state_graph.graph.node_weight(state) {
-            for edge in self
-                .state_graph
-                .initial_net
-                .borrow()
-                .edges_directed(transition, petgraph::Direction::Incoming)
-            {
-                if let Some(PetriNetNode::P(_)) = self
-                    .state_graph
-                    .initial_net
-                    .borrow()
-                    .node_weight(edge.source())
-                {
-                    let required_tokens = edge.weight().label;
-                    let available_tokens = state_node
-                        .mark
-                        .iter()
-                        .find(|(idx, _)| *idx == edge.source().index())
-                        .map(|(_, tokens)| *tokens)
-                        .unwrap_or(0);
-
-                    if available_tokens < required_tokens {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }
-        false
+    fn is_transition_enabled(&self, state: NodeIndex, transition_id: TransitionId) -> bool {
+        let state_node = self.state_graph.node(state);
+        state_node
+            .enabled
+            .iter()
+            .any(|summary| summary.id == transition_id)
     }
 
-    fn format_deadlock_state(&self, mark: &[(usize, u8)]) -> DeadlockState {
-        let marking: Vec<(String, u8)> = mark
+    fn format_deadlock_state(&self, node: NodeIndex) -> DeadlockState {
+        let state = self.state_graph.node(node);
+        let marking: Vec<(String, u8)> = state
+            .marking
             .iter()
-            .filter_map(|(idx, tokens)| {
-                if let Some(PetriNetNode::P(place)) = self
-                    .state_graph
-                    .initial_net
-                    .borrow()
-                    .node_weight(node_index(*idx))
-                {
-                    Some((format!("{} ({})", place.name, place.span), *tokens))
-                } else {
-                    None
+            .filter_map(|(place_id, tokens)| {
+                if *tokens == 0 {
+                    return None;
                 }
+                let description = state
+                    .places
+                    .iter()
+                    .find(|p| p.place == place_id)
+                    .map(|p| format!("{} ({})", p.name, p.span))
+                    .unwrap_or_else(|| format!("place#{}", place_id.index()));
+                Some((description, (*tokens).min(u8::MAX as u64) as u8))
             })
             .collect();
 
         DeadlockState {
-            state_id: format!("s{}", mark.iter().map(|(i, _)| i).sum::<usize>()),
+            state_id: format!("s{}", state.index),
             marking,
             description: "Deadlock state with blocked resources".to_string(),
         }
     }
 
-    fn create_deadlock_trace(&self, deadlock_state: &[(usize, u8)]) -> DeadlockTrace {
+    fn create_deadlock_trace(&self, node: NodeIndex) -> DeadlockTrace {
         DeadlockTrace {
             steps: vec!["Path reconstruction not implemented yet".to_string()],
-            final_state: Some(self.format_deadlock_state(deadlock_state)),
+            final_state: Some(self.format_deadlock_state(node)),
         }
     }
 
@@ -390,5 +269,64 @@ impl<'a> DeadlockDetector<'a> {
             total_transitions: self.state_graph.graph.edge_count(),
             reachable_states: self.state_graph.graph.node_count(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::reachability::StateGraph;
+    use crate::net::structure::{Place, PlaceType, Transition};
+    use crate::net::Net;
+
+    fn build_deadlock_net() -> Net {
+        let mut net = Net::empty();
+        let start = net.add_place(Place::new(
+            "start",
+            1,
+            1,
+            PlaceType::BasicBlock,
+            "deadlock.rs:1:1".into(),
+        ));
+        let progress = net.add_place(Place::new(
+            "progress",
+            0,
+            1,
+            PlaceType::BasicBlock,
+            "deadlock.rs:5:1".into(),
+        ));
+        let sink = net.add_place(Place::new(
+            "blocked",
+            0,
+            1,
+            PlaceType::BasicBlock,
+            "deadlock.rs:9:1".into(),
+        ));
+
+        let loop_transition = net.add_transition(Transition::new("loop"));
+        let block_transition = net.add_transition(Transition::new("block"));
+
+        net.set_input_weight(start, loop_transition, 1);
+        net.set_output_weight(progress, loop_transition, 1);
+
+        net.set_input_weight(progress, loop_transition, 1);
+        net.set_output_weight(progress, loop_transition, 1);
+
+        net.set_input_weight(start, block_transition, 1);
+        net.set_output_weight(sink, block_transition, 1);
+
+        net
+    }
+
+    #[test]
+    fn detect_simple_deadlock() {
+        let net = build_deadlock_net();
+        let state_graph = StateGraph::from_net(&net);
+        let detector = DeadlockDetector::new(&state_graph);
+        let report = detector.detect();
+
+        assert!(report.has_deadlock, "Expected deadlock to be detected");
+        assert!(report.deadlock_count >= 1);
+        assert!(!report.deadlock_states.is_empty());
     }
 }

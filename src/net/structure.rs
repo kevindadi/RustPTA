@@ -1,4 +1,4 @@
-//! P/T 网静态结构元素：库所、迁移、弧与标识。
+//! P/T 网静态结构元素:库所、迁移、弧与标识.
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;

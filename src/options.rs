@@ -17,7 +17,7 @@ impl Default for CrateNameList {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DetectorKind {
     All,

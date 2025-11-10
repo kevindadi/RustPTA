@@ -1,11 +1,11 @@
-//! 强类型索引向量实现，确保以标识符安全访问顺序容器。
+//! 强类型索引向量实现,确保以标识符安全访问顺序容器.
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Trait implemented by identifier types that can index into [`IndexVec`].
+/// Trait implemented by identifier types that can index into [ IndexVec ].
 pub trait Idx: Copy + Eq + PartialEq + Ord + fmt::Debug {
     fn index(self) -> usize;
     fn from_usize(idx: usize) -> Self;

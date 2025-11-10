@@ -2,10 +2,10 @@
 #![feature(box_patterns)]
 #![warn(non_snake_case)]
 
+pub mod analysis;
 pub mod callback;
 pub mod concurrency;
-pub mod analysis;
-// pub mod detect;
+pub mod detect;
 pub mod memory;
 pub mod net;
 pub mod options;
