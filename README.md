@@ -1,16 +1,34 @@
-```bash
- sudo apt-get install gcc g++ clang llvm
-```
+# 🧠 Petri Net-based Analysis Tool for Rust Programs
+
+This repository provides an analysis tool based on **Petri Nets** for Rust programs, supporting multiple modes such as deadlock detection, data race detection, and memory safety analysis.
+
+---
+
+## 📄 Paper
+
+This repository accompanies the paper:
+
+**"Rust-PN: Petri Net-based Static Analysis for Rust Programs"**  
+[arXiv:2212.02754](https://arxiv.org/abs/2212.02754)
+
+> The paper is currently under review.
+
+---
+
+## ⚙️ Installation
 
 ```bash
- rustup component add rust-src
- rustup component add rustc-dev
- rustup component add llvm-tools-preview
- cargo install --path .
+sudo apt-get install gcc g++ clang llvm
+rustup component add rust-src rustc-dev llvm-tools-preview
+cargo install --path .
 ```
 
-`cd path/to/your/rust/project; cargo clean;`
 
+## 🧩 Usage
+
+```bash
+cd path/to/your/rust/project; cargo clean;
+```
 ```c
 const CARGO_PN_HELP: &str = r#"Petri Net-based Analysis Tool for Rust Programs
 
