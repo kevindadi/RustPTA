@@ -33,8 +33,8 @@ use std::{
 
 #[derive(Default)]
 struct BasicBlockGraph {
-    start_places: HashMap<BasicBlock, PlaceId>,
-    sequences: HashMap<BasicBlock, Vec<PlaceId>>,
+    start_places: HashMap<BasicBlock, PlaceId>, // 每个基本块的起始库所,标识进入此块的指令指针
+    sequences: HashMap<BasicBlock, Vec<PlaceId>>, // 每个基本块的指令序列,标识此块内的指令顺序
 }
 
 impl BasicBlockGraph {
@@ -823,7 +823,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return true;
         } else if callee_func_name.contains("::compare_exchange") {
             // FIXME: add new petri net model for atomic compare_exchange
-            // self.handle_atomic_compare_exchange(args, bb_end, target, bb_idx, span)
+            // FIXME: CAS and fetchxx api exist atomic violation???
             false
         } else {
             false
@@ -891,93 +891,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 )
             },
         )
-    }
-
-    fn handle_atomic_compare_exchange(
-        &mut self,
-        args: &[Spanned<Operand<'tcx>>],
-        bb_end: TransitionId,
-        target: &Option<BasicBlock>,
-        bb_idx: &BasicBlock,
-        span: &str,
-    ) -> bool {
-        let current_id = AliasId::new(
-            self.instance_id,
-            args.first().unwrap().node.place().unwrap().local,
-        );
-
-        for (atomic_id, place_id) in self.resources.atomic_places().iter() {
-            if !matches!(
-                self.alias
-                    .borrow_mut()
-                    .alias(current_id.into(), (*atomic_id).into()),
-                ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably
-            ) {
-                continue;
-            }
-
-            log::info!("atomic compare_exchange: {:?}", atomic_id);
-
-            let atomic_cmpxchg_place = Place::new(
-                format!(
-                    "atomic_cmpxchg_in_{:?}_{:?}",
-                    current_id.instance_id.index(),
-                    bb_idx.index()
-                ),
-                0,
-                1,
-                PlaceType::BasicBlock,
-                span.to_string(),
-            );
-            let atomic_cmpxchg_place_node = self.net.add_place(atomic_cmpxchg_place);
-            self.net.add_input_arc(atomic_cmpxchg_place_node, bb_end, 1);
-
-            if let (Some(success_order), Some(failure_order)) = (
-                self.resources.atomic_orders().get(&current_id),
-                self.resources.atomic_orders().get(&AliasId::new(
-                    self.instance_id,
-                    args.get(1).unwrap().node.place().unwrap().local,
-                )),
-            ) {
-                let atomic_cmpxchg_transition = Transition::new_with_transition_type(
-                    format!(
-                        "atomic_{:?}_cmpxchg_{:?}_{:?}",
-                        self.instance_id.index(),
-                        success_order,
-                        bb_idx.index()
-                    ),
-                    TransitionType::AtomicCmpXchg(
-                        (*atomic_id).into(),
-                        success_order.clone(),
-                        failure_order.clone(),
-                        span.to_string(),
-                        self.instance_id.index(),
-                    ),
-                );
-                let atomic_cmpxchg_transition_node =
-                    self.net.add_transition(atomic_cmpxchg_transition);
-
-                self.net.add_output_arc(
-                    atomic_cmpxchg_place_node,
-                    atomic_cmpxchg_transition_node,
-                    1,
-                );
-                self.net
-                    .add_input_arc(*place_id, atomic_cmpxchg_transition_node, 1);
-                self.net
-                    .add_output_arc(*place_id, atomic_cmpxchg_transition_node, 1);
-
-                if let Some(t) = target {
-                    self.net.add_input_arc(
-                        self.bb_graph.start(*t),
-                        atomic_cmpxchg_transition_node,
-                        1,
-                    );
-                }
-            }
-            return true;
-        }
-        false
     }
 
     fn handle_condvar_call(
@@ -1464,7 +1377,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
             || fn_name.contains("::visit_seq")
             || fn_name.contains("::visit_map")
         {
-            log::debug!("Skipping serialization function: {}", fn_name);
+            log::warn!("Skipping serialization function: {}", fn_name);
             return;
         }
 

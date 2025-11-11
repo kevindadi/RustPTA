@@ -69,7 +69,7 @@ impl fmt::Display for DeadlockReport {
 
         if self.has_deadlock {
             write_section(f, "死锁详情")?;
-            writeln!(f, "共发现 {} 个死锁状态。", self.deadlock_count)?;
+            writeln!(f, "共发现 {} 个死锁状态.", self.deadlock_count)?;
             for (i, state) in self.deadlock_states.iter().enumerate() {
                 writeln!(f, "\n  [{}] 状态ID   : {}", i + 1, state.state_id)?;
                 writeln!(f, "      描述     : {}", state.description)?;
@@ -168,7 +168,7 @@ impl fmt::Display for AtomicReport {
 
         if self.has_violation {
             write_section(f, "违背详情")?;
-            writeln!(f, "共发现 {} 个原子性违背模式。", self.violation_count)?;
+            writeln!(f, "共发现 {} 个原子性违背模式.", self.violation_count)?;
             for (i, pattern) in self.violations.iter().enumerate() {
                 writeln!(f, "\n  [{}] Load 操作  : {} @ {} ({})",
                     i + 1,
@@ -269,7 +269,7 @@ impl fmt::Display for RaceReport {
 
         if self.has_race {
             write_section(f, "竞争详情")?;
-            writeln!(f, "共发现 {} 个数据竞争。", self.race_count)?;
+            writeln!(f, "共发现 {} 个数据竞争.", self.race_count)?;
             for (i, race) in self.race_conditions.iter().enumerate() {
                 writeln!(f, "\n  [{}] 变量信息 : {}", i + 1, race.variable_info)?;
                 writeln!(f, "      相关操作 :")?;
