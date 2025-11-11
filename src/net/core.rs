@@ -1,5 +1,7 @@
 //! 运行时: 可发生集、发生语义与冲突检测定义.
-use std::fmt;
+use std::fmt::{self, Write as FmtWrite};
+use std::fs;
+use std::path::Path;
 
 use thiserror::Error;
 
@@ -147,6 +149,7 @@ impl Net {
         self.post.set(place, transition, weight);
     }
 
+    /// 输入弧： place -> transition   weight: 1    
     pub fn add_input_arc(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         if weight == 0 {
             return;
@@ -155,6 +158,7 @@ impl Net {
         *entry += weight;
     }
 
+    /// 输出弧： transition -> place   weight: 1    
     pub fn add_output_arc(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         if weight == 0 {
             return;
@@ -225,6 +229,91 @@ impl Net {
 
     pub fn c_matrix(&self) -> Incidence<i64> {
         self.post.difference(&self.pre)
+    }
+
+    pub fn to_dot(&self) -> String {
+        let mut dot = String::new();
+        let _ = writeln!(&mut dot, "digraph PetriNet {{");
+        let _ = writeln!(&mut dot, "    rankdir=LR;");
+        let _ = writeln!(&mut dot, "    node [fontname=\"Helvetica\"];");
+
+        for (place_id, place) in self.places.iter_enumerated() {
+            let node_id = format!("place_{}", place_id.index());
+            let label = format!(
+                "{}\\n{:?}\\n{}/{}",
+                escape_label(&place.name),
+                place.place_type,
+                place.tokens,
+                place.capacity
+            );
+            let _ = writeln!(
+                &mut dot,
+                "    {} [label=\"{}\", shape=circle, style=filled, fillcolor=\"#e3f2fd\"];",
+                node_id, label
+            );
+        }
+
+        for (transition_id, transition) in self.transitions.iter_enumerated() {
+            let node_id = format!("trans_{}", transition_id.index());
+            let label = format!(
+                "{}\\n{:?}",
+                escape_label(&transition.name),
+                transition.transition_type
+            );
+            let _ = writeln!(
+                &mut dot,
+                "    {} [label=\"{}\", shape=box, style=filled, fillcolor=\"#ffe0b2\"];",
+                node_id, label
+            );
+        }
+
+        for (place_id, row) in self.pre.rows().iter_enumerated() {
+            let place_node = format!("place_{}", place_id.index());
+            for (idx, weight) in row.iter().enumerate() {
+                if *weight == 0 {
+                    continue;
+                }
+                let transition_node = format!("trans_{}", idx);
+                if *weight == 1 {
+                    let _ = writeln!(&mut dot, "    {} -> {};", place_node, transition_node);
+                } else {
+                    let _ = writeln!(
+                        &mut dot,
+                        "    {} -> {} [label=\"{}\"];",
+                        place_node, transition_node, weight
+                    );
+                }
+            }
+        }
+
+        for (place_id, row) in self.post.rows().iter_enumerated() {
+            let place_node = format!("place_{}", place_id.index());
+            for (idx, weight) in row.iter().enumerate() {
+                if *weight == 0 {
+                    continue;
+                }
+                let transition_node = format!("trans_{}", idx);
+                if *weight == 1 {
+                    let _ = writeln!(&mut dot, "    {} -> {};", transition_node, place_node);
+                } else {
+                    let _ = writeln!(
+                        &mut dot,
+                        "    {} -> {} [label=\"{}\"];",
+                        transition_node, place_node, weight
+                    );
+                }
+            }
+        }
+
+        let _ = writeln!(&mut dot, "}}");
+        dot
+    }
+
+    pub fn write_dot<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
+        if let Some(parent) = path.as_ref().parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, self.to_dot())
     }
 
     pub fn enabled_transitions(&self, marking: &Marking) -> Vec<TransitionId> {
@@ -338,6 +427,19 @@ impl Default for Net {
     fn default() -> Self {
         Self::empty()
     }
+}
+
+fn escape_label(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 #[cfg(feature = "invariants")]
