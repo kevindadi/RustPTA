@@ -1,12 +1,12 @@
+use crate::net::Net;
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::structure::{Marking, Place, PlaceType, Transition, TransitionType};
-use crate::net::Net;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::fs;
 use std::path::Path;
 

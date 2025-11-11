@@ -1,11 +1,11 @@
 use libc::pid_t;
+use nom::IResult;
+use nom::Parser;
 use nom::bytes::streaming::tag;
 use nom::character::complete::digit1;
 use nom::combinator::map_res;
 use nom::multi::count;
 use nom::sequence::terminated;
-use nom::IResult;
-use nom::Parser;
 use std::io::{Error, ErrorKind, Result};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -62,15 +62,17 @@ impl MemoryWatcher {
             return;
         }
         let max_resident = self.max_resident.clone();
-        self.handle = Some(thread::spawn(move || loop {
-            if let Ok(statm) = statm_self() {
-                let mut max_rss = max_resident.lock().unwrap();
-                if statm.resident > *max_rss {
-                    *max_rss = statm.resident;
+        self.handle = Some(thread::spawn(move || {
+            loop {
+                if let Ok(statm) = statm_self() {
+                    let mut max_rss = max_resident.lock().unwrap();
+                    if statm.resident > *max_rss {
+                        *max_rss = statm.resident;
+                    }
                 }
-            }
 
-            thread::sleep(std::time::Duration::from_millis(100));
+                thread::sleep(std::time::Duration::from_millis(100));
+            }
         }));
     }
 

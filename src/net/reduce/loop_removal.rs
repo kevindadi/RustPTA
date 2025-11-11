@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::structure::PlaceType;
 
-use super::graph::ReductionGraph;
 use super::ReductionStep;
+use super::graph::ReductionGraph;
 
 impl ReductionGraph {
     /// # 约简规则:简单环消除(Simple Loop Removal)

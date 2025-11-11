@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+use crate::net::Net;
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::index_vec::IndexVec;
-use crate::net::Net;
 
 mod graph;
 mod intermediate_place;

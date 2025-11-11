@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::StatementKind;
 use rustc_middle::mir::{
-    visit::Visitor, Body, Local, Location, Operand, Terminator, TerminatorKind,
+    Body, Local, Location, Operand, Terminator, TerminatorKind, visit::Visitor,
 };
 use rustc_middle::ty::{self, GenericArg, Instance, List, Ty, TyCtxt, TyKind};
 use serde_json::json;

@@ -7,7 +7,7 @@ use crate::net::structure::TransitionType;
 use crate::report::{AtomicOperation, AtomicReport, AtomicViolation, ViolationPattern};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use petgraph::{stable_graph::StableGraph, Direction};
+use petgraph::{Direction, stable_graph::StableGraph};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -218,8 +218,8 @@ mod tests {
     use super::*;
     use crate::analysis::reachability::StateGraph;
     use crate::concurrency::atomic::AtomicOrdering;
-    use crate::net::structure::{Place, PlaceType, Transition, TransitionType};
     use crate::net::Net;
+    use crate::net::structure::{Place, PlaceType, Transition, TransitionType};
     use petgraph::graph::NodeIndex;
     use rustc_middle::mir::Local;
 

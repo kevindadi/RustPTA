@@ -1,3 +1,4 @@
+use crate::Options;
 use crate::concurrency::atomic::AtomicCollector;
 use crate::concurrency::channel::{ChannelCollector, ChannelInfo, EndpointType};
 use crate::memory::pointsto::AliasId;
@@ -5,7 +6,6 @@ use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::net::structure::PlaceType;
 use crate::translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry};
 use crate::util::format_name;
-use crate::Options;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 

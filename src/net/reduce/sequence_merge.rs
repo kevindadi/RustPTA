@@ -1,8 +1,8 @@
 use crate::net::ids::PlaceId;
 use crate::net::structure::{PlaceType, TransitionType};
 
-use super::graph::{GraphTransition, ReductionGraph};
 use super::ReductionStep;
+use super::graph::{GraphTransition, ReductionGraph};
 
 impl ReductionGraph {
     /// # 约简规则:线性序列合并(Sequence Merge)

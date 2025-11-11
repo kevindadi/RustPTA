@@ -23,11 +23,7 @@ fn write_section(f: &mut fmt::Formatter<'_>, title: &str) -> fmt::Result {
 }
 
 fn bool_text(value: bool) -> &'static str {
-    if value {
-        "是"
-    } else {
-        "否"
-    }
+    if value { "是" } else { "否" }
 }
 
 fn format_duration(duration: Duration) -> String {

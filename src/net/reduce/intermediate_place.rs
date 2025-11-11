@@ -1,7 +1,7 @@
 use crate::net::structure::{PlaceType, TransitionType};
 
-use super::graph::{GraphTransition, ReductionGraph};
 use super::ReductionStep;
+use super::graph::{GraphTransition, ReductionGraph};
 
 impl ReductionGraph {
     /// # 约简规则:中间库所消除(Intermediate Place Elimination)

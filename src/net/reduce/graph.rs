@@ -1,8 +1,8 @@
+use crate::net::Net;
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::incidence::Incidence;
 use crate::net::index_vec::{Idx, IndexVec};
 use crate::net::structure::{Place, Transition, TransitionType, Weight};
-use crate::net::Net;
 
 use super::ReductionTrace;
 
