@@ -388,12 +388,10 @@ impl StateGraph {
         }
     }
 
-    /// 按 NodeIndex 访问节点.
     pub fn node(&self, index: NodeIndex) -> &StateNode {
         &self.graph[index]
     }
 
-    /// 快速判断某个标识是否已被探索.
     pub fn contains_marking(&self, marking: &Marking) -> bool {
         self.markings.contains_key(marking)
     }
