@@ -1,15 +1,13 @@
-use crate::graph::callgraph::InstanceId;
-use crate::graph::net_structure::{CallType, ControlType, PetriNetEdge, PetriNetNode};
-use crate::graph::state_graph::{StateEdge, StateGraph, StateNode};
+use crate::analysis::reachability::{StateEdge, StateGraph, StateNode};
 use crate::memory::pointsto::AliasId;
+use crate::net::ids::TransitionId;
+use crate::net::index_vec::Idx;
+use crate::net::structure::TransitionType;
 use crate::report::{AtomicOperation, AtomicReport, AtomicViolation, ViolationPattern};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use petgraph::{Direction, Graph};
-use std::cell::RefCell;
+use petgraph::{stable_graph::StableGraph, Direction};
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
-use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 pub struct AtomicityViolationDetector<'a> {
@@ -21,7 +19,7 @@ struct AtomicOp {
     var_id: AliasId,
     ordering: String,
     span: String,
-    thread_id: InstanceId,
+    thread_id: usize,
 }
 
 impl<'a> AtomicityViolationDetector<'a> {
@@ -35,10 +33,7 @@ impl<'a> AtomicityViolationDetector<'a> {
 
         let (loads, stores) = self.collect_atomic_operations();
 
-        let graph = Arc::new(RwLock::new(self.state_graph.graph.clone()));
-
-        let violations =
-            self.check_violations(loads, stores, &graph, self.state_graph.initial_net.clone());
+        let violations = self.check_violations(loads, stores);
 
         if !violations.is_empty() {
             report.has_violation = true;
@@ -50,69 +45,36 @@ impl<'a> AtomicityViolationDetector<'a> {
         report
     }
 
-    pub fn generate_atomic_races(&self) -> String {
-        let mut report = String::new();
-        report.push_str("Found Atomic Race Conditions:\n\n");
-
-        for (i, info) in self.state_graph.atomic_races.iter().enumerate() {
-            report.push_str(&format!("Race Condition #{}\n", i + 1));
-            report.push_str(&format!("State: {:?}\n", info.state));
-            report.push_str("Conflicting Operations:\n");
-
-            for op in &info.operations {
-                report.push_str(&format!(
-                    "- {} operation at {}, ordering: {}\n",
-                    match op.op_type {
-                        AtomicOpType::Load => "Load",
-                        AtomicOpType::Store => "Store",
-                    },
-                    op.span,
-                    op.ordering
-                ));
-            }
-            report.push_str("\n");
-        }
-
-        report
-    }
-
     fn collect_atomic_operations(
         &self,
-    ) -> (HashMap<NodeIndex, AtomicOp>, HashMap<NodeIndex, AtomicOp>) {
+    ) -> (
+        HashMap<TransitionId, AtomicOp>,
+        HashMap<TransitionId, AtomicOp>,
+    ) {
         let mut loads = HashMap::new();
         let mut stores = HashMap::new();
 
-        for node_idx in self.state_graph.initial_net.borrow().node_indices() {
-            if let Some(PetriNetNode::T(t)) =
-                self.state_graph.initial_net.borrow().node_weight(node_idx)
-            {
-                match &t.transition_type {
-                    ControlType::Call(CallType::AtomicLoad(var_id, ordering, span, thread_id)) => {
-                        if format!("{:?}", ordering) == "Relaxed" {
-                            loads.insert(
-                                node_idx,
-                                AtomicOp {
-                                    var_id: var_id.clone(),
-                                    ordering: format!("{:?}", ordering),
-                                    span: span.clone(),
-                                    thread_id: *thread_id,
-                                },
-                            );
-                        }
+        for edge in self.state_graph.graph.edge_weights() {
+            match &edge.transition.transition_type {
+                TransitionType::AtomicLoad(var_id, ordering, span, thread_id) => {
+                    if format!("{ordering:?}") == "Relaxed" {
+                        loads.entry(edge.transition.id).or_insert(AtomicOp {
+                            var_id: var_id.clone(),
+                            ordering: format!("{ordering:?}"),
+                            span: span.clone(),
+                            thread_id: *thread_id,
+                        });
                     }
-                    ControlType::Call(CallType::AtomicStore(var_id, ordering, span, thread_id)) => {
-                        stores.insert(
-                            node_idx,
-                            AtomicOp {
-                                var_id: var_id.clone(),
-                                ordering: format!("{:?}", ordering),
-                                span: span.clone(),
-                                thread_id: *thread_id,
-                            },
-                        );
-                    }
-                    _ => {}
                 }
+                TransitionType::AtomicStore(var_id, ordering, span, thread_id) => {
+                    stores.entry(edge.transition.id).or_insert(AtomicOp {
+                        var_id: var_id.clone(),
+                        ordering: format!("{ordering:?}"),
+                        span: span.clone(),
+                        thread_id: *thread_id,
+                    });
+                }
+                _ => {}
             }
         }
         (loads, stores)
@@ -120,26 +82,19 @@ impl<'a> AtomicityViolationDetector<'a> {
 
     fn check_violations(
         &self,
-        loads: HashMap<NodeIndex, AtomicOp>,
-        stores: HashMap<NodeIndex, AtomicOp>,
-        graph: &Arc<RwLock<Graph<StateNode, StateEdge>>>,
-        initial_net: Rc<RefCell<Graph<PetriNetNode, PetriNetEdge>>>,
+        loads: HashMap<TransitionId, AtomicOp>,
+        stores: HashMap<TransitionId, AtomicOp>,
     ) -> Vec<ViolationPattern> {
         let mut all_violations = Vec::new();
-        let graph = graph.read().unwrap();
-        let initial_net = initial_net.borrow();
+        let graph = &self.state_graph.graph;
 
         for (load_trans, load_op) in loads {
             for state in graph.node_indices() {
                 for edge in graph.edges_directed(state, Direction::Outgoing) {
-                    if edge.weight().transition == load_trans {
-                        if let Some(violation) = Self::check_state_for_violation(
-                            &graph,
-                            &initial_net,
-                            state,
-                            &load_op,
-                            &stores,
-                        ) {
+                    if edge.weight().transition.id == load_trans {
+                        if let Some(violation) =
+                            Self::check_state_for_violation(graph, state, &load_op, &stores)
+                        {
                             all_violations.push(violation);
                         }
                     }
@@ -172,11 +127,10 @@ impl<'a> AtomicityViolationDetector<'a> {
     }
 
     fn check_state_for_violation(
-        graph: &Graph<StateNode, StateEdge>,
-        initial_net: &Graph<PetriNetNode, PetriNetEdge>,
+        graph: &StableGraph<StateNode, StateEdge>,
         load_state: NodeIndex,
         load_op: &AtomicOp,
-        stores: &HashMap<NodeIndex, AtomicOp>,
+        stores: &HashMap<TransitionId, AtomicOp>,
     ) -> Option<AtomicViolation> {
         let mut visited = HashSet::new();
         let mut write_operations = HashSet::new();
@@ -189,13 +143,12 @@ impl<'a> AtomicityViolationDetector<'a> {
 
             for edge in graph.edges_directed(current, Direction::Incoming) {
                 let source = edge.source();
-                let transition = edge.weight().transition;
+                let transition = edge.weight().transition.id;
+                let transition_type = &edge.weight().transition.transition_type;
 
-                if let Some(PetriNetNode::T(t)) = initial_net.node_weight(transition) {
-                    if let ControlType::Start(thread_id) = t.transition_type {
-                        if thread_id == load_op.thread_id {
-                            break;
-                        }
+                if let TransitionType::Start(thread_id) = transition_type {
+                    if *thread_id == load_op.thread_id {
+                        break;
                     }
                 }
 
@@ -228,7 +181,16 @@ impl<'a> AtomicityViolationDetector<'a> {
                     },
                     store_ops: write_operations,
                 },
-                states: graph[load_state].mark.clone(),
+                states: graph[load_state]
+                    .marking
+                    .iter()
+                    .filter_map(|(place_id, tokens)| {
+                        if *tokens == 0 {
+                            return None;
+                        }
+                        Some((place_id.index(), (*tokens).min(u8::MAX as u64) as u8))
+                    })
+                    .collect(),
             })
         } else {
             None
@@ -236,23 +198,57 @@ impl<'a> AtomicityViolationDetector<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AtomicRaceInfo {
-    pub state: Vec<(usize, u8)>,
-    pub operations: Vec<AtomicRaceOperation>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::reachability::StateGraph;
+    use crate::concurrency::atomic::AtomicOrdering;
+    use crate::net::structure::{Place, PlaceType, Transition, TransitionType};
+    use crate::net::Net;
+    use petgraph::graph::NodeIndex;
+    use rustc_middle::mir::Local;
 
-#[derive(Debug, Clone)]
-pub struct AtomicRaceOperation {
-    pub op_type: AtomicOpType,
-    pub transition: NodeIndex,
-    pub var_id: AliasId,
-    pub ordering: String,
-    pub span: String,
-}
+    fn build_atomic_violation_net() -> Net {
+        let mut net = Net::empty();
+        let shared = net.add_place(Place::new(
+            "shared_atomic",
+            1,
+            1,
+            PlaceType::BasicBlock,
+            "atomic.rs:1:1".into(),
+        ));
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AtomicOpType {
-    Load,
-    Store,
+        let alias = AliasId::new(NodeIndex::new(0), Local::from_usize(0));
+
+        let store_a = net.add_transition(Transition::new_with_transition_type(
+            "store_a",
+            TransitionType::AtomicStore(alias, AtomicOrdering::Release, "atomic.rs:10:5".into(), 1),
+        ));
+        let store_b = net.add_transition(Transition::new_with_transition_type(
+            "store_b",
+            TransitionType::AtomicStore(alias, AtomicOrdering::SeqCst, "atomic.rs:12:5".into(), 2),
+        ));
+        let load = net.add_transition(Transition::new_with_transition_type(
+            "load_relaxed",
+            TransitionType::AtomicLoad(alias, AtomicOrdering::Relaxed, "atomic.rs:20:5".into(), 1),
+        ));
+
+        for transition in [store_a, store_b, load] {
+            net.set_input_weight(shared, transition, 1);
+            net.set_output_weight(shared, transition, 1);
+        }
+
+        net
+    }
+
+    #[test]
+    fn detect_atomicity_violation() {
+        let net = build_atomic_violation_net();
+        let state_graph = StateGraph::from_net(&net);
+        let detector = AtomicityViolationDetector::new(&state_graph);
+        let report = detector.detect();
+
+        assert!(report.has_violation, "Expected atomicity violation");
+        assert!(!report.violations.is_empty());
+    }
 }

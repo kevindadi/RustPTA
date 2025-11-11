@@ -28,6 +28,7 @@ pub struct MemoryWatcher {
     init_resident: usize,
     max_resident: Arc<Mutex<usize>>,
     handle: Option<JoinHandle<()>>,
+    enabled: bool,
 }
 
 impl Default for MemoryWatcher {
@@ -36,6 +37,7 @@ impl Default for MemoryWatcher {
             init_resident: 0,
             max_resident: Arc::new(Mutex::new(0)),
             handle: None,
+            enabled: false,
         }
     }
 }
@@ -47,14 +49,18 @@ impl MemoryWatcher {
                 init_resident: statm.resident,
                 max_resident: Arc::new(Mutex::new(0)),
                 handle: None,
+                enabled: true,
             }
         } else {
-            log::error!("Unable to parse the statm file");
+            log::warn!("memory watcher disabled: unable to read process memory statistics");
             MemoryWatcher::default()
         }
     }
 
     pub fn start(&mut self) {
+        if !self.enabled {
+            return;
+        }
         let max_resident = self.max_resident.clone();
         self.handle = Some(thread::spawn(move || loop {
             if let Ok(statm) = statm_self() {
@@ -69,6 +75,9 @@ impl MemoryWatcher {
     }
 
     pub fn stop(&mut self) {
+        if !self.enabled {
+            return;
+        }
         if let Some(handle) = self.handle.take() {
             drop(handle);
         }
@@ -116,10 +125,12 @@ pub fn map_result<T>(result: IResult<&str, T>) -> Result<T> {
     }
 }
 
+#[allow(unused)]
 fn parse_usize(input: &str) -> IResult<&str, usize> {
     map_res(digit1, |s: &str| s.parse::<usize>()).parse(input)
 }
 
+#[allow(unused)]
 fn parse_statm(input: &str) -> IResult<&str, Statm> {
     (count(terminated(parse_usize, tag(" ")), 6), parse_usize)
         .parse(input)
@@ -135,6 +146,7 @@ fn parse_statm(input: &str) -> IResult<&str, Statm> {
         })
 }
 
+#[allow(unused)]
 fn statm_file(file: &mut File) -> Result<Statm> {
     let mut buf = String::new();
     file.read_to_string(&mut buf)
@@ -142,17 +154,72 @@ fn statm_file(file: &mut File) -> Result<Statm> {
     map_result(parse_statm(&buf.trim()))
 }
 
+#[cfg(target_os = "linux")]
 pub fn statm(pid: pid_t) -> Result<Statm> {
     statm_file(&mut File::open(&format!("/proc/{}/statm", pid))?)
 }
 
+#[cfg(target_os = "linux")]
 pub fn statm_self() -> Result<Statm> {
     statm_file(&mut File::open("/proc/self/statm")?)
 }
 
+#[cfg(target_os = "linux")]
 pub fn statm_task(process_id: pid_t, thread_id: pid_t) -> Result<Statm> {
     statm_file(&mut File::open(&format!(
         "/proc/{}/task/{}/statm",
         process_id, thread_id
     ))?)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn statm(_pid: pid_t) -> Result<Statm> {
+    Err(Error::new(
+        ErrorKind::Unsupported,
+        "statm(pid) is only available on Linux",
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn statm_task(_process_id: pid_t, _thread_id: pid_t) -> Result<Statm> {
+    Err(Error::new(
+        ErrorKind::Unsupported,
+        "statm_task is only available on Linux",
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn statm_self() -> Result<Statm> {
+    use std::mem::MaybeUninit;
+
+    let mut usage = MaybeUninit::<libc::rusage>::uninit();
+    let ret = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if ret != 0 {
+        return Err(Error::last_os_error());
+    }
+    let usage = unsafe { usage.assume_init() };
+
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page_size <= 0 {
+        return Err(Error::new(
+            ErrorKind::Other,
+            "unable to determine system page size",
+        ));
+    }
+    let page_size = page_size as usize;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let rss_bytes = usage.ru_maxrss as usize;
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    let rss_bytes = (usage.ru_maxrss as isize * 1024) as usize;
+
+    let resident_pages = rss_bytes / page_size;
+
+    Ok(Statm {
+        size: resident_pages,
+        resident: resident_pages,
+        share: 0,
+        text: 0,
+        data: 0,
+    })
 }

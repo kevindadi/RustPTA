@@ -14,8 +14,8 @@ use rustc_middle::mir::{
 use rustc_middle::ty::{self, GenericArg, Instance, List, Ty, TyCtxt, TyKind};
 use serde_json::json;
 
-use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::pointsto::AliasId;
+use crate::translate::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::util::format_name;
 
 static ATOMIC_PTR_STORE: Lazy<Regex> =
@@ -28,36 +28,6 @@ pub fn is_atomic_ptr_store<'tcx>(
 ) -> bool {
     let path = tcx.def_path_str_with_args(def_id, substs);
     ATOMIC_PTR_STORE.is_match(&path)
-}
-
-macro_rules! is_atomic_api {
-    ($fn_name:expr, "load") => {
-        $fn_name.contains("::load")
-    };
-    ($fn_name:expr, "store") => {
-        $fn_name.contains("::store")
-    };
-    ($fn_name:expr, "compare_exchange") => {
-        $fn_name.contains("::compare_exchange")
-    };
-    ($fn_name:expr, "fetch_add") => {
-        $fn_name.contains("::fetch_add")
-    };
-    ($fn_name:expr, "fetch_sub") => {
-        $fn_name.contains("::fetch_sub")
-    };
-    ($fn_name:expr, "fetch_and") => {
-        $fn_name.contains("::fetch_and")
-    };
-    ($fn_name:expr, "fetch_or") => {
-        $fn_name.contains("::fetch_or")
-    };
-    ($fn_name:expr, "fetch_xor") => {
-        $fn_name.contains("::fetch_xor")
-    };
-    ($fn_name:expr, "swap") => {
-        $fn_name.contains("::swap")
-    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

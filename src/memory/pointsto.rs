@@ -23,31 +23,28 @@ use petgraph::{Directed, Direction, Graph};
 use crate::concurrency::atomic::is_atomic_ptr_store;
 use crate::concurrency::blocking::{CondVarId, LockGuardId};
 use crate::concurrency::channel::ChannelId;
-use crate::graph::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 use crate::memory::ownership;
+use crate::translate::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
 
 pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     pts: PointsToMap<'tcx>,
-
-    pub av: bool,
 }
 
 pub type PointsToMap<'tcx> = FxHashMap<ConstraintNode<'tcx>, FxHashSet<ConstraintNode<'tcx>>>;
 
 impl<'a, 'tcx> Andersen<'a, 'tcx> {
-    pub fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>, av: bool) -> Self {
+    pub fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self {
             body,
             tcx,
             pts: Default::default(),
-            av,
         }
     }
 
     pub fn analyze(&mut self) {
-        let mut collector = ConstraintGraphCollector::new(self.body, self.tcx, self.av);
+        let mut collector = ConstraintGraphCollector::new(self.body, self.tcx);
         collector.visit_body(self.body);
         let mut graph = collector.finish();
         let mut worklist = VecDeque::new();
@@ -246,6 +243,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Load);
     }
 
+    #[allow(dead_code)]
     fn add_store(&mut self, lhs: PlaceRef<'tcx>, rhs: PlaceRef<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Place(rhs);
@@ -254,6 +252,7 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Store);
     }
 
+    #[allow(dead_code)]
     fn add_store_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: Const<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Constant(rhs);
@@ -380,22 +379,20 @@ struct ConstraintGraphCollector<'a, 'tcx> {
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     graph: ConstraintGraph<'tcx>,
-    av: bool,
 }
 
 impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
-    fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>, av: bool) -> Self {
+    fn new(body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self {
             body,
             tcx,
             graph: ConstraintGraph::default(),
-            av,
         }
     }
 
     fn process_assignment(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>) {
         let lhs_pattern = Self::process_place(place.as_ref());
-        let rhs_patterns = Self::process_rvalue(rvalue, self.av);
+        let rhs_patterns = Self::process_rvalue(rvalue);
 
         if let Rvalue::Aggregate(box AggregateKind::Closure(_def_id, _args), fields) = rvalue {
             let upvar_tys = _args.as_closure().upvar_tys();
@@ -440,7 +437,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     self.graph.add_load(*lhs, rhs);
                 }
 
-                (AccessPattern::Indirect(lhs), Some(AccessPattern::Direct(rhs))) => {}
+                (AccessPattern::Indirect(_), Some(AccessPattern::Direct(_))) => {}
 
                 (AccessPattern::Indirect(lhs), Some(AccessPattern::Constant(rhs))) => {
                     self.graph.add_store_constant(*lhs, rhs);
@@ -476,7 +473,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         }
     }
 
-    fn process_rvalue(rvalue: &Rvalue<'tcx>, av: bool) -> Vec<Option<AccessPattern<'tcx>>> {
+    fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Vec<Option<AccessPattern<'tcx>>> {
         match rvalue {
             Rvalue::Use(operand)
             | Rvalue::Repeat(operand, _)
@@ -714,16 +711,14 @@ pub struct AliasAnalysis<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     callgraph: &'a CallGraph<'tcx>,
     pts: FxHashMap<DefId, PointsToMap<'tcx>>,
-    av: bool,
 }
 
 impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, callgraph: &'a CallGraph<'tcx>, av: bool) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, callgraph: &'a CallGraph<'tcx>) -> Self {
         Self {
             tcx,
             callgraph,
             pts: Default::default(),
-            av,
         }
     }
 
@@ -1022,7 +1017,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         if self.pts.contains_key(&def_id) {
             self.pts.get(&def_id).unwrap()
         } else {
-            let mut pointer_analysis = Andersen::new(body, self.tcx, self.av);
+            let mut pointer_analysis = Andersen::new(body, self.tcx);
             pointer_analysis.analyze();
             let pts = pointer_analysis.finish();
             self.pts.entry(def_id).or_insert(pts)
@@ -1381,6 +1376,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         self.pts.get(&def_id)
     }
 
+    #[allow(dead_code)]
     fn intraproc_points_to(
         &mut self,
         instance: &Instance<'tcx>,

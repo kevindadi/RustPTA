@@ -1,5 +1,5 @@
-use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::pointsto::AliasId;
+use crate::translate::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::util::format_name;
 use petgraph::csr::IndexType;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
@@ -16,9 +16,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct UnsafeBlockInfo {
     pub span: String,
-
     pub block: usize,
-
     pub locations: Vec<String>,
 }
 
@@ -35,22 +33,16 @@ pub enum UnsafeOperation {
 #[derive(Debug, Clone, Serialize)]
 pub struct UnsafePlaceInfo {
     pub local: usize,
-
     pub ty_string: String,
-
     pub span: String,
-
     pub is_param: bool,
-
     pub operations: Vec<UnsafeOperation>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UnsafeInfo {
     pub is_unsafe_fn: bool,
-
     pub unsafe_blocks: Vec<UnsafeBlockInfo>,
-
     pub unsafe_places: FxHashMap<usize, UnsafePlaceInfo>,
 }
 
@@ -101,6 +93,7 @@ impl UnsafeInfo {
 }
 
 struct UnsafeCollector<'a, 'tcx> {
+    #[allow(unused)]
     instance: Instance<'tcx>,
     instance_id: Option<InstanceId>,
     body: &'a Body<'tcx>,
@@ -167,7 +160,7 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
 
     fn check_unsafe_fn(&self) -> bool {
         // TODO: 需要找到新的方法来检查函数是否为 unsafe
-        // 暂时返回 false，因为 hir() 方法在当前版本中不可用
+        // 暂时返回 false,因为 hir() 方法在当前版本中不可用
         false
     }
 
@@ -305,7 +298,7 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafeCollector<'a, 'tcx> {
                     if self.tcx.is_mir_available(*def_id) {
                         if def_id.is_local() {
                             // TODO: 需要找到新的方法来检查函数是否为 unsafe
-                            // 暂时跳过检查，因为 hir() 方法在当前版本中不可用
+                            // 暂时跳过检查,因为 hir() 方法在当前版本中不可用
                             // let hir_id = self.tcx.local_def_id_to_hir_id(def_id.expect_local());
                             // if matches!(
                             //     self.tcx

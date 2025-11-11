@@ -9,8 +9,8 @@ use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::{self, EarlyBinder, Instance, TyCtxt, TyKind, TypingEnv};
 use rustc_span::Span;
 
-use crate::graph::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::memory::pointsto::AliasId;
+use crate::translate::callgraph::{CallGraph, CallGraphNode, InstanceId};
 
 use serde_json::json;
 
