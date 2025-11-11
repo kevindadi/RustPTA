@@ -22,7 +22,7 @@ fn std_rwlock() -> i32 {
             println!("second read ");
         }
         _ => {
-            a = *rw1.read().unwrap();
+            a = *rw1.write().unwrap();
         }
     };
     a

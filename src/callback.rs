@@ -129,18 +129,23 @@ impl PTACallbacks {
         let mut callgraph = CallGraph::new();
         callgraph.analyze(instances.clone(), tcx);
 
-        let mut pn = PetriNet::new(&self.options, tcx, &callgraph);
+        let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
 
         let state_graph = StateGraph::from_net(&pn.net);
 
-        self.handle_visualizations(&callgraph, &state_graph);
+        self.handle_visualizations(&callgraph, &pn, &state_graph);
         self.run_detectors(&state_graph);
 
         mem_watcher.stop();
     }
 
-    fn handle_visualizations<'tcx>(&self, callgraph: &CallGraph<'tcx>, state_graph: &StateGraph) {
+    fn handle_visualizations<'analysis, 'tcx>(
+        &self,
+        callgraph: &CallGraph<'tcx>,
+        pn: &PetriNet<'analysis, 'tcx>,
+        state_graph: &StateGraph,
+    ) {
         let dump = &self.options.dump_options;
 
         if dump.dump_call_graph {
@@ -160,7 +165,11 @@ impl PTACallbacks {
         }
 
         if dump.dump_petri_net {
-            todo!()
+            if let Err(err) = pn.net.write_dot(self.output_directory.join("petrinet.dot")) {
+                error!("failed to write Petri net dot file: {err}");
+            } else {
+                info!("petri net dot exported");
+            }
         }
         if dump.dump_unsafe_info {
             todo!()

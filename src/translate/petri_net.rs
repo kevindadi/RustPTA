@@ -37,19 +37,19 @@ fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y:
     }
 }
 
-pub struct PetriNet<'compilation, 'pn, 'tcx> {
-    options: &'compilation Options,
+pub struct PetriNet<'analysis, 'tcx> {
+    options: Options,
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: Net,
-    callgraph: &'pn CallGraph<'tcx>,
-    pub alias: RefCell<AliasAnalysis<'pn, 'tcx>>,
+    callgraph: &'analysis CallGraph<'tcx>,
+    pub alias: RefCell<AliasAnalysis<'analysis, 'tcx>>,
     functions: FunctionRegistry,
     lock_info: LockGuardMap<'tcx>,
     resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
 }
 
-impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
+impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
     fn create_resource_place(
         &mut self,
         name: String,
@@ -62,9 +62,9 @@ impl<'compilation, 'pn, 'tcx> PetriNet<'compilation, 'pn, 'tcx> {
     }
 
     pub fn new(
-        options: &'compilation Options,
+        options: Options,
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
-        callgraph: &'pn CallGraph<'tcx>,
+        callgraph: &'analysis CallGraph<'tcx>,
     ) -> Self {
         let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
         Self {

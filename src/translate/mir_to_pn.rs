@@ -240,10 +240,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_start = self.net.add_transition(bb_start_transition);
 
         if let Some((func_start, _)) = self.functions_map().get(&def_id).copied() {
-            self.net.add_output_arc(func_start, bb_start, 1);
+            self.net.add_input_arc(func_start, bb_start, 1);
         }
         self.net
-            .add_input_arc(self.bb_graph.start(bb_idx), bb_start, 1);
+            .add_output_arc( self.bb_graph.start(bb_idx), bb_start,1);
     }
 
     fn handle_assert(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
@@ -253,9 +253,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_transition(bb_term_transition);
 
         self.net
-            .add_output_arc(self.bb_graph.last(bb_idx), bb_end, 1);
+            .add_input_arc(self.bb_graph.last(bb_idx), bb_end, 1);
         self.net
-            .add_input_arc(self.bb_graph.start(*target), bb_end, 1);
+            .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
     }
 
     fn handle_terminator(
@@ -313,10 +313,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_transition(bb_term_transition);
 
         self.net
-            .add_output_arc(self.bb_graph.last(bb_idx), bb_end, 1);
+            .add_input_arc(self.bb_graph.last(bb_idx), bb_end, 1);
 
         let target_bb_start = self.bb_graph.start(*target);
-        self.net.add_input_arc(target_bb_start, bb_end, 1);
+        self.net.add_output_arc(target_bb_start, bb_end, 1);
     }
 
     fn handle_switch(&mut self, bb_idx: BasicBlock, targets: &SwitchTargets, name: &str) {
@@ -334,9 +334,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let bb_end = self.net.add_transition(bb_term_transition);
 
             self.net
-                .add_output_arc(self.bb_graph.last(bb_idx), bb_end, 1);
+                .add_input_arc(self.bb_graph.last(bb_idx), bb_end, 1);
             let target_bb_start = self.bb_graph.start(*t);
-            self.net.add_input_arc(target_bb_start, bb_end, 1);
+            self.net.add_output_arc(target_bb_start, bb_end, 1);
         }
     }
 
@@ -359,9 +359,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
 
         self.net
-            .add_output_arc(self.bb_graph.last(bb_idx), self.return_transition, 1);
+            .add_input_arc(self.bb_graph.last(bb_idx), self.return_transition, 1);
         self.net
-            .add_input_arc(return_node, self.return_transition, 1);
+            .add_output_arc(return_node, self.return_transition, 1);
     }
 
     fn create_call_transition(&mut self, bb_idx: BasicBlock, bb_term_name: &str) -> TransitionId {
@@ -372,7 +372,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_transition(bb_term_transition);
 
         self.net
-            .add_output_arc(self.bb_graph.last(bb_idx), bb_end, 1);
+            .add_input_arc(self.bb_graph.last(bb_idx), bb_end, 1);
         bb_end
     }
 
@@ -406,13 +406,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     fn update_lock_transition(&mut self, bb_end: TransitionId, lock_node: &PlaceId) {
-        self.net.add_output_arc(*lock_node, bb_end, 1);
+        self.net.add_input_arc(*lock_node, bb_end, 1);
     }
 
     fn connect_to_target(&mut self, bb_end: TransitionId, target: &Option<BasicBlock>) {
         if let Some(target_bb) = target {
             self.net
-                .add_input_arc(self.bb_graph.start(*target_bb), bb_end, 1);
+                .add_output_arc(self.bb_graph.start(*target_bb), bb_end, 1);
         }
     }
 
@@ -460,17 +460,20 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
             let spawn_def_id = spawn_calls
                 .iter()
-                .find_map(|(def_id, local)| {
-                    let spawn_local_id = AliasId::new(self.instance_id, *local);
-                    match self
+                .find_map(|(destination, callees)| {
+                    let spawn_local_id = AliasId::new(self.instance_id, *destination);
+                    let alias_kind = self
                         .alias
                         .borrow_mut()
-                        .alias(join_id.into(), spawn_local_id.into())
-                    {
-                        ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                            Some(*def_id)
-                        }
-                        _ => None,
+                        .alias(join_id.into(), spawn_local_id.into());
+
+                    if matches!(
+                        alias_kind,
+                        ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
+                    ) {
+                        callees.iter().copied().next()
+                    } else {
+                        None
                     }
                 })
                 .or_else(|| {
@@ -487,7 +490,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
             if let Some(spawn_def_id) = spawn_def_id {
                 if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
-                    self.net.add_output_arc(spawn_end, bb_end, 1);
                     self.net.add_input_arc(spawn_end, bb_end, 1);
                 }
             }
@@ -520,7 +522,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         if let Some((closure_start, closure_end)) =
                             self.functions_map().get(&closure_def_id).copied()
                         {
-                            self.net.add_input_arc(closure_start, bb_end, 1);
+                            self.net.add_output_arc(closure_start, bb_end, 1);
                             self.net
                                 .add_input_arc(closure_end, self.return_transition, 1);
                         }
@@ -534,9 +536,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                             if let Some((closure_start, closure_end)) =
                                 self.functions_map().get(&closure_def_id).copied()
                             {
-                                self.net.add_input_arc(closure_start, bb_end, 1);
+                                self.net.add_output_arc(closure_start, bb_end, 1);
                                 self.net
-                                    .add_output_arc(closure_end, self.return_transition, 1);
+                                    .add_input_arc(closure_end, self.return_transition, 1);
                             }
                         }
                         _ => {
@@ -546,9 +548,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                                 if let Some((closure_start, closure_end)) =
                                     self.functions_map().get(closure_def_id).copied()
                                 {
-                                    self.net.add_input_arc(closure_start, bb_end, 1);
+                                    self.net.add_output_arc(closure_start, bb_end, 1);
                                     self.net
-                                        .add_output_arc(closure_end, self.return_transition, 1);
+                                        .add_input_arc(closure_end, self.return_transition, 1);
                                 }
                             }
                         }
@@ -580,8 +582,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         );
         let bb_join = self.net.add_transition(bb_join_transition);
 
-        self.net.add_input_arc(bb_wait, bb_end, 1);
-        self.net.add_output_arc(bb_wait, bb_join, 1);
+        self.net.add_output_arc(bb_wait, bb_end, 1);
+        self.net.add_input_arc(bb_wait, bb_join, 1);
 
         self.connect_to_target(bb_join, target);
 
@@ -594,8 +596,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     if let Some((closure_start, closure_end)) =
                         self.functions_map().get(&closure_def_id).copied()
                     {
-                        self.net.add_input_arc(closure_start, bb_end, 1);
-                        self.net.add_output_arc(closure_end, bb_join, 1);
+                        self.net.add_output_arc(closure_start, bb_end, 1);
+                        self.net.add_input_arc(closure_end, bb_join, 1);
                     }
                 }
             }
@@ -619,7 +621,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         if let Some((closure_start, _)) =
                             self.functions_map().get(&closure_def_id).copied()
                         {
-                            self.net.add_input_arc(closure_start, bb_end, 1);
+                            self.net.add_output_arc(closure_start, bb_end, 1);
                         }
                     }
                 }
@@ -631,7 +633,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                             if let Some((closure_start, _)) =
                                 self.functions_map().get(&closure_def_id).copied()
                             {
-                                self.net.add_input_arc(closure_start, bb_end, 1);
+                                self.net.add_output_arc(closure_start, bb_end, 1);
                             }
                         }
                         _ => {
@@ -641,7 +643,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                                 if let Some((closure_start, _)) =
                                     self.functions_map().get(closure_def_id).copied()
                                 {
-                                    self.net.add_input_arc(closure_start, bb_end, 1);
+                                    self.net.add_output_arc(closure_start, bb_end, 1);
                                 }
                             }
                         }
@@ -671,17 +673,20 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
             let spawn_def_id = spawn_calls
                 .iter()
-                .find_map(|(def_id, local)| {
-                    let spawn_local_id = AliasId::new(self.instance_id, *local);
-                    match self
+                .find_map(|(destination, callees)| {
+                    let spawn_local_id = AliasId::new(self.instance_id, *destination);
+                    let alias_kind = self
                         .alias
                         .borrow_mut()
-                        .alias(join_id.into(), spawn_local_id.into())
-                    {
-                        ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                            Some(*def_id)
-                        }
-                        _ => None,
+                        .alias(join_id.into(), spawn_local_id.into());
+
+                    if matches!(
+                        alias_kind,
+                        ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
+                    ) {
+                        callees.iter().copied().next()
+                    } else {
+                        None
                     }
                 })
                 .or_else(|| {
@@ -696,7 +701,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 transition.transition_type = TransitionType::Join(callee_func_name.to_string());
             }
 
-            self.net.add_output_arc(
+            self.net.add_input_arc(
                 self.functions_map().get(&spawn_def_id.unwrap()).unwrap().1,
                 bb_end,
                 1,
@@ -727,14 +732,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 Transition::new_with_transition_type(bb_ret_name, TransitionType::Function);
             let bb_ret = self.net.add_transition(bb_ret_transition);
 
-            self.net.add_input_arc(bb_wait, bb_end, 1);
-            self.net.add_output_arc(bb_wait, bb_ret, 1);
-            self.net.add_input_arc(callee_start, bb_end, 1);
+            self.net.add_output_arc(bb_wait, bb_end, 1);
+            self.net.add_input_arc(bb_wait, bb_ret, 1);
+            self.net.add_output_arc(callee_start, bb_end, 1);
             match target {
                 Some(return_block) => {
-                    self.net.add_output_arc(callee_end, bb_ret, 1);
+                    self.net.add_input_arc(callee_end, bb_ret, 1);
                     self.net
-                        .add_input_arc(self.bb_graph.start(*return_block), bb_ret, 1);
+                        .add_output_arc(self.bb_graph.start(*return_block), bb_ret, 1);
                 }
                 _ => {}
             }
@@ -769,13 +774,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                                 );
                                 let bb_ret = self.net.add_transition(bb_ret_transition);
 
-                                self.net.add_input_arc(bb_wait, bb_end, 1);
-                                self.net.add_output_arc(bb_wait, bb_ret, 1);
-                                self.net.add_input_arc(callee_start, bb_end, 1);
+                                self.net.add_output_arc(bb_wait, bb_end, 1);
+                                self.net.add_input_arc(bb_wait, bb_ret, 1);
+                                self.net.add_output_arc(callee_start, bb_end, 1);
                                 match target {
                                     Some(return_block) => {
-                                        self.net.add_output_arc(callee_end, bb_ret, 1);
-                                        self.net.add_input_arc(
+                                        self.net.add_input_arc(callee_end, bb_ret, 1);
+                                        self.net.add_output_arc(
                                             self.bb_graph.start(*return_block),
                                             bb_ret,
                                             1,
@@ -817,7 +822,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             return true;
         } else if callee_func_name.contains("::compare_exchange") {
-            self.handle_atomic_compare_exchange(args, bb_end, target, bb_idx, span)
+            // FIXME: add new petri net model for atomic compare_exchange
+            // self.handle_atomic_compare_exchange(args, bb_end, target, bb_idx, span)
+            false
         } else {
             false
         }
@@ -993,7 +1000,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             for (id, node) in self.resources.condvars().iter() {
                 match self.alias.borrow_mut().alias_atomic(condvar_alias, *id) {
                     ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {
-                        self.net.add_input_arc(*node, bb_end, 1);
+                        self.net.add_output_arc(*node, bb_end, 1);
 
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
                             transition.transition_type = TransitionType::Notify(node.index());
@@ -1016,8 +1023,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 Transition::new_with_transition_type(bb_ret_name, TransitionType::Wait);
             let bb_ret = self.net.add_transition(bb_ret_transition);
 
-            self.net.add_input_arc(bb_wait, bb_end, 1);
-            self.net.add_output_arc(bb_wait, bb_ret, 1);
+            self.net.add_output_arc(bb_wait, bb_end, 1);
+            self.net.add_input_arc(bb_wait, bb_ret, 1);
 
             let condvar_id = CondVarId::new(
                 self.instance_id,
@@ -1028,7 +1035,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             for (id, node) in self.resources.condvars().iter() {
                 match self.alias.borrow_mut().alias_atomic(condvar_alias, *id) {
                     ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {
-                        self.net.add_output_arc(*node, bb_ret, 1);
+                        self.net.add_input_arc(*node, bb_ret, 1);
                     }
                     _ => continue,
                 }
@@ -1040,8 +1047,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             );
             let lock_alias = guard_id.get_alias_id();
             let lock_node = self.resources.locks().get(&lock_alias).unwrap();
-            self.net.add_input_arc(*lock_node, bb_end, 1);
-            self.net.add_output_arc(*lock_node, bb_ret, 1);
+            self.net.add_output_arc(*lock_node, bb_end, 1);
+            self.net.add_input_arc(*lock_node, bb_ret, 1);
 
             self.connect_to_target(bb_ret, target);
             true
@@ -1058,8 +1065,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         );
         let bb_term_node = self.net.add_transition(bb_term_transition);
         self.net
-            .add_output_arc(self.bb_graph.last(bb_idx), bb_term_node, 1);
-        self.net.add_input_arc(self.entry_exit.1, bb_term_node, 1);
+            .add_input_arc(self.bb_graph.last(bb_idx), bb_term_node, 1);
+        self.net.add_output_arc(self.entry_exit.1, bb_term_node, 1);
     }
 
     fn handle_panic(&mut self, bb_idx: BasicBlock, name: &str) {
@@ -1070,8 +1077,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         );
         let bb_term_node = self.net.add_transition(bb_term_transition);
         self.net
-            .add_output_arc(self.bb_graph.last(bb_idx), bb_term_node, 1);
-        self.net.add_input_arc(self.entry_exit.1, bb_term_node, 1);
+            .add_input_arc(self.bb_graph.last(bb_idx), bb_term_node, 1);
+        self.net.add_output_arc(self.entry_exit.1, bb_term_node, 1);
     }
 
     fn handle_channel_call(
@@ -1092,7 +1099,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             );
 
             if let Some(channel_node) = self.find_channel_place(channel_alias) {
-                self.net.add_input_arc(channel_node, bb_end, 1);
+                self.net.add_output_arc(channel_node, bb_end, 1);
                 self.connect_to_target(bb_end, target);
                 return true;
             }
@@ -1103,7 +1110,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             );
 
             if let Some(channel_node) = self.find_channel_place(channel_alias) {
-                self.net.add_output_arc(channel_node, bb_end, 1);
+                self.net.add_input_arc(channel_node, bb_end, 1);
                 self.connect_to_target(bb_end, target);
                 return true;
             }
@@ -1179,7 +1186,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     LockGuardTy::StdMutex(_)
                     | LockGuardTy::ParkingLotMutex(_)
                     | LockGuardTy::SpinMutex(_) => {
-                        self.net.add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_output_arc(*lock_node, bb_end, 1);
 
                         match self.net.get_transition_mut(bb_end) {
                             Some(transition) => {
@@ -1193,7 +1200,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     LockGuardTy::StdRwLockRead(_)
                     | LockGuardTy::ParkingLotRead(_)
                     | LockGuardTy::SpinRead(_) => {
-                        self.net.add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_output_arc(*lock_node, bb_end, 1);
 
                         match self.net.get_transition_mut(bb_end) {
                             Some(transition) => {
@@ -1204,7 +1211,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         }
                     }
                     _ => {
-                        self.net.add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_output_arc(*lock_node, bb_end, 10);
                         match self.net.get_transition_mut(bb_end) {
                             Some(transition) => {
                                 transition.transition_type =
@@ -1256,7 +1263,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let bb_end = self.net.add_transition(bb_term_transition);
 
         self.net
-            .add_output_arc(self.bb_graph.last(*bb_idx), bb_end, 1);
+            .add_input_arc(self.bb_graph.last(*bb_idx), bb_end, 1);
 
         if !bb.is_cleanup {
             let lockguard_id = LockGuardId::new(self.instance_id, place.local);
@@ -1271,10 +1278,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     | LockGuardTy::StdRwLockRead(_)
                     | LockGuardTy::ParkingLotRead(_)
                     | LockGuardTy::SpinRead(_) => {
-                        self.net.add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_output_arc(*lock_node, bb_end, 1);
                     }
                     _ => {
-                        self.net.add_input_arc(*lock_node, bb_end, 1);
+                        self.net.add_output_arc(*lock_node, bb_end, 10);
                     }
                 }
 
@@ -1288,7 +1295,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
 
         self.net
-            .add_input_arc(self.bb_graph.start(*target), bb_end, 1);
+            .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
     }
 
     fn has_unsafe_alias(&self, place_id: AliasId) -> (bool, PlaceId, Option<AliasId>) {
@@ -1377,7 +1384,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 let unsafe_read_t = self.net.add_transition(read_t);
 
                 let last_node = self.bb_graph.last(bb_idx);
-                self.net.add_output_arc(last_node, unsafe_read_t, 1);
+                self.net.add_input_arc(last_node, unsafe_read_t, 1);
 
                 let unsafe_place = alias_result.1;
                 self.net.add_output_arc(unsafe_place, unsafe_read_t, 1);
@@ -1392,7 +1399,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     span_str.to_string(),
                 );
                 let temp_place_node = self.net.add_place(temp_place);
-                self.net.add_input_arc(temp_place_node, unsafe_read_t, 1);
+                self.net.add_output_arc(temp_place_node, unsafe_read_t, 1);
 
                 self.bb_graph.push(bb_idx, temp_place_node);
             }
@@ -1424,7 +1431,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let unsafe_write_t = self.net.add_transition(write_t);
 
             let last_node = self.bb_graph.last(bb_idx);
-            self.net.add_output_arc(last_node, unsafe_write_t, 1);
+            self.net.add_input_arc(last_node, unsafe_write_t, 1);
 
             let unsafe_place = alias_result.1;
             self.net.add_output_arc(unsafe_place, unsafe_write_t, 1);
@@ -1439,7 +1446,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 span_str.to_string(),
             );
             let temp_place_node = self.net.add_place(temp_place);
-            self.net.add_input_arc(temp_place_node, unsafe_write_t, 1);
+            self.net.add_output_arc(temp_place_node, unsafe_write_t, 1);
 
             self.bb_graph.push(bb_idx, temp_place_node);
         }
