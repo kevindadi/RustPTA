@@ -2,6 +2,7 @@ extern crate rustc_driver;
 extern crate rustc_hir;
 
 use crate::analysis::reachability::StateGraph;
+#[cfg(feature = "atomic-violation")]
 use crate::detect::atomicity_violation::AtomicityViolationDetector;
 use crate::detect::datarace::DataRaceDetector;
 use crate::detect::deadlock::DeadlockDetector;
@@ -180,43 +181,63 @@ impl PTACallbacks {
     }
 
     fn run_detectors(&self, state_graph: &StateGraph) {
-        let kind = &self.options.detector_kind;
-        let out_dir = &self.output_directory;
-
-        let run = |target: DetectorKind| -> bool {
-            match kind {
-                DetectorKind::All => true,
-                DetectorKind::Deadlock => matches!(target, DetectorKind::Deadlock),
-                DetectorKind::AtomicityViolation => {
-                    matches!(target, DetectorKind::AtomicityViolation)
-                }
-                DetectorKind::DataRace => matches!(target, DetectorKind::DataRace),
+        match self.options.detector_kind {
+            DetectorKind::Deadlock => {
+                self.run_deadlock_detector(state_graph);
             }
-        };
+            DetectorKind::DataRace => {
+                self.run_datarace_detector(state_graph);
+            }
+            DetectorKind::AtomicityViolation => {
+                #[cfg(feature = "atomic-violation")]
+                {
+                    self.run_atomic_detector(state_graph);
+                }
+                #[cfg(not(feature = "atomic-violation"))]
+                {
+                    log::warn!(
+                        "请求执行原子性违背检测，但未启用 `atomic-violation` feature，分析被跳过。"
+                    );
+                }
+            }
+            DetectorKind::All => {
+                self.run_deadlock_detector(state_graph);
 
-        if run(DetectorKind::Deadlock) {
-            let report = DeadlockDetector::new(state_graph).detect();
-            self.log_deadlock(&report);
-            self.write_report(out_dir.join("deadlock_report.txt"), |path| {
-                report.save_to_file(path)
-            });
-        }
+                #[cfg(feature = "atomic-violation")]
+                {
+                    log::info!(
+                        "由于数据竞争与原子性违背检测互斥，`--mode all` 默认执行数据竞争分析；如需原子性分析请使用 `--mode atomic` 并启用 feature。"
+                    );
+                }
 
-        if run(DetectorKind::DataRace) {
-            let report = DataRaceDetector::new(state_graph).detect();
-            self.log_datarace(&report);
-            self.write_report(out_dir.join("datarace_report.txt"), |path| {
-                report.save_to_file(path)
-            });
+                self.run_datarace_detector(state_graph);
+            }
         }
+    }
 
-        if run(DetectorKind::AtomicityViolation) {
-            let report = AtomicityViolationDetector::new(state_graph).detect();
-            self.log_atomic(&report);
-            self.write_report(out_dir.join("atomicity_report.txt"), |path| {
-                report.save_to_file(path)
-            });
-        }
+    fn run_deadlock_detector(&self, state_graph: &StateGraph) {
+        let report = DeadlockDetector::new(state_graph).detect();
+        self.log_deadlock(&report);
+        self.write_report(self.output_directory.join("deadlock_report.txt"), |path| {
+            report.save_to_file(path)
+        });
+    }
+
+    fn run_datarace_detector(&self, state_graph: &StateGraph) {
+        let report = DataRaceDetector::new(state_graph).detect();
+        self.log_datarace(&report);
+        self.write_report(self.output_directory.join("datarace_report.txt"), |path| {
+            report.save_to_file(path)
+        });
+    }
+
+    #[cfg(feature = "atomic-violation")]
+    fn run_atomic_detector(&self, state_graph: &StateGraph) {
+        let report = AtomicityViolationDetector::new(state_graph).detect();
+        self.log_atomic(&report);
+        self.write_report(self.output_directory.join("atomicity_report.txt"), |path| {
+            report.save_to_file(path)
+        });
     }
 
     fn write_report<F>(&self, path: PathBuf, write: F)

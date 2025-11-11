@@ -1,4 +1,5 @@
 use crate::analysis::reachability::{StateEdge, StateGraph, StateNode};
+use crate::concurrency::atomic::AtomicOrdering;
 use crate::memory::pointsto::AliasId;
 use crate::net::ids::TransitionId;
 use crate::net::index_vec::Idx;
@@ -17,7 +18,7 @@ pub struct AtomicityViolationDetector<'a> {
 #[derive(Clone)]
 struct AtomicOp {
     var_id: AliasId,
-    ordering: String,
+    ordering: AtomicOrdering,
     span: String,
     thread_id: usize,
 }
@@ -57,19 +58,17 @@ impl<'a> AtomicityViolationDetector<'a> {
         for edge in self.state_graph.graph.edge_weights() {
             match &edge.transition.transition_type {
                 TransitionType::AtomicLoad(var_id, ordering, span, thread_id) => {
-                    if format!("{ordering:?}") == "Relaxed" {
-                        loads.entry(edge.transition.id).or_insert(AtomicOp {
-                            var_id: var_id.clone(),
-                            ordering: format!("{ordering:?}"),
-                            span: span.clone(),
-                            thread_id: *thread_id,
-                        });
-                    }
+                    loads.entry(edge.transition.id).or_insert(AtomicOp {
+                        var_id: var_id.clone(),
+                        ordering: *ordering,
+                        span: span.clone(),
+                        thread_id: *thread_id,
+                    });
                 }
                 TransitionType::AtomicStore(var_id, ordering, span, thread_id) => {
                     stores.entry(edge.transition.id).or_insert(AtomicOp {
                         var_id: var_id.clone(),
-                        ordering: format!("{ordering:?}"),
+                        ordering: *ordering,
                         span: span.clone(),
                         thread_id: *thread_id,
                     });
@@ -153,10 +152,12 @@ impl<'a> AtomicityViolationDetector<'a> {
                 }
 
                 if let Some(store_op) = stores.get(&transition) {
-                    if store_op.var_id == load_op.var_id {
+                    if store_op.var_id == load_op.var_id
+                        && Self::ordering_allows(store_op.ordering, load_op.ordering)
+                    {
                         write_operations.insert(AtomicOperation {
                             operation_type: "store".to_string(),
-                            ordering: store_op.ordering.clone(),
+                            ordering: format!("{:?}", store_op.ordering),
                             variable: format!("{:?}", store_op.var_id),
                             location: store_op.span.clone(),
                         });
@@ -175,7 +176,7 @@ impl<'a> AtomicityViolationDetector<'a> {
                 pattern: ViolationPattern {
                     load_op: AtomicOperation {
                         operation_type: "load".to_string(),
-                        ordering: load_op.ordering.clone(),
+                        ordering: format!("{:?}", load_op.ordering),
                         variable: format!("{:?}", load_op.var_id),
                         location: load_op.span.clone(),
                     },
@@ -194,6 +195,20 @@ impl<'a> AtomicityViolationDetector<'a> {
             })
         } else {
             None
+        }
+    }
+
+    /// 内存序触发规则：仅当写操作的内存序在 `store ⪰ load` 的偏序下成立时，视为可能发生。
+    /// 这里采用 Acquire/Release 语义的常见约束，Relaxed 可以匹配任意写，SeqCst 仅匹配 SeqCst，
+    /// AcqRel 既具备 Release 语义也提供 SeqCst 退化，Release 不会单独匹配读取。
+    fn ordering_allows(store: AtomicOrdering, load: AtomicOrdering) -> bool {
+        use AtomicOrdering::*;
+        match load {
+            Relaxed => true,
+            Acquire => matches!(store, Release | AcqRel | SeqCst),
+            SeqCst => matches!(store, SeqCst),
+            AcqRel => matches!(store, SeqCst | AcqRel),
+            Release => false,
         }
     }
 }

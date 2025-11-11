@@ -27,18 +27,30 @@ pub enum DetectorKind {
 }
 
 fn make_options_parser() -> clap::Command {
+    let analysis_help = if cfg!(feature = "atomic-violation") {
+        "Analysis mode: deadlock detection, data race detection, atomic violation detection (requires feature), or all."
+    } else {
+        "Analysis mode: deadlock detection, data race detection, or all."
+    };
+
+    let analysis_arg = {
+        let arg = Arg::new("analysis_mode")
+            .short('m')
+            .long("mode")
+            .help(analysis_help)
+            .default_values(&["deadlock"])
+            .hide_default_value(true);
+        if cfg!(feature = "atomic-violation") {
+            arg.value_parser(["deadlock", "datarace", "atomic", "all"])
+        } else {
+            arg.value_parser(["deadlock", "datarace", "all"])
+        }
+    };
+
     let parser = Command::new("PN")
         .no_binary_name(true)
         .version("v0.1.0")
-        .arg(
-            Arg::new("analysis_mode")
-                .short('m')
-                .long("mode")
-                .help("Analysis mode: deadlock detection, data race detection, etc.")
-                .default_values(&["deadlock"])
-                .value_parser(["deadlock", "datarace", "atomic", "all"])
-                .hide_default_value(true),
-        )
+        .arg(analysis_arg)
         .arg(
             Arg::new("diagnostics_output")
                 .long("pn-analysis-dir")
@@ -170,6 +182,13 @@ impl Options {
             "datarace" => DetectorKind::DataRace,
             _ => DetectorKind::Deadlock,
         };
+
+        if matches!(self.detector_kind, DetectorKind::AtomicityViolation)
+            && !cfg!(feature = "atomic-violation")
+        {
+            log::warn!("未启用 `atomic-violation` feature, 自动回退至死锁检测。");
+            self.detector_kind = DetectorKind::Deadlock;
+        }
 
         self.crate_name = matches
             .get_one::<String>("target_crate")

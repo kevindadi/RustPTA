@@ -5,11 +5,21 @@ use std::time::Duration;
 const REPORT_WIDTH: usize = 64;
 
 fn write_banner(f: &mut fmt::Formatter<'_>, title: &str) -> fmt::Result {
-    writeln!(f, "{:=^width$}", format!(" {} ", title), width = REPORT_WIDTH)
+    writeln!(
+        f,
+        "{:=^width$}",
+        format!(" {} ", title),
+        width = REPORT_WIDTH
+    )
 }
 
 fn write_section(f: &mut fmt::Formatter<'_>, title: &str) -> fmt::Result {
-    writeln!(f, "\n{:-^width$}", format!(" {} ", title), width = REPORT_WIDTH)
+    writeln!(
+        f,
+        "\n{:-^width$}",
+        format!(" {} ", title),
+        width = REPORT_WIDTH
+    )
 }
 
 fn bool_text(value: bool) -> &'static str {
@@ -64,8 +74,18 @@ impl fmt::Display for DeadlockReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_banner(f, "死锁分析报告")?;
         writeln!(f, "{:<16}: {}", "分析工具", self.tool_name)?;
-        writeln!(f, "{:<16}: {}", "分析耗时", format_duration(self.analysis_time))?;
-        writeln!(f, "{:<16}: {}", "是否存在死锁", bool_text(self.has_deadlock))?;
+        writeln!(
+            f,
+            "{:<16}: {}",
+            "分析耗时",
+            format_duration(self.analysis_time)
+        )?;
+        writeln!(
+            f,
+            "{:<16}: {}",
+            "是否存在死锁",
+            bool_text(self.has_deadlock)
+        )?;
 
         if self.has_deadlock {
             write_section(f, "死锁详情")?;
@@ -163,14 +183,26 @@ impl fmt::Display for AtomicReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_banner(f, "原子性违背分析报告")?;
         writeln!(f, "{:<16}: {}", "分析工具", self.tool_name)?;
-        writeln!(f, "{:<16}: {}", "分析耗时", format_duration(self.analysis_time))?;
-        writeln!(f, "{:<16}: {}", "是否存在违背", bool_text(self.has_violation))?;
+        writeln!(
+            f,
+            "{:<16}: {}",
+            "分析耗时",
+            format_duration(self.analysis_time)
+        )?;
+        writeln!(
+            f,
+            "{:<16}: {}",
+            "是否存在违背",
+            bool_text(self.has_violation)
+        )?;
 
         if self.has_violation {
             write_section(f, "违背详情")?;
             writeln!(f, "共发现 {} 个原子性违背模式.", self.violation_count)?;
             for (i, pattern) in self.violations.iter().enumerate() {
-                writeln!(f, "\n  [{}] Load 操作  : {} @ {} ({})",
+                writeln!(
+                    f,
+                    "\n  [{}] Load 操作  : {} @ {} ({})",
                     i + 1,
                     pattern.load_op.variable,
                     pattern.load_op.location,
@@ -264,7 +296,12 @@ impl fmt::Display for RaceReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_banner(f, "数据竞争分析报告")?;
         writeln!(f, "{:<16}: {}", "分析工具", self.tool_name)?;
-        writeln!(f, "{:<16}: {}", "分析耗时", format_duration(self.analysis_time))?;
+        writeln!(
+            f,
+            "{:<16}: {}",
+            "分析耗时",
+            format_duration(self.analysis_time)
+        )?;
         writeln!(f, "{:<16}: {}", "是否存在竞争", bool_text(self.has_race))?;
 
         if self.has_race {
@@ -274,12 +311,7 @@ impl fmt::Display for RaceReport {
                 writeln!(f, "\n  [{}] 变量信息 : {}", i + 1, race.variable_info)?;
                 writeln!(f, "      相关操作 :")?;
                 for op in &race.operations {
-                    writeln!(
-                        f,
-                        "        - {:<6} @ {}",
-                        op.operation_type,
-                        op.location
-                    )?;
+                    writeln!(f, "        - {:<6} @ {}", op.operation_type, op.location)?;
                     if let Some(bb) = op.basic_block {
                         writeln!(f, "            基本块 : {}", bb)?;
                     }

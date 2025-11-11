@@ -103,6 +103,24 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         None
     }
 
+    #[cfg(feature = "atomic-violation")]
+    fn handle_atomic_basic_op<F>(
+        &mut self,
+        op_name: &str,
+        current_id: AliasId,
+        bb_end: TransitionId,
+        target: &Option<BasicBlock>,
+        bb_idx: &BasicBlock,
+        span: &str,
+        _transition_builder: F,
+    ) -> bool
+    where
+        F: FnMut(&AliasId, &AtomicOrdering, String) -> TransitionType,
+    {
+        self.link_atomic_operation(op_name, current_id, bb_end, target, bb_idx, span)
+    }
+
+    #[cfg(not(feature = "atomic-violation"))]
     fn handle_atomic_basic_op<F>(
         &mut self,
         op_name: &str,
@@ -158,6 +176,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             return true;
         }
+        false
+    }
+
+    #[cfg(feature = "atomic-violation")]
+    fn link_atomic_operation(
+        &mut self,
+        _op_name: &str,
+        _current_id: AliasId,
+        _bb_end: TransitionId,
+        _target: &Option<BasicBlock>,
+        _bb_idx: &BasicBlock,
+        _span: &str,
+    ) -> bool {
         false
     }
 
@@ -243,7 +274,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_input_arc(func_start, bb_start, 1);
         }
         self.net
-            .add_output_arc( self.bb_graph.start(bb_idx), bb_start,1);
+            .add_output_arc(self.bb_graph.start(bb_idx), bb_start, 1);
     }
 
     fn handle_assert(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
@@ -382,6 +413,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) -> Option<TransitionType> {
+        if cfg!(feature = "atomic-violation") {
+            return None;
+        }
+
         let lockguard_id = LockGuardId::new(self.instance_id, destination.local);
         if let Some(guard) = self.lockguards.get_mut(&lockguard_id) {
             let lock_alias = lockguard_id.get_alias_id();
@@ -809,13 +844,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        if callee_func_name.contains("::load") {
+        if self.key_api_regex.atomic_load.is_match(callee_func_name) {
             if !self.handle_atomic_load(args, bb_end, target, bb_idx, span) {
                 log::debug!("no alias found for atomic load in {:?}", span);
                 self.connect_to_target(bb_end, target);
             }
             return true;
-        } else if callee_func_name.contains("::store") {
+        } else if self.key_api_regex.atomic_store.is_match(callee_func_name) {
             if !self.handle_atomic_store(args, bb_end, target, bb_idx, span) {
                 log::debug!("no alias found for atomic store in {:?}", span);
                 self.connect_to_target(bb_end, target);
@@ -903,6 +938,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
+        if cfg!(feature = "atomic-violation") {
+            return false;
+        }
+
         if self.key_api_regex.condvar_notify.is_match(callee_func_name) {
             let condvar_id = CondVarId::new(
                 self.instance_id,
@@ -1001,6 +1040,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end: TransitionId,
         target: &Option<BasicBlock>,
     ) -> bool {
+        if cfg!(feature = "atomic-violation") {
+            return false;
+        }
+
         if self.resources.channel_places().is_empty() {
             return false;
         }
@@ -1086,7 +1129,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        if callee_func_name.contains("::drop") {
+        if callee_func_name.contains("::drop") && !cfg!(feature = "atomic-violation") {
             log::debug!("callee_func_name with drop: {:?}", callee_func_name);
             let lockguard_id = LockGuardId::new(
                 self.instance_id,
@@ -1177,6 +1220,12 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         self.net
             .add_input_arc(self.bb_graph.last(*bb_idx), bb_end, 1);
+
+        if cfg!(feature = "atomic-violation") {
+            self.net
+                .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
+            return;
+        }
 
         if !bb.is_cleanup {
             let lockguard_id = LockGuardId::new(self.instance_id, place.local);

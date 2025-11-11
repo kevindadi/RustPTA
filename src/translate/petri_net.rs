@@ -143,6 +143,9 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             let atomic_type = atomic_info.var_type.clone();
             let alias_id = atomic_info.get_alias_id();
             if !atomic_type.starts_with("&") {
+                if cfg!(feature = "atomic-violation") {
+                    continue;
+                }
                 let atomic_name = atomic_type.clone();
                 let atomic_node =
                     self.create_resource_place(atomic_name, 1, 1, atomic_info.span.clone());
@@ -243,13 +246,27 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         log::info!("Construct Function Start and End Places");
         self.construct_func();
 
+        if cfg!(feature = "atomic-violation") {
+            let key_api_regex = KeyApiRegex::new();
+            self.translate_all_functions(&key_api_regex);
+            log::info!("Visitor Function Body Complete!");
+            log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
+            return;
+        }
+
         self.construct_lock_with_dfs();
         self.construct_channel_resources();
         self.construct_atomic_resources();
         self.construct_unsafe_blocks();
 
         let key_api_regex = KeyApiRegex::new();
+        self.translate_all_functions(&key_api_regex);
 
+        log::info!("Visitor Function Body Complete!");
+        log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
+    }
+
+    fn translate_all_functions(&mut self, key_api_regex: &KeyApiRegex) {
         let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
@@ -262,13 +279,10 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                 if visited_func_id.contains(&caller.instance().def_id()) {
                     continue;
                 }
-                self.visitor_function_body(node, caller, &key_api_regex);
+                self.visitor_function_body(node, caller, key_api_regex);
                 visited_func_id.insert(caller.instance().def_id());
             }
         }
-
-        log::info!("Visitor Function Body Complete!");
-        log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
     }
 
     pub fn visitor_function_body(

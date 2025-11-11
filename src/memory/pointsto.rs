@@ -451,7 +451,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         match place_ref {
             PlaceRef {
                 local: l,
-                projection: [ProjectionElem::Deref, ref remain @ ..],
+                projection: [ProjectionElem::Deref, remain @ ..],
             } => AccessPattern::Indirect(PlaceRef {
                 local: l,
                 projection: remain,
@@ -489,7 +489,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             | Rvalue::CopyForDeref(place) => match place.as_ref() {
                 PlaceRef {
                     local: l,
-                    projection: [ProjectionElem::Deref, ref remain @ ..],
+                    projection: [ProjectionElem::Deref, remain @ ..],
                 } => vec![Some(AccessPattern::Direct(PlaceRef {
                     local: l,
                     projection: remain,
