@@ -1,5 +1,5 @@
 use std::array;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::concurrency::atomic::AtomicOrdering;
 use crate::memory::pointsto::AliasId;
@@ -19,8 +19,11 @@ struct Ev {
     tid: usize,
     alias: AliasId,
     kind: EvKind,
+    #[allow(unused)]
     ord: AtomicOrdering,
+    #[allow(unused)]
     span: String,
+    #[allow(unused)]
     transition: TransitionId,
 }
 
@@ -123,7 +126,7 @@ impl AliasKey {
 #[derive(Clone, Default)]
 struct PatternState {
     last_start: BTreeMap<(AliasKey, usize), usize>,
-    saw_mid_after_start: BTreeMap<(AliasKey, usize), (usize, usize)>,
+    saw_mid_after_start: BTreeMap<(AliasKey, usize), BTreeMap<usize, usize>>,
 }
 
 #[derive(Clone)]
@@ -167,15 +170,17 @@ impl StateFingerprint {
                     *start_idx,
                 ));
             }
-            for ((alias_key, tid_i), (tid_j, mid_idx)) in state.saw_mid_after_start.iter() {
-                saw_entries.push((
-                    rule_idx,
-                    alias_key.instance,
-                    alias_key.local,
-                    *tid_i,
-                    *tid_j,
-                    *mid_idx,
-                ));
+            for ((alias_key, tid_i), intruders) in state.saw_mid_after_start.iter() {
+                for (&tid_j, &mid_idx) in intruders.iter() {
+                    saw_entries.push((
+                        rule_idx,
+                        alias_key.instance,
+                        alias_key.local,
+                        *tid_i,
+                        tid_j,
+                        mid_idx,
+                    ));
+                }
             }
         }
 
@@ -201,7 +206,7 @@ pub fn detect_atomicity_violations(
     }
 
     let mut witnesses = Vec::new();
-    let mut witness_set: HashSet<Witness> = HashSet::new();
+    let mut seen: BTreeSet<(usize, TransitionId, TransitionId, TransitionId)> = BTreeSet::new();
     let mut visited: HashSet<StateFingerprint> = HashSet::new();
 
     let mut stack = vec![Frame::new(init.clone())];
@@ -235,13 +240,7 @@ pub fn detect_atomicity_violations(
 
             if let Some(event) = parse_event(&net.transitions[transition_id], transition_id) {
                 for rule in RULES.iter() {
-                    try_match(
-                        &mut next_frame,
-                        rule,
-                        &event,
-                        &mut witnesses,
-                        &mut witness_set,
-                    );
+                    try_match(&mut next_frame, rule, &event, &mut witnesses, &mut seen);
                 }
             }
 
@@ -257,7 +256,7 @@ fn try_match(
     rule: &Rule,
     ev: &Ev,
     out: &mut Vec<Witness>,
-    set: &mut HashSet<Witness>,
+    seen: &mut BTreeSet<(usize, TransitionId, TransitionId, TransitionId)>,
 ) {
     let current_idx = frame.trace.len().saturating_sub(1);
     let alias_key = AliasKey::new(ev.alias);
@@ -266,33 +265,45 @@ fn try_match(
 
     if ev.kind == rule.end {
         if let Some(&start_idx) = state.last_start.get(&key) {
-            if let Some(&(tid_j, mid_idx)) = state.saw_mid_after_start.get(&key) {
-                if start_idx < mid_idx && mid_idx < current_idx {
-                    let slice = frame.trace[start_idx..=current_idx].to_vec();
-                    let witness = match rule.id {
-                        0 => Witness::AV1 {
-                            alias: ev.alias,
-                            tid_i: ev.tid,
-                            tid_j,
-                            trace_slice: slice,
-                        },
-                        1 => Witness::AV2 {
-                            alias: ev.alias,
-                            tid_i: ev.tid,
-                            tid_j,
-                            trace_slice: slice,
-                        },
-                        2 => Witness::AV3 {
-                            alias: ev.alias,
-                            tid_i: ev.tid,
-                            tid_j,
-                            trace_slice: slice,
-                        },
-                        _ => unreachable!(),
-                    };
-                    if set.insert(witness.clone()) {
-                        out.push(witness);
+            if let Some(intruders) = state.saw_mid_after_start.get_mut(&key) {
+                let mut to_remove = Vec::new();
+                for (&tid_j, &mid_idx) in intruders.iter() {
+                    if start_idx < mid_idx && mid_idx < current_idx {
+                        let slice = frame.trace[start_idx..=current_idx].to_vec();
+                        let start_tr = frame.trace[start_idx];
+                        let mid_tr = frame.trace[mid_idx];
+                        let end_tr = frame.trace[current_idx];
+                        if seen.insert((rule.id, start_tr, mid_tr, end_tr)) {
+                            let witness = match rule.id {
+                                0 => Witness::AV1 {
+                                    alias: ev.alias,
+                                    tid_i: ev.tid,
+                                    tid_j,
+                                    trace_slice: slice,
+                                },
+                                1 => Witness::AV2 {
+                                    alias: ev.alias,
+                                    tid_i: ev.tid,
+                                    tid_j,
+                                    trace_slice: slice,
+                                },
+                                2 => Witness::AV3 {
+                                    alias: ev.alias,
+                                    tid_i: ev.tid,
+                                    tid_j,
+                                    trace_slice: slice,
+                                },
+                                _ => unreachable!(),
+                            };
+                            out.push(witness);
+                        }
+                        to_remove.push(tid_j);
                     }
+                }
+                for tid_j in to_remove {
+                    intruders.remove(&tid_j);
+                }
+                if intruders.is_empty() {
                     state.saw_mid_after_start.remove(&key);
                 }
             }
@@ -304,7 +315,9 @@ fn try_match(
             if *start_key == alias_key && *tid_i != ev.tid {
                 state
                     .saw_mid_after_start
-                    .insert((*start_key, *tid_i), (ev.tid, current_idx));
+                    .entry((*start_key, *tid_i))
+                    .or_default()
+                    .insert(ev.tid, current_idx);
             }
         }
     }
@@ -337,7 +350,6 @@ fn print_trace(net: &Net, trace_slice: &[TransitionId]) {
 }
 
 pub fn print_witnesses(net: &Net, witnesses: &[Witness]) {
-    // TODO: filter same witness
     if witnesses.is_empty() {
         println!("[atomic-violation] No violations found.");
         return;
