@@ -165,13 +165,12 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn to_json_pretty(&self) -> Result<(), serde_json::Error> {
         if self.atomic_vars.is_empty() {
-            log::debug!("No atomic variables found");
+            log::info!("No atomic variables found");
         } else {
             for (var_name, info) in self.atomic_vars.iter() {
-                log::debug!(
+                log::info!(
                     "Atomic Variable {}:\n{}",
                     var_name,
                     serde_json::to_string_pretty(&json!({

@@ -1,3 +1,4 @@
+use std::array;
 use std::collections::{BTreeMap, HashSet};
 
 use crate::concurrency::atomic::AtomicOrdering;
@@ -7,54 +8,101 @@ use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::index_vec::{Idx, IndexVec};
 use crate::net::structure::{Marking, Transition, TransitionType};
 
-#[derive(Debug, Clone)]
-pub enum AtomicEvent {
-    Load {
-        alias: AliasId,
-        ordering: AtomicOrdering,
-        span: String,
-        tid: usize,
-    },
-    Store {
-        alias: AliasId,
-        ordering: AtomicOrdering,
-        span: String,
-        tid: usize,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvKind {
+    Load,
+    Store,
 }
 
-pub fn parse_atomic_event(tr: &Transition) -> Option<AtomicEvent> {
+#[derive(Debug, Clone)]
+struct Ev {
+    tid: usize,
+    alias: AliasId,
+    kind: EvKind,
+    ord: AtomicOrdering,
+    span: String,
+    transition: TransitionId,
+}
+
+fn parse_event(tr: &Transition, transition_id: TransitionId) -> Option<Ev> {
     match &tr.transition_type {
-        TransitionType::AtomicLoad(alias, order, span, tid) => Some(AtomicEvent::Load {
-            alias: *alias,
-            ordering: *order,
-            span: span.clone(),
+        TransitionType::AtomicLoad(alias, order, span, tid) => Some(Ev {
             tid: *tid,
-        }),
-        TransitionType::AtomicStore(alias, order, span, tid) => Some(AtomicEvent::Store {
             alias: *alias,
-            ordering: *order,
+            kind: EvKind::Load,
+            ord: *order,
             span: span.clone(),
-            tid: *tid,
+            transition: transition_id,
         }),
-        TransitionType::AtomicCmpXchg(alias, success, _failure, span, tid) => {
-            Some(AtomicEvent::Store {
-                alias: *alias,
-                ordering: *success,
-                span: span.clone(),
-                tid: *tid,
-            })
-        }
+        TransitionType::AtomicStore(alias, order, span, tid) => Some(Ev {
+            tid: *tid,
+            alias: *alias,
+            kind: EvKind::Store,
+            ord: *order,
+            span: span.clone(),
+            transition: transition_id,
+        }),
+        TransitionType::AtomicCmpXchg(alias, success, _failure, span, tid) => Some(Ev {
+            tid: *tid,
+            alias: *alias,
+            kind: EvKind::Store,
+            ord: *success,
+            span: span.clone(),
+            transition: transition_id,
+        }),
         _ => None,
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Rule {
+    id: usize,
+    start: EvKind,
+    mid: EvKind,
+    end: EvKind,
+}
+
+const RULES: [Rule; 3] = [
+    Rule {
+        id: 0,
+        start: EvKind::Load,
+        mid: EvKind::Store,
+        end: EvKind::Store,
+    },
+    Rule {
+        id: 1,
+        start: EvKind::Store,
+        mid: EvKind::Store,
+        end: EvKind::Load,
+    },
+    Rule {
+        id: 2,
+        start: EvKind::Load,
+        mid: EvKind::Store,
+        end: EvKind::Load,
+    },
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Witness {
-    pub alias: AliasId,
-    pub tid_i: usize,
-    pub tid_j: usize,
-    pub trace_slice: Vec<TransitionId>,
+pub enum Witness {
+    AV1 {
+        alias: AliasId,
+        tid_i: usize,
+        tid_j: usize,
+        trace_slice: Vec<TransitionId>,
+    },
+    AV2 {
+        alias: AliasId,
+        tid_i: usize,
+        tid_j: usize,
+        trace_slice: Vec<TransitionId>,
+    },
+    AV3 {
+        alias: AliasId,
+        tid_i: usize,
+        tid_j: usize,
+        trace_slice: Vec<TransitionId>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -72,14 +120,17 @@ impl AliasKey {
     }
 }
 
-type LoadKey = (usize, AliasKey);
+#[derive(Clone, Default)]
+struct PatternState {
+    last_start: BTreeMap<(AliasKey, usize), usize>,
+    saw_mid_after_start: BTreeMap<(AliasKey, usize), (usize, usize)>,
+}
 
 #[derive(Clone)]
 struct Frame {
     marking: Marking,
     trace: Vec<TransitionId>,
-    pending_load: BTreeMap<LoadKey, usize>,
-    intruder_of: BTreeMap<LoadKey, usize>,
+    pattern_states: [PatternState; RULES.len()],
 }
 
 impl Frame {
@@ -87,8 +138,7 @@ impl Frame {
         Self {
             marking,
             trace: Vec::new(),
-            pending_load: BTreeMap::new(),
-            intruder_of: BTreeMap::new(),
+            pattern_states: array::from_fn(|_| PatternState::default()),
         }
     }
 }
@@ -96,18 +146,47 @@ impl Frame {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct StateFingerprint {
     marking: Vec<u64>,
-    pending: Vec<(LoadKey, usize)>,
+    last_starts: Vec<(usize, usize, usize, usize, usize)>,
+    saw_entries: Vec<(usize, usize, usize, usize, usize, usize)>,
 }
 
 impl StateFingerprint {
     fn from_frame(net: &Net, frame: &Frame) -> Self {
         let marking = marking_key(net, &frame.marking);
-        let pending = frame
-            .pending_load
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect::<Vec<_>>();
-        Self { marking, pending }
+
+        let mut last_starts = Vec::new();
+        let mut saw_entries = Vec::new();
+
+        for (rule_idx, state) in frame.pattern_states.iter().enumerate() {
+            for ((alias_key, tid_i), start_idx) in state.last_start.iter() {
+                last_starts.push((
+                    rule_idx,
+                    alias_key.instance,
+                    alias_key.local,
+                    *tid_i,
+                    *start_idx,
+                ));
+            }
+            for ((alias_key, tid_i), (tid_j, mid_idx)) in state.saw_mid_after_start.iter() {
+                saw_entries.push((
+                    rule_idx,
+                    alias_key.instance,
+                    alias_key.local,
+                    *tid_i,
+                    *tid_j,
+                    *mid_idx,
+                ));
+            }
+        }
+
+        last_starts.sort_unstable();
+        saw_entries.sort_unstable();
+
+        Self {
+            marking,
+            last_starts,
+            saw_entries,
+        }
     }
 }
 
@@ -124,31 +203,16 @@ pub fn detect_atomicity_violations(
     let mut witnesses = Vec::new();
     let mut witness_set: HashSet<Witness> = HashSet::new();
     let mut visited: HashSet<StateFingerprint> = HashSet::new();
-    let mut scheduled: HashSet<StateFingerprint> = HashSet::new();
 
-    let initial_frame = Frame::new(init.clone());
-    let initial_fp = StateFingerprint::from_frame(net, &initial_frame);
-    scheduled.insert(initial_fp.clone());
-
-    let mut stack = vec![initial_frame];
+    let mut stack = vec![Frame::new(init.clone())];
 
     while let Some(frame) = stack.pop() {
-        let fingerprint = StateFingerprint::from_frame(net, &frame);
-        scheduled.remove(&fingerprint);
-
-        if visited.contains(&fingerprint) {
+        if visited.len() >= max_states || frame.trace.len() >= max_depth {
             continue;
         }
-        if visited.len() >= max_states {
-            break;
-        }
 
-        visited.insert(fingerprint);
-
-        if visited.len() >= max_states {
-            break;
-        }
-        if frame.trace.len() >= max_depth {
+        let fingerprint = StateFingerprint::from_frame(net, &frame);
+        if !visited.insert(fingerprint) {
             continue;
         }
 
@@ -156,10 +220,7 @@ pub fn detect_atomicity_violations(
         enabled.sort_by_key(|tid| tid.index());
 
         for transition_id in enabled {
-            if visited.len() + scheduled.len() >= max_states {
-                break;
-            }
-            if frame.trace.len() + 1 > max_depth {
+            if frame.trace.len() >= max_depth || visited.len() >= max_states {
                 continue;
             }
 
@@ -168,73 +229,22 @@ pub fn detect_atomicity_violations(
                 Err(_) => continue,
             };
 
-            let mut next_trace = frame.trace.clone();
-            next_trace.push(transition_id);
+            let mut next_frame = frame.clone();
+            next_frame.marking = fired;
+            next_frame.trace.push(transition_id);
 
-            let mut next_pending = frame.pending_load.clone();
-            let mut next_intruder = frame.intruder_of.clone();
-
-            if let Some(event) = parse_atomic_event(&net.transitions[transition_id]) {
-                let event_index = next_trace.len() - 1;
-                match event {
-                    AtomicEvent::Load { alias, tid, .. } => {
-                        let key = (tid, AliasKey::new(alias));
-                        next_pending.insert(key, event_index);
-                        next_intruder.remove(&key);
-                    }
-                    AtomicEvent::Store { alias, tid, .. } => {
-                        let alias_key = AliasKey::new(alias);
-                        let affected_loads: Vec<LoadKey> = next_pending
-                            .keys()
-                            .filter(|(other_tid, other_key)| {
-                                *other_tid != tid && *other_key == alias_key
-                            })
-                            .copied()
-                            .collect();
-                        for load_key in affected_loads {
-                            next_intruder.insert(load_key, tid);
-                        }
-
-                        let load_key = (tid, alias_key);
-                        if let Some(&load_idx) = next_pending.get(&load_key) {
-                            if let Some(&intruder_tid) = next_intruder.get(&load_key) {
-                                if load_idx <= event_index {
-                                    let slice = next_trace[load_idx..=event_index].to_vec();
-                                    let witness = Witness {
-                                        alias,
-                                        tid_i: tid,
-                                        tid_j: intruder_tid,
-                                        trace_slice: slice,
-                                    };
-                                    if witness_set.insert(witness.clone()) {
-                                        witnesses.push(witness);
-                                    }
-                                }
-                            }
-                            next_pending.remove(&load_key);
-                            next_intruder.remove(&load_key);
-                        }
-                    }
+            if let Some(event) = parse_event(&net.transitions[transition_id], transition_id) {
+                for rule in RULES.iter() {
+                    try_match(
+                        &mut next_frame,
+                        rule,
+                        &event,
+                        &mut witnesses,
+                        &mut witness_set,
+                    );
                 }
             }
 
-            let next_frame = Frame {
-                marking: fired,
-                trace: next_trace,
-                pending_load: next_pending,
-                intruder_of: next_intruder,
-            };
-
-            let next_fp = StateFingerprint::from_frame(net, &next_frame);
-            if visited.contains(&next_fp) || scheduled.contains(&next_fp) {
-                continue;
-            }
-
-            if visited.len() + scheduled.len() >= max_states {
-                break;
-            }
-
-            scheduled.insert(next_fp);
             stack.push(next_frame);
         }
     }
@@ -242,7 +252,92 @@ pub fn detect_atomicity_violations(
     witnesses
 }
 
+fn try_match(
+    frame: &mut Frame,
+    rule: &Rule,
+    ev: &Ev,
+    out: &mut Vec<Witness>,
+    set: &mut HashSet<Witness>,
+) {
+    let current_idx = frame.trace.len().saturating_sub(1);
+    let alias_key = AliasKey::new(ev.alias);
+    let state = &mut frame.pattern_states[rule.id];
+    let key = (alias_key, ev.tid);
+
+    if ev.kind == rule.end {
+        if let Some(&start_idx) = state.last_start.get(&key) {
+            if let Some(&(tid_j, mid_idx)) = state.saw_mid_after_start.get(&key) {
+                if start_idx < mid_idx && mid_idx < current_idx {
+                    let slice = frame.trace[start_idx..=current_idx].to_vec();
+                    let witness = match rule.id {
+                        0 => Witness::AV1 {
+                            alias: ev.alias,
+                            tid_i: ev.tid,
+                            tid_j,
+                            trace_slice: slice,
+                        },
+                        1 => Witness::AV2 {
+                            alias: ev.alias,
+                            tid_i: ev.tid,
+                            tid_j,
+                            trace_slice: slice,
+                        },
+                        2 => Witness::AV3 {
+                            alias: ev.alias,
+                            tid_i: ev.tid,
+                            tid_j,
+                            trace_slice: slice,
+                        },
+                        _ => unreachable!(),
+                    };
+                    if set.insert(witness.clone()) {
+                        out.push(witness);
+                    }
+                    state.saw_mid_after_start.remove(&key);
+                }
+            }
+        }
+    }
+
+    if ev.kind == rule.mid {
+        for ((start_key, tid_i), _) in state.last_start.iter() {
+            if *start_key == alias_key && *tid_i != ev.tid {
+                state
+                    .saw_mid_after_start
+                    .insert((*start_key, *tid_i), (ev.tid, current_idx));
+            }
+        }
+    }
+
+    if ev.kind == rule.start {
+        state.last_start.insert(key, current_idx);
+        state.saw_mid_after_start.remove(&key);
+    }
+}
+
+fn print_trace(net: &Net, trace_slice: &[TransitionId]) {
+    for (pos, transition_id) in trace_slice.iter().enumerate() {
+        let transition = &net.transitions[*transition_id];
+        match &transition.transition_type {
+            TransitionType::AtomicLoad(alias, ord, span, tid) => println!(
+                "    [{:03}] LOAD  a={:?} ord={:?} tid={} @{}",
+                pos, alias, ord, tid, span
+            ),
+            TransitionType::AtomicStore(alias, ord, span, tid) => println!(
+                "    [{:03}] STORE a={:?} ord={:?} tid={} @{}",
+                pos, alias, ord, tid, span
+            ),
+            TransitionType::AtomicCmpXchg(alias, succ, fail, span, tid) => println!(
+                "    [{:03}] CAS   a={:?} succ={:?} fail={:?} tid={} @{}",
+                pos, alias, succ, fail, tid, span
+            ),
+            other => println!("    [{:03}] {:?} ({})", pos, other, transition.name),
+        }
+    }
+}
+
 pub fn print_witnesses(net: &Net, witnesses: &[Witness]) {
+    // TODO: filter same witness
     if witnesses.is_empty() {
         println!("[atomic-violation] No violations found.");
         return;
@@ -251,31 +346,54 @@ pub fn print_witnesses(net: &Net, witnesses: &[Witness]) {
     println!("[atomic-violation] {} violation(s) found.", witnesses.len());
 
     for (idx, witness) in witnesses.iter().enumerate() {
-        println!(
-            "  #{} alias={:?} load_tid={} intruder_tid={} slice_len={}",
-            idx,
-            witness.alias,
-            witness.tid_i,
-            witness.tid_j,
-            witness.trace_slice.len()
-        );
-
-        for (pos, transition_id) in witness.trace_slice.iter().enumerate() {
-            let transition = &net.transitions[*transition_id];
-            match &transition.transition_type {
-                TransitionType::AtomicLoad(alias, ord, span, tid) => println!(
-                    "    [{:03}] LOAD  a={:?} ord={:?} tid={} @{}",
-                    pos, alias, ord, tid, span
-                ),
-                TransitionType::AtomicStore(alias, ord, span, tid) => println!(
-                    "    [{:03}] STORE a={:?} ord={:?} tid={} @{}",
-                    pos, alias, ord, tid, span
-                ),
-                TransitionType::AtomicCmpXchg(alias, succ, fail, span, tid) => println!(
-                    "    [{:03}] CAS   a={:?} succ={:?} fail={:?} tid={} @{}",
-                    pos, alias, succ, fail, tid, span
-                ),
-                other => println!("    [{:03}] {:?} ({})", pos, other, transition.name),
+        match witness {
+            Witness::AV1 {
+                alias,
+                tid_i,
+                tid_j,
+                trace_slice,
+            } => {
+                println!(
+                    "  #{} AV1 alias={:?} load_tid={} intruder_tid={} slice_len={}",
+                    idx,
+                    alias,
+                    tid_i,
+                    tid_j,
+                    trace_slice.len()
+                );
+                print_trace(net, trace_slice);
+            }
+            Witness::AV2 {
+                alias,
+                tid_i,
+                tid_j,
+                trace_slice,
+            } => {
+                println!(
+                    "  #{} AV2 alias={:?} store_tid={} intruder_tid={} slice_len={}",
+                    idx,
+                    alias,
+                    tid_i,
+                    tid_j,
+                    trace_slice.len()
+                );
+                print_trace(net, trace_slice);
+            }
+            Witness::AV3 {
+                alias,
+                tid_i,
+                tid_j,
+                trace_slice,
+            } => {
+                println!(
+                    "  #{} AV3 alias={:?} load_tid={} intruder_tid={} slice_len={}",
+                    idx,
+                    alias,
+                    tid_i,
+                    tid_j,
+                    trace_slice.len()
+                );
+                print_trace(net, trace_slice);
             }
         }
     }

@@ -4,7 +4,7 @@ extern crate rustc_hir;
 use crate::analysis::reachability::StateGraph;
 #[cfg(feature = "atomic-violation")]
 use crate::detect::atomic_violation_detector::{
-    Witness, detect_atomicity_violations, marking_from_places, parse_atomic_event, print_witnesses,
+    Witness, detect_atomicity_violations, marking_from_places, print_witnesses,
 };
 #[cfg(not(feature = "atomic-violation"))]
 use crate::detect::atomicity_violation::AtomicityViolationDetector;
@@ -358,53 +358,58 @@ impl PTACallbacks {
 
 #[cfg(feature = "atomic-violation")]
 fn witness_to_pattern(net: &Net, witness: &Witness) -> ViolationPattern {
+    let (alias, trace_slice) = match witness {
+        Witness::AV1 {
+            alias, trace_slice, ..
+        }
+        | Witness::AV2 {
+            alias, trace_slice, ..
+        }
+        | Witness::AV3 {
+            alias, trace_slice, ..
+        } => (*alias, trace_slice),
+    };
+
     let mut load_op: Option<AtomicOperation> = None;
     let mut store_ops: Vec<AtomicOperation> = Vec::new();
 
-    for transition_id in &witness.trace_slice {
+    for transition_id in trace_slice {
         let transition = &net.transitions[*transition_id];
-        if let Some(event) = parse_atomic_event(transition) {
-            match event {
-                crate::detect::atomic_violation_detector::AtomicEvent::Load {
-                    alias,
-                    ordering,
-                    span,
-                    tid,
-                } => {
-                    if load_op.is_none() {
-                        load_op = Some(AtomicOperation {
-                            operation_type: format!("load@tid{tid}"),
-                            ordering: format!("{ordering:?}"),
-                            variable: format!("{alias:?}"),
-                            location: span,
-                        });
-                    }
-                }
-                crate::detect::atomic_violation_detector::AtomicEvent::Store {
-                    alias,
-                    ordering,
-                    span,
-                    tid,
-                } => {
-                    let op_type = match &transition.transition_type {
-                        TransitionType::AtomicCmpXchg(..) => "cas_store",
-                        _ => "store",
-                    };
-                    store_ops.push(AtomicOperation {
-                        operation_type: format!("{op_type}@tid{tid}"),
+        match &transition.transition_type {
+            TransitionType::AtomicLoad(alias_id, ordering, span, tid) => {
+                if load_op.is_none() {
+                    load_op = Some(AtomicOperation {
+                        operation_type: format!("load@tid{tid}"),
                         ordering: format!("{ordering:?}"),
-                        variable: format!("{alias:?}"),
-                        location: span,
+                        variable: format!("{alias_id:?}"),
+                        location: span.clone(),
                     });
                 }
             }
+            TransitionType::AtomicStore(alias_id, ordering, span, tid) => {
+                store_ops.push(AtomicOperation {
+                    operation_type: format!("store@tid{tid}"),
+                    ordering: format!("{ordering:?}"),
+                    variable: format!("{alias_id:?}"),
+                    location: span.clone(),
+                });
+            }
+            TransitionType::AtomicCmpXchg(alias_id, success, _failure, span, tid) => {
+                store_ops.push(AtomicOperation {
+                    operation_type: format!("cas_store@tid{tid}"),
+                    ordering: format!("{success:?}"),
+                    variable: format!("{alias_id:?}"),
+                    location: span.clone(),
+                });
+            }
+            _ => {}
         }
     }
 
     let load_op = load_op.unwrap_or_else(|| AtomicOperation {
         operation_type: "load".to_string(),
         ordering: "N/A".to_string(),
-        variable: format!("{:?}", witness.alias),
+        variable: format!("{:?}", alias),
         location: String::from("<unknown>"),
     });
 

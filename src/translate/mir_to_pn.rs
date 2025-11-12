@@ -213,11 +213,12 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         span: &str,
     ) -> bool {
         let Some((alias_id, resource_place)) = self.find_atomic_match(&current_id) else {
+            log::warn!("no alias found for atomic operation in {:?}", span);
             return false;
         };
 
         let Some(order) = self.resources.atomic_orders().get(&current_id).copied() else {
-            log::debug!(
+            log::warn!(
                 "[atomic-violation] missing ordering for {} @ {:?}",
                 op_name,
                 span
@@ -998,13 +999,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        if self.key_api_regex.atomic_load.is_match(callee_func_name) {
+        // FIXME: use regex to match atomic api
+        if callee_func_name.contains("::load") {
             if !self.handle_atomic_load(args, bb_end, target, bb_idx, span) {
                 log::debug!("no alias found for atomic load in {:?}", span);
                 self.connect_to_target(bb_end, target);
             }
             return true;
-        } else if self.key_api_regex.atomic_store.is_match(callee_func_name) {
+        } else if callee_func_name.contains("::store") {
             if !self.handle_atomic_store(args, bb_end, target, bb_idx, span) {
                 log::debug!("no alias found for atomic store in {:?}", span);
                 self.connect_to_target(bb_end, target);
