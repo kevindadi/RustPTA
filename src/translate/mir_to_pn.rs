@@ -360,6 +360,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         entry_exit: (PlaceId, PlaceId),
         key_api_regex: &'translate KeyApiRegex,
     ) -> Self {
+        #[allow(unused_mut)]
         let mut s = Self {
             instance_id,
             instance,
@@ -1468,7 +1469,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             Rvalue::Ref(_, _, place) => {
                 vec![place]
             }
-            Rvalue::Len(place) | Rvalue::Discriminant(place) => {
+            Rvalue::Discriminant(place) => {
                 vec![place]
             }
             Rvalue::Aggregate(_, operands) => operands

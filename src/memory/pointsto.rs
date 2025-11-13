@@ -484,7 +484,6 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             }
 
             Rvalue::RawPtr(_, place)
-            | Rvalue::Len(place)
             | Rvalue::Discriminant(place)
             | Rvalue::CopyForDeref(place) => match place.as_ref() {
                 PlaceRef {
@@ -565,8 +564,6 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             StatementKind::FakeRead(_) => {}
 
             StatementKind::SetDiscriminant { .. } => {}
-
-            StatementKind::Deinit(_) => {}
 
             StatementKind::StorageLive(_) => {}
 

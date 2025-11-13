@@ -268,6 +268,7 @@ impl PTACallbacks {
     }
 
     #[cfg(not(feature = "atomic-violation"))]
+    #[allow(dead_code)]
     fn run_atomic_detector(&self, state_graph: &StateGraph) {
         let report = AtomicityViolationDetector::new(state_graph).detect();
         self.log_atomic(&report);
@@ -344,6 +345,7 @@ impl PTACallbacks {
         }
     }
 
+    #[allow(dead_code)]
     fn log_atomic(&self, report: &AtomicReport) {
         if report.has_violation {
             info!(
