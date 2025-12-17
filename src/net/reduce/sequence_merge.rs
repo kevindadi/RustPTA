@@ -16,11 +16,6 @@ impl ReductionGraph {
     ///   - 对所有 `0 ≤ i < k`,弧权满足 `w(•t_i) = w(t_i•)`,且沿链所有权值相等.
     /// - 若 `k ≥ 2`,构造新变迁 `t_new`,其输入输出分别连接 `p_0` 与 `p_k`,
     ///   并继承原始变迁集合的并集以及统一的变迁类型(不一致时退化为 `Normal`).
-    ///
-    /// **一致性维护**
-    /// - 库所与变迁在合并后被标记移除并清理邻接表,保证拓扑约束不破坏剩余结构.
-    /// - 权重与类型在合并前通过一致性校验,防止违反守恒条件或转化语义.
-    /// - `merge_counter` 确保生成的辅助变迁名称唯一,从而保持追踪性.
     pub(crate) fn merge_linear_sequences(&mut self) -> Vec<ReductionStep> {
         let mut steps = Vec::new();
         let mut changed = true;

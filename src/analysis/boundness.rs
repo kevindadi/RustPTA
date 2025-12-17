@@ -182,7 +182,7 @@ impl BoundnessAnalyzer {
     }
 
     /// 使用P-不变量方法检查有界性
-    pub fn check_by_p_invariants(&self, net: &Net) -> BoundnessResult {
+    pub fn check_by_p_invariants(&self, _: &Net) -> BoundnessResult {
         #[cfg(not(feature = "invariants"))]
         {
             return BoundnessResult::Unknown {

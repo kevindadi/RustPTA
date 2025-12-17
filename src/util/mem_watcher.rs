@@ -14,13 +14,9 @@ use std::{fs::File, io::Read};
 #[derive(Debug, Default, PartialEq, Eq, Hash)]
 pub struct Statm {
     pub size: usize,
-
     pub resident: usize,
-
     pub share: usize,
-
     pub text: usize,
-
     pub data: usize,
 }
 
