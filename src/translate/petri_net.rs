@@ -314,11 +314,17 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         caller: &CallGraphNode<'tcx>,
         key_api_regex: &KeyApiRegex,
     ) {
-        let body = self.tcx.optimized_mir(caller.instance().def_id());
+        let def_id = caller.instance().def_id();
+        let body = self.tcx.optimized_mir(def_id);
 
         if body.source.promoted.is_some() {
             return;
         }
+
+        // 如果启用了 MIR 输出，在转换前输出原始 MIR
+        // 注意：这里不输出，因为已经在 callback.rs 中统一输出了
+        // 但可以在这里输出转换后的中间状态
+
         let lock_infos = self.lock_info.clone();
 
         let mut func_body = BodyToPetriNet::new(

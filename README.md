@@ -53,10 +53,27 @@ const CARGO_PN_HELP: &str = r#"Petri Net-based Analysis Tool for Rust Programs
          --viz-petrinet            Generate Petri net visualization
          --viz-stategraph          Generate state graph visualization
          --viz-unsafe              Generate unsafe operations report
-         --viz-pointsto
+         --viz-pointsto            Generate points-to relations report
+         --viz-mir                 Generate MIR visualization (dot format)
+
+ DEBUG OPTIONS:
+         --stop-after <STAGE>      Stop analysis after specified stage:
+                                   - mir: After MIR output
+                                   - callgraph: After call graph construction
+                                   - petrinet: After Petri net construction
+                                   - stategraph: After state graph construction
 
  EXAMPLES:
      cargo pn -m deadlock -t my_crate --pn-analysis-dir=./tmp --viz-petrinet
+
+     # Output MIR dot files for debugging
+     cargo pn -t my_crate --viz-mir
+
+     # Stop after Petri net construction (useful for debugging)
+     cargo pn -t my_crate --viz-petrinet --stop-after petrinet
+
+     # Output both MIR and Petri net for comparison
+     cargo pn -t my_crate --viz-mir --viz-petrinet
 
      You need to specify the crate to analyze and replace '-' with an underscore '_'.
  "#;

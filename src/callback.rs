@@ -12,7 +12,7 @@ use crate::detect::datarace::DataRaceDetector;
 use crate::detect::deadlock::DeadlockDetector;
 #[cfg(feature = "atomic-violation")]
 use crate::net::{core::Net, structure::TransitionType};
-use crate::options::{DetectorKind, Options};
+use crate::options::{DetectorKind, Options, StopAfter};
 #[cfg(feature = "atomic-violation")]
 use crate::report::{AtomicOperation, ViolationPattern};
 use crate::report::{AtomicReport, DeadlockReport, RaceReport};
@@ -104,9 +104,16 @@ impl rustc_driver::Callbacks for PTACallbacks {
             return Compilation::Continue;
         }
 
+        // 检查是否在 MIR 后停止（在分析之前）
+        if self.options.stop_after == StopAfter::AfterMir {
+            log::info!("停止分析：在 MIR 输出后停止");
+            return Compilation::Stop;
+        }
+
         self.analyze_with_pta(compiler, tcx);
 
-        if self.test_run {
+        // 如果设置了停止点，在分析后停止编译
+        if self.options.stop_after != StopAfter::None || self.test_run {
             Compilation::Stop
         } else {
             Compilation::Continue
@@ -140,10 +147,35 @@ impl PTACallbacks {
         let mut callgraph = CallGraph::new();
         callgraph.analyze(instances.clone(), tcx);
 
+        // 输出 MIR dot（如果启用）
+        if self.options.dump_options.dump_mir {
+            self.dump_mir_dots(tcx, &instances);
+        }
+
+        // 检查是否在调用图后停止
+        if self.options.stop_after == StopAfter::AfterCallGraph {
+            log::info!("停止分析：在调用图构建后停止");
+            return;
+        }
+
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
 
+        // 检查是否在 Petri 网后停止
+        if self.options.stop_after == StopAfter::AfterPetriNet {
+            log::info!("停止分析：在 Petri 网构建后停止");
+            self.handle_visualizations(&callgraph, &pn, &StateGraph::from_net(&pn.net));
+            return;
+        }
+
         let state_graph = StateGraph::from_net(&pn.net);
+
+        // 检查是否在状态图后停止
+        if self.options.stop_after == StopAfter::AfterStateGraph {
+            log::info!("停止分析：在状态图构建后停止");
+            self.handle_visualizations(&callgraph, &pn, &state_graph);
+            return;
+        }
 
         self.handle_visualizations(&callgraph, &pn, &state_graph);
         #[cfg(feature = "atomic-violation")]
@@ -190,6 +222,41 @@ impl PTACallbacks {
         }
         if dump.dump_points_to {
             todo!()
+        }
+    }
+
+    fn dump_mir_dots<'tcx>(&self, tcx: TyCtxt<'tcx>, instances: &[Instance<'tcx>]) {
+        use crate::util::mir_dot::write_mir_dot;
+        
+        let mir_dir = self.output_directory.join("mir");
+        std::fs::create_dir_all(&mir_dir).unwrap_or_else(|e| {
+            error!("Failed to create MIR output directory: {}", e);
+        });
+
+        for instance in instances {
+            let def_id = instance.def_id();
+            if !tcx.is_mir_available(def_id) {
+                continue;
+            }
+
+            let body = tcx.optimized_mir(def_id);
+            if body.source.promoted.is_some() {
+                continue;
+            }
+
+            let fn_name = crate::util::format_name(def_id);
+            let safe_fn_name = fn_name
+                .replace(':', "_")
+                .replace('-', "_")
+                .replace('.', "_")
+                .replace('/', "_");
+            let mir_path = mir_dir.join(format!("{}.dot", safe_fn_name));
+
+            if let Err(err) = write_mir_dot(tcx, def_id, body, &mir_path) {
+                error!("Failed to write MIR dot for {}: {}", fn_name, err);
+            } else {
+                info!("MIR dot exported: {}", mir_path.display());
+            }
         }
     }
 

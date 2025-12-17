@@ -1,4 +1,5 @@
 pub mod mem_watcher;
+pub mod mir_dot;
 
 use std::io::Write;
 use std::rc::Rc;

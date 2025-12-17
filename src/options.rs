@@ -72,6 +72,7 @@ fn make_options_parser() -> clap::Command {
                     "dump_stategraph",
                     "dump_unsafe",
                     "dump_points_to",
+                    "dump_mir",
                 ])
                 .multiple(true),
         )
@@ -104,6 +105,19 @@ fn make_options_parser() -> clap::Command {
                 .long("viz-pointsto")
                 .help("Generate points-to relations report")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("dump_mir")
+                .long("viz-mir")
+                .help("Generate MIR visualization (dot format)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("stop_after")
+                .long("stop-after")
+                .value_name("STAGE")
+                .help("Stop analysis after specified stage: mir, callgraph, petrinet, stategraph")
+                .value_parser(["mir", "callgraph", "petrinet", "stategraph"]),
         );
     parser
 }
@@ -113,6 +127,7 @@ pub struct Options {
     pub output: Option<PathBuf>,
     pub crate_name: String,
     pub dump_options: DumpOptions,
+    pub stop_after: StopAfter,
 }
 
 impl Default for Options {
@@ -122,6 +137,7 @@ impl Default for Options {
             output: Option::default(),
             crate_name: String::new(),
             dump_options: DumpOptions::default(),
+            stop_after: StopAfter::None,
         }
     }
 }
@@ -133,6 +149,17 @@ pub struct DumpOptions {
     pub dump_state_graph: bool,
     pub dump_unsafe_info: bool,
     pub dump_points_to: bool,
+    pub dump_mir: bool,
+}
+
+/// 流水线停止点，用于调试
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopAfter {
+    None,
+    AfterMir,        // 在 MIR 输出后停止
+    AfterCallGraph,  // 在调用图构建后停止
+    AfterPetriNet,   // 在 Petri 网构建后停止
+    AfterStateGraph, // 在状态图构建后停止
 }
 
 impl Default for DumpOptions {
@@ -143,6 +170,7 @@ impl Default for DumpOptions {
             dump_state_graph: false,
             dump_unsafe_info: false,
             dump_points_to: false,
+            dump_mir: false,
         }
     }
 }
@@ -205,6 +233,18 @@ impl Options {
             dump_state_graph: matches.get_flag("dump_stategraph"),
             dump_unsafe_info: matches.get_flag("dump_unsafe"),
             dump_points_to: matches.get_flag("dump_points_to"),
+            dump_mir: matches.get_flag("dump_mir"),
+        };
+
+        self.stop_after = match matches.get_one::<String>("stop_after") {
+            Some(stage) => match stage.as_str() {
+                "mir" => StopAfter::AfterMir,
+                "callgraph" => StopAfter::AfterCallGraph,
+                "petrinet" => StopAfter::AfterPetriNet,
+                "stategraph" => StopAfter::AfterStateGraph,
+                _ => StopAfter::None,
+            },
+            None => StopAfter::None,
         };
 
         rustc_args.to_vec()

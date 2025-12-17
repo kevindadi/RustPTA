@@ -58,8 +58,25 @@ fn main() {
         .collect::<Vec<_>>();
     assert!(!args.is_empty());
 
-    if args.len() > 1 && std::path::Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
-        args.remove(1);
+    // 如果 rustc 传递了 -vV 或 --version 等参数，直接传递给 rustc 处理
+    if args.len() > 1 {
+        let first_arg = &args[1];
+        if first_arg == "-vV" || first_arg == "--version" || first_arg == "-V" {
+            // 这些是 rustc 的版本查询参数，直接调用 rustc
+            use std::process::Command;
+            let rustc_path = args[1].clone();
+            let mut cmd = Command::new(rustc_path);
+            cmd.args(&args[2..]);
+            let status = cmd.status().unwrap_or_else(|e| {
+                eprintln!("Failed to execute rustc: {}", e);
+                std::process::exit(1);
+            });
+            std::process::exit(status.code().unwrap_or(1));
+        }
+        
+        if std::path::Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
+            args.remove(1);
+        }
     }
 
     let mut rustc_command_line_arguments: Vec<String> = args[1..].into();
