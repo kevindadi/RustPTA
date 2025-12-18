@@ -1,11 +1,11 @@
-use crate::concurrency::atomic::AtomicCollector;
+use crate::Options;
+use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
 use crate::concurrency::channel::{ChannelCollector, ChannelInfo, EndpointType};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
 use crate::net::structure::PlaceType;
 use crate::translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry};
 use crate::util::format_name;
-use crate::Options;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 
@@ -131,35 +131,60 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
     pub fn construct_atomic_resources(&mut self) {
         let mut atomic_collector =
             AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
-
-        if atomic_collector.atomic_vars.is_empty() {
-            log::debug!("Not Found Atomic Variables In This Crate");
-            return;
-        }
         let atomic_vars = atomic_collector.analyze();
 
-        atomic_collector.to_json_pretty().unwrap();
-        for (_, atomic_info) in atomic_vars {
-            let atomic_type = atomic_info.var_type.clone();
-            let alias_id = atomic_info.get_alias_id();
-            if !atomic_type.starts_with("&") {
-                let atomic_name = atomic_type.clone();
-                let atomic_node =
-                    self.create_resource_place(atomic_name, 1, 1, atomic_info.span.clone());
+        if atomic_vars.is_empty() {
+            log::warn!("Not Found Atomic Variables In This Crate");
+            return;
+        }
 
+        for (_, atomic_info) in atomic_vars {
+            let alias_id = atomic_info.get_alias_id();
+            if let Some(op) = atomic_info.operations.first() {
                 self.resources
-                    .atomic_places_mut()
-                    .insert(alias_id, atomic_node);
+                    .atomic_orders_mut()
+                    .insert(alias_id, op.ordering);
             } else {
-                log::debug!(
-                    "Adding atomic ordering: {:?} -> {:?}",
-                    alias_id,
-                    atomic_info.operations[0].ordering
+                log::warn!(
+                    "atomic variable {:?} has no recorded operations; ordering fallback to Relaxed",
+                    alias_id
                 );
                 self.resources
                     .atomic_orders_mut()
-                    .insert(alias_id, atomic_info.operations[0].ordering);
+                    .insert(alias_id, AtomicOrdering::Relaxed);
             }
+
+            let canonical = {
+                let mut alias_analysis = self.alias.borrow_mut();
+                self.resources
+                    .atomic_places()
+                    .keys()
+                    .copied()
+                    .find(|existing| {
+                        matches!(
+                            alias_analysis.alias_atomic(alias_id, *existing),
+                            ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
+                        )
+                    })
+                    .unwrap_or(alias_id)
+            };
+
+            let place_id = if let Some(&pid) = self.resources.atomic_places().get(&canonical) {
+                pid
+            } else {
+                let place_name = format!(
+                    "Atomic({},{})",
+                    canonical.instance_id.index(),
+                    canonical.local.index()
+                );
+                let pid = self.create_resource_place(place_name, 1, 1, atomic_info.span.clone());
+                self.resources.atomic_places_mut().insert(canonical, pid);
+                pid
+            };
+
+            self.resources
+                .atomic_places_mut()
+                .insert(alias_id, place_id);
         }
     }
 
@@ -243,13 +268,28 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         log::info!("Construct Function Start and End Places");
         self.construct_func();
 
+        if cfg!(feature = "atomic-violation") {
+            self.construct_atomic_resources();
+            let key_api_regex = KeyApiRegex::new();
+            self.translate_all_functions(&key_api_regex);
+            log::info!("Visitor Function Body Complete!");
+            log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
+            return;
+        }
+
         self.construct_lock_with_dfs();
         self.construct_channel_resources();
         self.construct_atomic_resources();
         self.construct_unsafe_blocks();
 
         let key_api_regex = KeyApiRegex::new();
+        self.translate_all_functions(&key_api_regex);
 
+        log::info!("Visitor Function Body Complete!");
+        log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
+    }
+
+    fn translate_all_functions(&mut self, key_api_regex: &KeyApiRegex) {
         let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
             if self.tcx.is_mir_available(caller.instance().def_id())
@@ -262,13 +302,10 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                 if visited_func_id.contains(&caller.instance().def_id()) {
                     continue;
                 }
-                self.visitor_function_body(node, caller, &key_api_regex);
+                self.visitor_function_body(node, caller, key_api_regex);
                 visited_func_id.insert(caller.instance().def_id());
             }
         }
-
-        log::info!("Visitor Function Body Complete!");
-        log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
     }
 
     pub fn visitor_function_body(

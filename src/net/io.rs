@@ -1,10 +1,10 @@
-//! I/O 支持:JSON、RON 以及 PNML（可选）序列化接口.
+//! I/O 支持:JSON、RON 以及 PNML(可选)序列化接口.
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
 use ron::ser::PrettyConfig;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

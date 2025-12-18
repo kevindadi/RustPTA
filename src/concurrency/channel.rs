@@ -17,7 +17,6 @@ use serde_json::json;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelType {
     Mpsc,
-
     Sync(usize),
 }
 

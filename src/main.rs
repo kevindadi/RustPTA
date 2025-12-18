@@ -26,7 +26,7 @@ extern crate rustc_symbol_mangling;
 
 use log::debug;
 use options::Options;
-use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
+use rustc_session::{EarlyDiagCtxt, config::ErrorOutputType};
 
 fn main() {
     let handler = EarlyDiagCtxt::new(ErrorOutputType::default());

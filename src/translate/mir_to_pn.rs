@@ -9,15 +9,15 @@ use crate::{
 };
 use crate::{
     net::{
-        structure::PlaceType, Idx, Net, Place, PlaceId, Transition, TransitionId, TransitionType,
+        Idx, Net, Place, PlaceId, Transition, TransitionId, TransitionType, structure::PlaceType,
     },
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        visit::Visitor, BasicBlock, BasicBlockData, Const, Operand, Rvalue, Statement,
-        StatementKind, SwitchTargets, TerminatorKind, UnwindAction,
+        BasicBlock, BasicBlockData, Const, Operand, Rvalue, Statement, StatementKind,
+        SwitchTargets, TerminatorKind, UnwindAction, visit::Visitor,
     },
     ty,
 };
@@ -33,8 +33,8 @@ use std::{
 
 #[derive(Default)]
 struct BasicBlockGraph {
-    start_places: HashMap<BasicBlock, PlaceId>,
-    sequences: HashMap<BasicBlock, Vec<PlaceId>>,
+    start_places: HashMap<BasicBlock, PlaceId>, // 每个基本块的起始库所,标识进入此块的指令指针
+    sequences: HashMap<BasicBlock, Vec<PlaceId>>, // 每个基本块的指令序列,标识此块内的指令顺序
 }
 
 impl BasicBlockGraph {
@@ -67,6 +67,27 @@ impl BasicBlockGraph {
     }
 }
 
+#[cfg(feature = "atomic-violation")]
+#[derive(Default)]
+struct SegState {
+    seg_index: HashMap<usize, usize>,
+    seg_place_of: HashMap<(usize, usize), PlaceId>,
+    seqcst_place: Option<PlaceId>,
+}
+
+#[cfg(feature = "atomic-violation")]
+impl SegState {
+    fn current_seg(&self, tid: usize) -> usize {
+        *self.seg_index.get(&tid).unwrap_or(&0)
+    }
+
+    fn bump(&mut self, tid: usize) -> usize {
+        let next = self.current_seg(tid) + 1;
+        self.seg_index.insert(tid, next);
+        next
+    }
+}
+
 pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     instance_id: InstanceId,
     instance: &'translate Instance<'tcx>,
@@ -83,6 +104,8 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     return_transition: TransitionId,
     entry_exit: (PlaceId, PlaceId),
     key_api_regex: &'translate KeyApiRegex,
+    #[cfg(feature = "atomic-violation")]
+    seg: SegState,
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -103,6 +126,24 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         None
     }
 
+    #[cfg(feature = "atomic-violation")]
+    fn handle_atomic_basic_op<F>(
+        &mut self,
+        op_name: &str,
+        current_id: AliasId,
+        bb_end: TransitionId,
+        target: &Option<BasicBlock>,
+        bb_idx: &BasicBlock,
+        span: &str,
+        _transition_builder: F,
+    ) -> bool
+    where
+        F: FnMut(&AliasId, &AtomicOrdering, String) -> TransitionType,
+    {
+        self.link_atomic_operation(op_name, current_id, bb_end, target, bb_idx, span)
+    }
+
+    #[cfg(not(feature = "atomic-violation"))]
     fn handle_atomic_basic_op<F>(
         &mut self,
         op_name: &str,
@@ -161,6 +202,134 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         false
     }
 
+    #[cfg(feature = "atomic-violation")]
+    fn link_atomic_operation(
+        &mut self,
+        op_name: &str,
+        current_id: AliasId,
+        bb_end: TransitionId,
+        target: &Option<BasicBlock>,
+        bb_idx: &BasicBlock,
+        span: &str,
+    ) -> bool {
+        let Some((alias_id, resource_place)) = self.find_atomic_match(&current_id) else {
+            log::warn!("no alias found for atomic operation in {:?}", span);
+            return false;
+        };
+
+        let Some(order) = self.resources.atomic_orders().get(&current_id).copied() else {
+            log::warn!(
+                "[atomic-violation] missing ordering for {} @ {:?}",
+                op_name,
+                span
+            );
+            self.connect_to_target(bb_end, target);
+            return true;
+        };
+
+        let tid = self.instance_id.index();
+        let span_owned = span.to_string();
+
+        let transition_name = {
+            let name = format!(
+                "atomic_{:?}_{}_ord={:?}_bb={}",
+                self.instance_id.index(),
+                op_name,
+                order,
+                bb_idx.index()
+            );
+            if let Some(transition) = self.net.get_transition_mut(bb_end) {
+                transition.name = name.clone();
+                transition.transition_type = match op_name {
+                    "load" => TransitionType::AtomicLoad(alias_id, order, span_owned.clone(), tid),
+                    "store" => {
+                        TransitionType::AtomicStore(alias_id, order, span_owned.clone(), tid)
+                    }
+                    _ => transition.transition_type.clone(),
+                };
+            } else {
+                return false;
+            }
+            name
+        };
+
+        self.net.add_input_arc(resource_place, bb_end, 1);
+        self.net.add_output_arc(resource_place, bb_end, 1);
+        self.wire_segment_for_ordering(bb_end, tid, order);
+        self.connect_to_target(bb_end, target);
+
+        log::debug!(
+            "[atomic-violation] wired {} at {:?} with ord={:?}, tid={}, alias={:?}",
+            transition_name,
+            span,
+            order,
+            tid,
+            alias_id
+        );
+
+        true
+    }
+
+    #[cfg(feature = "atomic-violation")]
+    fn ensure_seg_place(&mut self, tid: usize, seg: usize) -> PlaceId {
+        if let Some(&place_id) = self.seg.seg_place_of.get(&(tid, seg)) {
+            return place_id;
+        }
+
+        let name = format!("seg_t{}_s{}", tid, seg);
+        let tokens = if seg == 0 { 1 } else { 0 };
+        let place = Place::new(name, tokens, u64::MAX, PlaceType::BasicBlock, String::new());
+        let place_id = self.net.add_place(place);
+        self.seg.seg_place_of.insert((tid, seg), place_id);
+        place_id
+    }
+
+    #[cfg(feature = "atomic-violation")]
+    fn ensure_seqcst_place(&mut self) -> PlaceId {
+        if let Some(place_id) = self.seg.seqcst_place {
+            return place_id;
+        }
+
+        let place = Place::new(
+            "SeqCst_Global",
+            1,
+            u64::MAX,
+            PlaceType::Resources,
+            String::new(),
+        );
+        let place_id = self.net.add_place(place);
+        self.seg.seqcst_place = Some(place_id);
+        place_id
+    }
+
+    #[cfg(feature = "atomic-violation")]
+    fn wire_segment_for_ordering(&mut self, bb_end: TransitionId, tid: usize, ord: AtomicOrdering) {
+        let current_seg = self.seg.current_seg(tid);
+        let current_place = self.ensure_seg_place(tid, current_seg);
+
+        match ord {
+            AtomicOrdering::Relaxed => {
+                self.net.add_input_arc(current_place, bb_end, 1);
+                self.net.add_output_arc(current_place, bb_end, 1);
+            }
+            AtomicOrdering::Acquire | AtomicOrdering::Release | AtomicOrdering::AcqRel => {
+                let next_seg = self.seg.bump(tid);
+                let next_place = self.ensure_seg_place(tid, next_seg);
+                self.net.add_input_arc(current_place, bb_end, 1);
+                self.net.add_output_arc(next_place, bb_end, 1);
+            }
+            AtomicOrdering::SeqCst => {
+                let next_seg = self.seg.bump(tid);
+                let next_place = self.ensure_seg_place(tid, next_seg);
+                self.net.add_input_arc(current_place, bb_end, 1);
+                self.net.add_output_arc(next_place, bb_end, 1);
+                let seqcst_place = self.ensure_seqcst_place();
+                self.net.add_input_arc(seqcst_place, bb_end, 1);
+                self.net.add_output_arc(seqcst_place, bb_end, 1);
+            }
+        }
+    }
+
     fn find_channel_place(&mut self, channel_alias: AliasId) -> Option<PlaceId> {
         for (alias_id, node) in self.resources.channel_places().iter() {
             let alias_kind = self
@@ -191,7 +360,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         entry_exit: (PlaceId, PlaceId),
         key_api_regex: &'translate KeyApiRegex,
     ) -> Self {
-        Self {
+        #[allow(unused_mut)]
+        let mut s = Self {
             instance_id,
             instance,
             body,
@@ -207,7 +377,24 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return_transition: TransitionId::new(0),
             entry_exit,
             key_api_regex,
+            #[cfg(feature = "atomic-violation")]
+            seg: SegState::default(),
+        };
+
+        #[cfg(feature = "atomic-violation")]
+        {
+            let tid = s.instance_id.index();
+            s.seg.seg_index.insert(tid, 0);
+            let seg_place = s.ensure_seg_place(tid, 0);
+            if let Some(place) = s.net.get_place_mut(seg_place) {
+                place.tokens = 1;
+                if place.capacity < 1 {
+                    place.capacity = 1;
+                }
+            }
         }
+
+        s
     }
 
     pub fn translate(&mut self) {
@@ -243,7 +430,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_input_arc(func_start, bb_start, 1);
         }
         self.net
-            .add_output_arc( self.bb_graph.start(bb_idx), bb_start,1);
+            .add_output_arc(self.bb_graph.start(bb_idx), bb_start, 1);
     }
 
     fn handle_assert(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
@@ -382,6 +569,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) -> Option<TransitionType> {
+        if cfg!(feature = "atomic-violation") {
+            return None;
+        }
+
         let lockguard_id = LockGuardId::new(self.instance_id, destination.local);
         if let Some(guard) = self.lockguards.get_mut(&lockguard_id) {
             let lock_alias = lockguard_id.get_alias_id();
@@ -809,6 +1000,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
+        // FIXME: use regex to match atomic api
         if callee_func_name.contains("::load") {
             if !self.handle_atomic_load(args, bb_end, target, bb_idx, span) {
                 log::debug!("no alias found for atomic load in {:?}", span);
@@ -823,7 +1015,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return true;
         } else if callee_func_name.contains("::compare_exchange") {
             // FIXME: add new petri net model for atomic compare_exchange
-            // self.handle_atomic_compare_exchange(args, bb_end, target, bb_idx, span)
+            // FIXME: CAS and fetchxx api exist atomic violation???
             false
         } else {
             false
@@ -893,93 +1085,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         )
     }
 
-    fn handle_atomic_compare_exchange(
-        &mut self,
-        args: &[Spanned<Operand<'tcx>>],
-        bb_end: TransitionId,
-        target: &Option<BasicBlock>,
-        bb_idx: &BasicBlock,
-        span: &str,
-    ) -> bool {
-        let current_id = AliasId::new(
-            self.instance_id,
-            args.first().unwrap().node.place().unwrap().local,
-        );
-
-        for (atomic_id, place_id) in self.resources.atomic_places().iter() {
-            if !matches!(
-                self.alias
-                    .borrow_mut()
-                    .alias(current_id.into(), (*atomic_id).into()),
-                ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably
-            ) {
-                continue;
-            }
-
-            log::info!("atomic compare_exchange: {:?}", atomic_id);
-
-            let atomic_cmpxchg_place = Place::new(
-                format!(
-                    "atomic_cmpxchg_in_{:?}_{:?}",
-                    current_id.instance_id.index(),
-                    bb_idx.index()
-                ),
-                0,
-                1,
-                PlaceType::BasicBlock,
-                span.to_string(),
-            );
-            let atomic_cmpxchg_place_node = self.net.add_place(atomic_cmpxchg_place);
-            self.net.add_input_arc(atomic_cmpxchg_place_node, bb_end, 1);
-
-            if let (Some(success_order), Some(failure_order)) = (
-                self.resources.atomic_orders().get(&current_id),
-                self.resources.atomic_orders().get(&AliasId::new(
-                    self.instance_id,
-                    args.get(1).unwrap().node.place().unwrap().local,
-                )),
-            ) {
-                let atomic_cmpxchg_transition = Transition::new_with_transition_type(
-                    format!(
-                        "atomic_{:?}_cmpxchg_{:?}_{:?}",
-                        self.instance_id.index(),
-                        success_order,
-                        bb_idx.index()
-                    ),
-                    TransitionType::AtomicCmpXchg(
-                        (*atomic_id).into(),
-                        success_order.clone(),
-                        failure_order.clone(),
-                        span.to_string(),
-                        self.instance_id.index(),
-                    ),
-                );
-                let atomic_cmpxchg_transition_node =
-                    self.net.add_transition(atomic_cmpxchg_transition);
-
-                self.net.add_output_arc(
-                    atomic_cmpxchg_place_node,
-                    atomic_cmpxchg_transition_node,
-                    1,
-                );
-                self.net
-                    .add_input_arc(*place_id, atomic_cmpxchg_transition_node, 1);
-                self.net
-                    .add_output_arc(*place_id, atomic_cmpxchg_transition_node, 1);
-
-                if let Some(t) = target {
-                    self.net.add_input_arc(
-                        self.bb_graph.start(*t),
-                        atomic_cmpxchg_transition_node,
-                        1,
-                    );
-                }
-            }
-            return true;
-        }
-        false
-    }
-
     fn handle_condvar_call(
         &mut self,
         callee_func_name: &str,
@@ -990,6 +1095,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
+        if cfg!(feature = "atomic-violation") {
+            return false;
+        }
+
         if self.key_api_regex.condvar_notify.is_match(callee_func_name) {
             let condvar_id = CondVarId::new(
                 self.instance_id,
@@ -1088,6 +1197,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end: TransitionId,
         target: &Option<BasicBlock>,
     ) -> bool {
+        if cfg!(feature = "atomic-violation") {
+            return false;
+        }
+
         if self.resources.channel_places().is_empty() {
             return false;
         }
@@ -1173,7 +1286,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        if callee_func_name.contains("::drop") {
+        if callee_func_name.contains("::drop") && !cfg!(feature = "atomic-violation") {
             log::debug!("callee_func_name with drop: {:?}", callee_func_name);
             let lockguard_id = LockGuardId::new(
                 self.instance_id,
@@ -1265,6 +1378,12 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         self.net
             .add_input_arc(self.bb_graph.last(*bb_idx), bb_end, 1);
 
+        if cfg!(feature = "atomic-violation") {
+            self.net
+                .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
+            return;
+        }
+
         if !bb.is_cleanup {
             let lockguard_id = LockGuardId::new(self.instance_id, place.local);
 
@@ -1350,7 +1469,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             Rvalue::Ref(_, _, place) => {
                 vec![place]
             }
-            Rvalue::Len(place) | Rvalue::Discriminant(place) => {
+            Rvalue::Discriminant(place) => {
                 vec![place]
             }
             Rvalue::Aggregate(_, operands) => operands
@@ -1464,7 +1583,7 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
             || fn_name.contains("::visit_seq")
             || fn_name.contains("::visit_map")
         {
-            log::debug!("Skipping serialization function: {}", fn_name);
+            log::warn!("Skipping serialization function: {}", fn_name);
             return;
         }
 

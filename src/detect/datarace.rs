@@ -167,8 +167,8 @@ struct StateAccess {
 mod tests {
     use super::*;
     use crate::analysis::reachability::StateGraph;
-    use crate::net::structure::{Place, PlaceType, Transition, TransitionType};
     use crate::net::Net;
+    use crate::net::structure::{Place, PlaceType, Transition, TransitionType};
 
     fn build_data_race_net() -> Net {
         let mut net = Net::empty();
@@ -209,9 +209,10 @@ mod tests {
         assert_eq!(report.race_count, 1);
         let race = &report.race_conditions[0];
         assert_eq!(race.operations.len(), 2);
-        assert!(race
-            .operations
-            .iter()
-            .any(|op| op.operation_type == "write"));
+        assert!(
+            race.operations
+                .iter()
+                .any(|op| op.operation_type == "write")
+        );
     }
 }

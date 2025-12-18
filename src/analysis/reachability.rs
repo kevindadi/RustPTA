@@ -1,12 +1,12 @@
+use crate::net::Net;
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::structure::{Marking, Place, PlaceType, Transition, TransitionType};
-use crate::net::Net;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::fs;
 use std::path::Path;
 
@@ -388,12 +388,10 @@ impl StateGraph {
         }
     }
 
-    /// 按 NodeIndex 访问节点.
     pub fn node(&self, index: NodeIndex) -> &StateNode {
         &self.graph[index]
     }
 
-    /// 快速判断某个标识是否已被探索.
     pub fn contains_marking(&self, marking: &Marking) -> bool {
         self.markings.contains_key(marking)
     }

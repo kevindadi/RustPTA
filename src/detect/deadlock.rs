@@ -276,8 +276,8 @@ impl<'a> DeadlockDetector<'a> {
 mod tests {
     use super::*;
     use crate::analysis::reachability::StateGraph;
-    use crate::net::structure::{Place, PlaceType, Transition};
     use crate::net::Net;
+    use crate::net::structure::{Place, PlaceType, Transition};
 
     fn build_deadlock_net() -> Net {
         let mut net = Net::empty();

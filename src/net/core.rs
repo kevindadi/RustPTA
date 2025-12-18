@@ -149,7 +149,7 @@ impl Net {
         self.post.set(place, transition, weight);
     }
 
-    /// 输入弧： place -> transition   weight: 1    
+    /// 输入弧: place -> transition   weight: 1    
     pub fn add_input_arc(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         if weight == 0 {
             return;
@@ -158,7 +158,7 @@ impl Net {
         *entry += weight;
     }
 
-    /// 输出弧： transition -> place   weight: 1    
+    /// 输出弧: transition -> place   weight: 1    
     pub fn add_output_arc(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         if weight == 0 {
             return;

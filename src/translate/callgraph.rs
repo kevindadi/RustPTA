@@ -1,7 +1,7 @@
+use petgraph::Direction::Incoming;
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
-use petgraph::Direction::Incoming;
 use petgraph::{Directed, Graph};
 
 use std::collections::hash_map::RandomState;

@@ -451,7 +451,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         match place_ref {
             PlaceRef {
                 local: l,
-                projection: [ProjectionElem::Deref, ref remain @ ..],
+                projection: [ProjectionElem::Deref, remain @ ..],
             } => AccessPattern::Indirect(PlaceRef {
                 local: l,
                 projection: remain,
@@ -484,12 +484,11 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             }
 
             Rvalue::RawPtr(_, place)
-            | Rvalue::Len(place)
             | Rvalue::Discriminant(place)
             | Rvalue::CopyForDeref(place) => match place.as_ref() {
                 PlaceRef {
                     local: l,
-                    projection: [ProjectionElem::Deref, ref remain @ ..],
+                    projection: [ProjectionElem::Deref, remain @ ..],
                 } => vec![Some(AccessPattern::Direct(PlaceRef {
                     local: l,
                     projection: remain,
@@ -566,8 +565,6 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
 
             StatementKind::SetDiscriminant { .. } => {}
 
-            StatementKind::Deinit(_) => {}
-
             StatementKind::StorageLive(_) => {}
 
             StatementKind::StorageDead(_) => {}
@@ -626,8 +623,22 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                         }
                     }
                 }
-                (&[Operand::Move(arg0), Operand::Move(arg1), Operand::Move(_arg2)], _dest)
-                | (&[Operand::Move(arg0), Operand::Move(arg1), Operand::Copy(_arg2)], _dest) => {
+                (
+                    &[
+                        Operand::Move(arg0),
+                        Operand::Move(arg1),
+                        Operand::Move(_arg2),
+                    ],
+                    _dest,
+                )
+                | (
+                    &[
+                        Operand::Move(arg0),
+                        Operand::Move(arg1),
+                        Operand::Copy(_arg2),
+                    ],
+                    _dest,
+                ) => {
                     let func_ty = func.ty(self.body, self.tcx);
                     if let TyKind::FnDef(def_id, list) = func_ty.kind() {
                         if is_atomic_ptr_store(*def_id, list, self.tcx) {
