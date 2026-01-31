@@ -39,7 +39,7 @@ pub mod io;
 pub mod reduce;
 pub mod structure;
 
-pub use core::{FireError, Net};
+pub use core::{DiagnosticReport, FireError, Net};
 pub use ids::{PlaceId, TransitionId};
 pub use incidence::{Incidence, IncidenceBool};
 pub use index_vec::{Idx, IndexVec};
