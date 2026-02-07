@@ -47,9 +47,9 @@ pub enum FireError {
 /// Petri 网连通性诊断报告
 #[derive(Debug, Clone, Default)]
 pub struct DiagnosticReport {
-    /// 孤立库所（无任何连接的弧）
+    /// 孤立库所(无任何连接的弧)
     pub isolated_places: Vec<(PlaceId, String)>,
-    /// 孤立变迁（无任何连接的弧）
+    /// 孤立变迁(无任何连接的弧)
     pub isolated_transitions: Vec<(TransitionId, String)>,
     /// 警告信息
     pub warnings: Vec<String>,
@@ -379,7 +379,7 @@ impl Net {
         fs::write(path, self.to_dot())
     }
 
-    /// 诊断信息：检测 Petri 网中的孤立节点和连通性问题
+    /// 诊断信息:检测 Petri 网中的孤立节点和连通性问题
     /// 返回 (孤立库所列表, 孤立变迁列表, 警告信息列表)
     pub fn diagnose_connectivity(&self) -> DiagnosticReport {
         let mut isolated_places = Vec::new();
@@ -396,15 +396,15 @@ impl Net {
             } else if !has_input && place.tokens == 0 {
                 // 没有输入弧且初始标记为 0 的库所永远不会被激活
                 warnings.push(format!(
-                    "库所 '{}' (id={}) 无输入弧且初始标记为 0，永远不会被激活",
+                    "库所 '{}' (id={}) 无输入弧且初始标记为 0,永远不会被激活",
                     place.name,
                     place_id.index()
                 ));
             } else if !has_output {
-                // 没有输出弧的库所是汇点（可能是正常的函数结束点）
+                // 没有输出弧的库所是汇点(可能是正常的函数结束点)
                 if !place.name.contains("_end") {
                     warnings.push(format!(
-                        "库所 '{}' (id={}) 无输出弧（汇点），检查是否为预期行为",
+                        "库所 '{}' (id={}) 无输出弧(汇点),检查是否为预期行为",
                         place.name,
                         place_id.index()
                     ));
@@ -429,13 +429,13 @@ impl Net {
                 isolated_transitions.push((trans_id, trans.name.clone()));
             } else if !has_preset {
                 warnings.push(format!(
-                    "变迁 '{}' (id={}) 无前置库所，永远无法触发",
+                    "变迁 '{}' (id={}) 无前置库所,永远无法触发",
                     trans.name,
                     trans_id.index()
                 ));
             } else if !has_postset {
                 warnings.push(format!(
-                    "变迁 '{}' (id={}) 无后置库所，检查是否为预期行为",
+                    "变迁 '{}' (id={}) 无后置库所,检查是否为预期行为",
                     trans.name,
                     trans_id.index()
                 ));
@@ -485,7 +485,7 @@ impl Net {
             }
             log::warn!("=== 诊断报告结束 ===");
         } else {
-            log::info!("Petri 网连通性检查通过，无孤立节点");
+            log::info!("Petri 网连通性检查通过,无孤立节点");
         }
     }
 

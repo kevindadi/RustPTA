@@ -58,11 +58,11 @@ fn main() {
         .collect::<Vec<_>>();
     assert!(!args.is_empty());
 
-    // 如果 rustc 传递了 -vV 或 --version 等参数，直接传递给 rustc 处理
+    // 如果 rustc 传递了 -vV 或 --version 等参数,直接传递给 rustc 处理
     if args.len() > 1 {
         let first_arg = &args[1];
         if first_arg == "-vV" || first_arg == "--version" || first_arg == "-V" {
-            // 这些是 rustc 的版本查询参数，直接调用 rustc
+            // 这些是 rustc 的版本查询参数,直接调用 rustc
             use std::process::Command;
             let rustc_path = args[1].clone();
             let mut cmd = Command::new(rustc_path);
@@ -109,6 +109,7 @@ fn main() {
             }
         }
 
+        options.infer_crate_name_from_rustc_args(&rustc_command_line_arguments);
         let mut callbacks = callback::PTACallbacks::new(options);
         debug!(
             "rustc_command_line_arguments {:?}",

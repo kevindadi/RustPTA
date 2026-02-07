@@ -198,9 +198,9 @@ impl<'a> AtomicityViolationDetector<'a> {
         }
     }
 
-    /// 内存序触发规则：仅当写操作的内存序在 `store ⪰ load` 的偏序下成立时，视为可能发生。
-    /// 这里采用 Acquire/Release 语义的常见约束，Relaxed 可以匹配任意写，SeqCst 仅匹配 SeqCst，
-    /// AcqRel 既具备 Release 语义也提供 SeqCst 退化，Release 不会单独匹配读取。
+    /// 内存序触发规则:仅当写操作的内存序在 store ⪰ load 的偏序下成立时,视为可能发生.
+    /// 这里采用 Acquire/Release 语义的常见约束,Relaxed 可以匹配任意写,SeqCst 仅匹配 SeqCst,
+    /// AcqRel 既具备 Release 语义也提供 SeqCst 退化,Release 不会单独匹配读取.
     fn ordering_allows(store: AtomicOrdering, load: AtomicOrdering) -> bool {
         use AtomicOrdering::*;
         match load {

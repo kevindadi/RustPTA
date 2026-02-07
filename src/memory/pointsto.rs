@@ -11,6 +11,7 @@ use rustc_middle::mir::{
     AggregateKind, Body, ConstOperand, Local, Location, Operand, Place, PlaceElem, PlaceRef,
     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
+use rustc_span::source_map::Spanned;
 
 use rustc_middle::mir::Const;
 use rustc_middle::ty::{Instance, TyCtxt, TyKind};
@@ -104,7 +105,6 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
         self.propagate_points_to();
     }
 
-    #[allow(dead_code)]
     fn propagate_points_to(&mut self) {
         let mut updated_pts = self.pts.clone();
 
@@ -129,6 +129,7 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                     .extend(parent_pts.iter().cloned());
             }
         }
+        self.pts = updated_pts;
     }
 
     fn union_pts(&mut self, target: &ConstraintNode<'tcx>, source: &ConstraintNode<'tcx>) -> bool {
@@ -153,6 +154,39 @@ pub enum ConstraintNode<'tcx> {
     Place(PlaceRef<'tcx>),
     Constant(Const<'tcx>),
     ConstantDeref(Const<'tcx>),
+}
+
+impl<'tcx> std::fmt::Display for ConstraintNode<'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstraintNode::Place(place) => {
+                write!(f, "_{}", place.local.as_u32())?;
+                if !place.projection.is_empty() {
+                    write!(f, "{:?}", place.projection)?;
+                }
+                Ok(())
+            }
+            ConstraintNode::Alloc(place) => {
+                write!(f, "Alloc(_{}", place.local.as_u32())?;
+                if !place.projection.is_empty() {
+                    write!(f, "{:?}", place.projection)?;
+                }
+                write!(f, ")")
+            }
+            ConstraintNode::Constant(c) => write!(f, "Const({:?})", c),
+            ConstraintNode::ConstantDeref(c) => write!(f, "*Const({:?})", c),
+        }
+    }
+}
+
+impl<'tcx> ConstraintNode<'tcx> {
+    /// Returns the local variable index if this node refers to a place or alloc.
+    pub fn local(&self) -> Option<Local> {
+        match self {
+            ConstraintNode::Place(p) | ConstraintNode::Alloc(p) => Some(p.local),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,7 +277,6 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Load);
     }
 
-    #[allow(dead_code)]
     fn add_store(&mut self, lhs: PlaceRef<'tcx>, rhs: PlaceRef<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Place(rhs);
@@ -252,7 +285,6 @@ impl<'tcx> ConstraintGraph<'tcx> {
         self.graph.add_edge(rhs, lhs, ConstraintEdge::Store);
     }
 
-    #[allow(dead_code)]
     fn add_store_constant(&mut self, lhs: PlaceRef<'tcx>, rhs: Const<'tcx>) {
         let lhs = ConstraintNode::Place(lhs);
         let rhs = ConstraintNode::Constant(rhs);
@@ -437,11 +469,26 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                     self.graph.add_load(*lhs, rhs);
                 }
 
-                (AccessPattern::Indirect(_), Some(AccessPattern::Direct(_))) => {}
+                (AccessPattern::Indirect(lhs), Some(AccessPattern::Direct(rhs))) => {
+                    self.graph.add_store(*lhs, rhs);
+                }
 
                 (AccessPattern::Indirect(lhs), Some(AccessPattern::Constant(rhs))) => {
                     self.graph.add_store_constant(*lhs, rhs);
                 }
+
+                (AccessPattern::Indirect(lhs), Some(AccessPattern::Ref(rhs))) => {
+                    // *x = &y: store the address of y through pointer x
+                    self.graph.add_store(*lhs, rhs);
+                    self.graph.add_address(*lhs, rhs);
+                }
+
+                (AccessPattern::Indirect(lhs), Some(AccessPattern::Indirect(rhs))) => {
+                    // *x = *y: load from y, store into x
+                    // Modeled conservatively by copying through the indirect
+                    self.graph.add_load(*lhs, rhs);
+                }
+
                 _ => {}
             }
         }
@@ -529,6 +576,45 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         self.graph.add_alias_copy(dest, arg);
     }
 
+    fn process_generic_call(
+        &mut self,
+        args: &[Spanned<Operand<'tcx>>],
+        destination: &Place<'tcx>,
+    ) {
+        for arg in args {
+            if let Operand::Move(place) | Operand::Copy(place) = arg.node {
+                self.graph.add_copy(destination.as_ref(), place.as_ref());
+            }
+        }
+    }
+
+    fn projection_may_alias(p1: &[PlaceElem<'tcx>], p2: &[PlaceElem<'tcx>]) -> bool {
+        if p1.len() != p2.len() {
+            return false;
+        }
+        for (a, b) in p1.iter().zip(p2.iter()) {
+            let matches = match (a, b) {
+                (PlaceElem::Index(_), PlaceElem::Index(_)) => true,
+                (PlaceElem::Index(_), PlaceElem::ConstantIndex { .. })
+                | (PlaceElem::ConstantIndex { .. }, PlaceElem::Index(_)) => true,
+                (
+                    PlaceElem::ConstantIndex { offset: o1, .. },
+                    PlaceElem::ConstantIndex { offset: o2, .. },
+                ) => o1 == o2,
+                (PlaceElem::Subslice { .. }, PlaceElem::Subslice { .. }) => true,
+                (PlaceElem::Subslice { .. }, PlaceElem::Index(_))
+                | (PlaceElem::Index(_), PlaceElem::Subslice { .. }) => true,
+                (PlaceElem::Subslice { .. }, PlaceElem::ConstantIndex { .. })
+                | (PlaceElem::ConstantIndex { .. }, PlaceElem::Subslice { .. }) => true,
+                (a, b) => a == b,
+            };
+            if !matches {
+                return false;
+            }
+        }
+        true
+    }
+
     fn add_partial_copy(&mut self) {
         let nodes = self.graph.nodes();
         for (idx, n1) in nodes.iter().enumerate() {
@@ -541,6 +627,9 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                             }
                         } else if &p2.projection[..p1.projection.len()] == p1.projection {
                             self.graph.add_copy(*p1, *p2);
+                        } else if Self::projection_may_alias(p1.projection, p2.projection) {
+                            self.graph.add_copy(*p1, *p2);
+                            self.graph.add_copy(*p2, *p1);
                         }
                     }
                 }
@@ -590,13 +679,6 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
             ..
         } = &terminator.kind
         {
-            let func_ty = func.ty(self.body, self.tcx);
-            if let TyKind::FnDef(def_id, _) | TyKind::Closure(def_id, _) = func_ty.kind() {
-                if self.tcx.def_path_str(def_id).contains("thread::spawn") {
-                    return;
-                }
-            }
-
             match (
                 args.iter()
                     .map(|x| x.node.clone())
@@ -622,6 +704,7 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                             return self.process_call_arg_dest(arg.as_ref(), dest.as_ref());
                         }
                     }
+                    self.process_generic_call(args, destination);
                 }
                 (
                     &[
@@ -645,9 +728,12 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
                             return self.process_call_arg_dest(arg1.as_ref(), arg0.as_ref());
                         }
                     }
+                    self.process_generic_call(args, destination);
                 }
 
-                _ => {}
+                _ => {
+                    self.process_generic_call(args, destination);
+                }
             }
         }
     }
@@ -734,26 +820,44 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
     }
 
     pub fn print_all_points_to_relations(&self) {
-        println!("\n=== Points-to Relations for All Functions ===");
+        println!("{}", self.format_points_to_report());
+    }
+
+    /// 确保所有给定实例的 pts 已计算（用于单独 dump 时预填充）
+    pub fn ensure_pts_for_instances(&mut self, instances: &[Instance<'tcx>]) {
+        for instance in instances {
+            if self.tcx.is_mir_available(instance.def_id()) {
+                let body = self.tcx.instance_mir(instance.def);
+                if body.source.promoted.is_none() {
+                    self.get_or_insert_pts(instance.def_id(), body);
+                }
+            }
+        }
+    }
+
+    pub fn format_points_to_report(&self) -> String {
+        let mut out = String::new();
+        out.push_str("\n=== Points-to Relations for All Functions ===\n");
 
         let mut all_defs: Vec<_> = self.pts.keys().collect();
-
         all_defs.sort_by_key(|def_id| self.tcx.def_path_str(**def_id));
 
         for def_id in all_defs {
-            self.print_points_to_relations(*def_id);
+            out.push_str(&self.format_points_to_relations_for(*def_id));
         }
 
-        println!("=== End of Points-to Relations ===\n");
+        out.push_str("=== End of Points-to Relations ===\n\n");
+        out
     }
 
-    pub fn print_points_to_relations(&self, def_id: DefId) {
+    fn format_points_to_relations_for(&self, def_id: DefId) -> String {
+        let mut out = String::new();
         if let Some(pts_map) = self.pts.get(&def_id) {
-            println!(
-                "\nPoints-to relations for {:?}:",
+            out.push_str(&format!(
+                "\nPoints-to relations for {:?}:\n",
                 self.tcx.def_path_str(def_id)
-            );
-            println!("----------------------------------------");
+            ));
+            out.push_str("----------------------------------------\n");
 
             let mut entries: Vec<_> = pts_map.iter().collect();
             entries.sort_by(|(a, _), (b, _)| match (a, b) {
@@ -807,44 +911,49 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             for (node, pointees) in entries {
                 match node {
                     ConstraintNode::Place(place) => {
-                        print!("{}", place.local.as_u32());
+                        out.push_str(&format!("{}", place.local.as_u32()));
                         if !place.projection.is_empty() {
-                            print!("{:?}", place.projection);
+                            out.push_str(&format!("{:?}", place.projection));
                         }
-                        print!(" → ");
+                        out.push_str(" → ");
 
                         let targets: Vec<String> = pointees
                             .iter()
                             .map(|pointee| match pointee {
                                 ConstraintNode::Alloc(p) => format!("Alloc({:?})", p),
-                                ConstraintNode::Place(p) => {
-                                    format!("{:?}", p)
-                                }
+                                ConstraintNode::Place(p) => format!("{:?}", p),
                                 ConstraintNode::Constant(c) => format!("Const({:?})", c),
-                                ConstraintNode::ConstantDeref(c) => format!("ConstDeref({:?})", c),
+                                ConstraintNode::ConstantDeref(c) => {
+                                    format!("ConstDeref({:?})", c)
+                                }
                             })
                             .collect();
 
-                        println!("{{{}}}", targets.join(", "));
+                        out.push_str(&format!("{{{}}}\n", targets.join(", ")));
                     }
                     ConstraintNode::Constant(c) => {
-                        println!("Const({:?}) → {:?}", c, pointees);
+                        out.push_str(&format!("Const({:?}) → {:?}\n", c, pointees));
                     }
                     ConstraintNode::ConstantDeref(c) => {
-                        println!("ConstDeref({:?}) → {:?}", c, pointees);
+                        out.push_str(&format!("ConstDeref({:?}) → {:?}\n", c, pointees));
                     }
                     ConstraintNode::Alloc(place) => {
-                        println!(
-                            "Alloc({}{:?}) → {:?}",
+                        out.push_str(&format!(
+                            "Alloc({}{:?}) → {:?}\n",
                             place.local.as_u32(),
                             place.projection,
                             pointees
-                        );
+                        ));
                     }
                 }
             }
-            println!("----------------------------------------\n");
+            out.push_str("----------------------------------------\n\n");
         }
+        out
+    }
+
+    pub fn print_points_to_relations(&self, def_id: DefId) {
+        print!("{}", self.format_points_to_relations_for(def_id));
     }
 
     pub fn alias(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
@@ -1382,41 +1491,9 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         }
     }
 
-    #[allow(dead_code)]
+    /// Look up the raw points-to map for a given function by its DefId.
     pub fn points_to_map(&self, def_id: DefId) -> Option<&PointsToMap<'tcx>> {
         self.pts.get(&def_id)
-    }
-
-    #[allow(dead_code)]
-    fn intraproc_points_to(
-        &mut self,
-        instance: &Instance<'tcx>,
-        pointer: ConstraintNode<'tcx>,
-        pointee: ConstraintNode<'tcx>,
-    ) -> Option<ApproximateAliasKind> {
-        let body = self.tcx.instance_mir(instance.def);
-        let points_to_map = self.get_or_insert_pts(instance.def_id(), body);
-        let pointer_pts = points_to_map.get(&pointer)?;
-
-        if pointer_pts.contains(&pointee) {
-            return Some(ApproximateAliasKind::Probably);
-        }
-        let pointee_pts = points_to_map.get(&pointee)?;
-
-        if pointer_pts.iter().any(|n1| {
-            let p = match n1 {
-                ConstraintNode::Place(p) | ConstraintNode::Alloc(p) => *p,
-                _ => return false,
-            };
-            pointee_pts.iter().any(|n2| {
-                matches!(n2, ConstraintNode::Alloc(p2) if *p2 == p)
-                    || matches!(n2, ConstraintNode::Place(p2) if *p2 == p)
-            })
-        }) {
-            return Some(ApproximateAliasKind::Possibly);
-        } else {
-            return Some(ApproximateAliasKind::Unlikely);
-        }
     }
 
     fn get_parent_node(&self, node: &ConstraintNode<'tcx>) -> Option<ConstraintNode<'tcx>> {
@@ -1440,13 +1517,13 @@ fn point_to_same_constant<'tcx>(
     pts1: &FxHashSet<ConstraintNode<'tcx>>,
     pts2: &FxHashSet<ConstraintNode<'tcx>>,
 ) -> bool {
-    let mut constants1 = pts1
+    let constants2: FxHashSet<_> = pts2
         .iter()
-        .filter(|node| matches!(node, &ConstraintNode::ConstantDeref(_)));
-    let mut constants2 = pts2
-        .iter()
-        .filter(|node| matches!(node, &ConstraintNode::ConstantDeref(_)));
-    constants1.any(|c1| constants2.any(|c2| c2 == c1))
+        .filter(|node| matches!(node, &ConstraintNode::ConstantDeref(_)))
+        .collect();
+    pts1.iter()
+        .filter(|node| matches!(node, &ConstraintNode::ConstantDeref(_)))
+        .any(|c1| constants2.contains(c1))
 }
 
 #[inline]
@@ -1460,24 +1537,24 @@ fn point_to_same_type_param<'tcx>(
     body1: &Body<'tcx>,
     body2: &Body<'tcx>,
 ) -> bool {
-    let mut parameter_places1 = pts1.iter().filter_map(|node| match node {
+    let parameter_places1: Vec<_> = pts1.iter().filter_map(|node| match node {
         ConstraintNode::Alloc(place) | ConstraintNode::Place(place)
             if is_parameter(place.local, body1) =>
         {
             Some(*place)
         }
         _ => None,
-    });
-    let mut parameter_places2 = pts2.iter().filter_map(|node| match node {
+    }).collect();
+    let parameter_places2: Vec<_> = pts2.iter().filter_map(|node| match node {
         ConstraintNode::Alloc(place) | ConstraintNode::Place(place)
             if is_parameter(place.local, body2) =>
         {
             Some(*place)
         }
         _ => None,
-    });
-    parameter_places1.any(|place1| {
-        parameter_places2.any(|place2| {
+    }).collect();
+    parameter_places1.iter().any(|place1| {
+        parameter_places2.iter().any(|place2| {
             body1.local_decls[place1.local].ty == body2.local_decls[place2.local].ty
                 && place1.projection == place2.projection
         })
