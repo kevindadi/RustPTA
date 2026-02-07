@@ -351,7 +351,8 @@ impl<'a, 'tcx> UnsafeAnalyzer<'a, 'tcx> {
                     && format_name(def_id).starts_with(&self.crate_name)
                     && self.tcx.is_mir_available(def_id)
                 {
-                    let body = self.tcx.optimized_mir(def_id);
+                    // 使用 instance_mir 确保与指针分析和 Petri 网转换使用相同的 MIR
+                    let body = self.tcx.instance_mir(instance.def);
                     let instance_id = self.callgraph.instance_to_index(instance);
                     let unsafe_collector =
                         UnsafeInfo::collect(*instance, instance_id, body, self.tcx);

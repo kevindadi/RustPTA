@@ -481,11 +481,93 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             TerminatorKind::Drop { place, target, .. } => {
                 self.handle_drop(&bb_idx, place, target, name, bb)
             }
-            TerminatorKind::Unreachable => {
-                todo!("unreachable")
+            // FalseEdge: 用于 match 语句，imaginary_target 是"假"边，real_target 是真正的后继
+            TerminatorKind::FalseEdge { real_target, .. } => {
+                self.handle_fallthrough(bb_idx, real_target, name, "false_edge");
             }
-            _ => {}
+            // FalseUnwind: 用于循环，real_target 是循环体，unwind 用于 panic
+            TerminatorKind::FalseUnwind { real_target, .. } => {
+                self.handle_fallthrough(bb_idx, real_target, name, "false_unwind");
+            }
+            // Yield: generator/async 中的 yield 点
+            TerminatorKind::Yield { resume, .. } => {
+                self.handle_fallthrough(bb_idx, resume, name, "yield");
+            }
+            // InlineAsm: 内联汇编，有可选的后继块
+            TerminatorKind::InlineAsm {
+                targets,
+                unwind: _,
+                ..
+            } => {
+                if let Some(target) = targets.first() {
+                    self.handle_fallthrough(bb_idx, target, name, "inline_asm");
+                } else {
+                    // 无后继块的内联汇编，连接到函数出口
+                    self.handle_terminal_block(bb_idx, name, "inline_asm_noreturn");
+                }
+            }
+            // Unreachable: 不可达代码，连接到函数出口（作为终止状态）
+            TerminatorKind::Unreachable => {
+                self.handle_terminal_block(bb_idx, name, "unreachable");
+            }
+            // UnwindResume: panic 展开恢复，连接到函数出口
+            TerminatorKind::UnwindResume => {
+                self.handle_terminal_block(bb_idx, name, "unwind_resume");
+            }
+            // UnwindTerminate: panic 展开终止（abort）
+            TerminatorKind::UnwindTerminate(_) => {
+                self.handle_terminal_block(bb_idx, name, "unwind_terminate");
+            }
+            // CoroutineDrop: 协程 drop
+            TerminatorKind::CoroutineDrop => {
+                self.handle_terminal_block(bb_idx, name, "coroutine_drop");
+            }
+            // TailCall: 尾调用优化（较新的 Rust 版本）
+            TerminatorKind::TailCall { .. } => {
+                // TailCall 不返回，视为函数出口
+                self.handle_terminal_block(bb_idx, name, "tail_call");
+            }
         }
+    }
+
+    /// 处理具有明确后继块的终止符（fallthrough 语义）
+    fn handle_fallthrough(
+        &mut self,
+        bb_idx: BasicBlock,
+        target: &BasicBlock,
+        name: &str,
+        kind: &str,
+    ) {
+        if self.exclude_bb.contains(&target.index()) {
+            log::debug!(
+                "Fallthrough {} from bb{} to excluded bb{}",
+                kind,
+                bb_idx.index(),
+                target.index()
+            );
+            return;
+        }
+
+        let transition_name = format!("{}_{}_{}", name, bb_idx.index(), kind);
+        let transition =
+            Transition::new_with_transition_type(transition_name, TransitionType::Goto);
+        let t_id = self.net.add_transition(transition);
+
+        self.net.add_input_arc(self.bb_graph.last(bb_idx), t_id, 1);
+        self.net.add_output_arc(self.bb_graph.start(*target), t_id, 1);
+    }
+
+    /// 处理没有后继块的终止符（终止状态）
+    fn handle_terminal_block(&mut self, bb_idx: BasicBlock, name: &str, kind: &str) {
+        let transition_name = format!("{}_{}_{}", name, bb_idx.index(), kind);
+        let transition = Transition::new_with_transition_type(
+            transition_name,
+            TransitionType::Return(self.instance_id.index()),
+        );
+        let t_id = self.net.add_transition(transition);
+
+        self.net.add_input_arc(self.bb_graph.last(bb_idx), t_id, 1);
+        self.net.add_output_arc(self.entry_exit.1, t_id, 1);
     }
 
     fn handle_goto(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {

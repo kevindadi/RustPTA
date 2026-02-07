@@ -314,8 +314,9 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         caller: &CallGraphNode<'tcx>,
         key_api_regex: &KeyApiRegex,
     ) {
-        let def_id = caller.instance().def_id();
-        let body = self.tcx.optimized_mir(def_id);
+        // 使用 instance_mir 而非 optimized_mir，确保与指针分析使用相同的 MIR 版本
+        // instance_mir 会正确处理泛型单态化，而 optimized_mir 可能返回未实例化的版本
+        let body = self.tcx.instance_mir(caller.instance().def);
 
         if body.source.promoted.is_some() {
             return;

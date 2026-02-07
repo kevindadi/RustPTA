@@ -161,11 +161,18 @@ impl PTACallbacks {
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
 
-        // 检查是否在 Petri 网后停止
-        if self.options.stop_after == StopAfter::AfterPetriNet {
-            log::info!("停止分析：在 Petri 网构建后停止");
-            self.handle_visualizations(&callgraph, &pn, &StateGraph::from_net(&pn.net));
-            return;
+        // 在构建状态图之前执行连通性诊断
+        pn.net.log_diagnostics();
+
+        // 如果启用了诊断输出，保存诊断报告到文件
+        if self.options.dump_options.dump_petri_net {
+            let report = pn.net.diagnose_connectivity();
+            if report.has_issues() {
+                let report_path = self.output_directory.join("petri_net_diagnostics.txt");
+                if let Err(err) = report.save_to_file(report_path.to_str().unwrap_or("")) {
+                    error!("failed to save diagnostic report: {err}");
+                }
+            }
         }
 
         let state_graph = StateGraph::from_net(&pn.net);
