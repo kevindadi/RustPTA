@@ -5,13 +5,12 @@ use crate::{
         blocking::{CondVarId, LockGuardId, LockGuardMap, LockGuardTy},
     },
     memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
-    util::format_name,
-};
-use crate::{
     net::{
         Idx, Net, Place, PlaceId, Transition, TransitionId, TransitionType, structure::PlaceType,
     },
+    translate::callgraph::{ThreadControlKind, classify_thread_control},
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
+    util::{format_name, has_pn_attribute},
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -495,9 +494,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             // InlineAsm: 内联汇编,有可选的后继块
             TerminatorKind::InlineAsm {
-                targets,
-                unwind: _,
-                ..
+                targets, unwind: _, ..
             } => {
                 if let Some(target) = targets.first() {
                     self.handle_fallthrough(bb_idx, target, name, "inline_asm");
@@ -554,7 +551,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let t_id = self.net.add_transition(transition);
 
         self.net.add_input_arc(self.bb_graph.last(bb_idx), t_id, 1);
-        self.net.add_output_arc(self.bb_graph.start(*target), t_id, 1);
+        self.net
+            .add_output_arc(self.bb_graph.start(*target), t_id, 1);
     }
 
     /// 处理没有后继块的终止符(终止状态)
@@ -691,6 +689,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_thread_call(
         &mut self,
+        callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
@@ -698,24 +697,36 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        if self.key_api_regex.thread_spawn.is_match(callee_func_name) {
-            self.handle_spawn(callee_func_name, args, target, bb_end);
-            true
-        } else if self.key_api_regex.scope_join.is_match(callee_func_name) {
-            self.handle_scope_join(callee_func_name, args, target, bb_end);
-            true
-        } else if self.key_api_regex.thread_join.is_match(callee_func_name) {
-            self.handle_join(callee_func_name, args, target, bb_end);
-            true
-        } else if callee_func_name.contains("rayon_core::join") {
-            self.handle_rayon_join(callee_func_name, bb_idx, args, target, bb_end, span);
-            true
-        } else if self.key_api_regex.scope_spwan.is_match(callee_func_name) {
-            self.handle_scope_spawn(callee_func_name, bb_idx, args, target, bb_end);
-            true
-        } else {
-            false
+        if let Some(kind) = classify_thread_control(
+            self.tcx,
+            callee_def_id,
+            callee_func_name,
+            self.key_api_regex,
+        ) {
+            match kind {
+                ThreadControlKind::Spawn => {
+                    self.handle_spawn(callee_func_name, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::ScopeSpawn => {
+                    self.handle_scope_spawn(callee_func_name, bb_idx, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::Join => {
+                    self.handle_join(callee_func_name, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::ScopeJoin => {
+                    self.handle_scope_join(callee_func_name, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::RayonJoin => {
+                    self.handle_rayon_join(callee_func_name, bb_idx, args, target, bb_end, span);
+                    return true;
+                }
+            }
         }
+        false
     }
 
     fn handle_scope_join(
@@ -1169,6 +1180,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_condvar_call(
         &mut self,
+        callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         bb_end: TransitionId,
@@ -1181,7 +1193,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return false;
         }
 
-        if self.key_api_regex.condvar_notify.is_match(callee_func_name) {
+        if has_pn_attribute(self.tcx, callee_def_id, "pn_condvar_notify")
+            || self.key_api_regex.condvar_notify.is_match(callee_func_name)
+        {
             let condvar_id = CondVarId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1203,7 +1217,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             self.connect_to_target(bb_end, target);
             true
-        } else if self.key_api_regex.condvar_wait.is_match(callee_func_name) {
+        } else if has_pn_attribute(self.tcx, callee_def_id, "pn_condvar_wait")
+            || self.key_api_regex.condvar_wait.is_match(callee_func_name)
+        {
             let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
             let bb_wait_place =
                 Place::new(bb_wait_name, 0, 1, PlaceType::BasicBlock, span.to_string());
@@ -1274,6 +1290,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_channel_call(
         &mut self,
+        callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         bb_end: TransitionId,
@@ -1287,7 +1304,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return false;
         }
 
-        if self.key_api_regex.channel_send.is_match(callee_func_name) {
+        if has_pn_attribute(self.tcx, callee_def_id, "pn_channel_send")
+            || self.key_api_regex.channel_send.is_match(callee_func_name)
+        {
             let channel_alias = AliasId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1298,7 +1317,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.connect_to_target(bb_end, target);
                 return true;
             }
-        } else if self.key_api_regex.channel_recv.is_match(callee_func_name) {
+        } else if has_pn_attribute(self.tcx, callee_def_id, "pn_channel_recv")
+            || self.key_api_regex.channel_recv.is_match(callee_func_name)
+        {
             let channel_alias = AliasId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1363,7 +1384,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        if self.handle_condvar_call(&callee_func_name, args, bb_end, target, name, &bb_idx, span) {
+        if self.handle_condvar_call(
+            callee_def_id,
+            &callee_func_name,
+            args,
+            bb_end,
+            target,
+            name,
+            &bb_idx,
+            span,
+        ) {
             log::debug!("callee_func_name with condvar: {:?}", callee_func_name);
             return;
         }
@@ -1421,12 +1451,20 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        if self.handle_channel_call(&callee_func_name, args, bb_end, target) {
+        if self.handle_channel_call(callee_def_id, &callee_func_name, args, bb_end, target) {
             log::debug!("callee_func_name with channel: {:?}", callee_func_name);
             return;
         }
 
-        if self.handle_thread_call(&callee_func_name, args, target, bb_end, &bb_idx, span) {
+        if self.handle_thread_call(
+            callee_def_id,
+            &callee_func_name,
+            args,
+            target,
+            bb_end,
+            &bb_idx,
+            span,
+        ) {
             log::debug!("callee_func_name with thread: {:?}", callee_func_name);
             return;
         }

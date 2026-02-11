@@ -80,7 +80,9 @@ fn main() {
         }
     }
 
-    let mut rustc_command_line_arguments: Vec<String> = args[1..].into();
+    // Parse command line arguments for PN
+    let args_slice = if args.len() > 1 { &args[1..] } else { &[] };
+    let mut rustc_command_line_arguments = options.parse_from_args(args_slice);
 
     let result = rustc_driver::catch_fatal_errors(|| {
         rustc_command_line_arguments.insert(0, args[0].clone());
