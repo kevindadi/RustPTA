@@ -60,10 +60,30 @@ pub enum LockGuardTy<'tcx> {
     SpinWrite(ty::Ty<'tcx>),
 }
 
+use crate::util::has_pn_attribute;
+
 impl<'tcx> LockGuardTy<'tcx> {
     pub fn from_local_ty(local_ty: ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
         if let ty::TyKind::Adt(adt_def, substs) = local_ty.kind() {
-            let path = tcx.def_path_str(adt_def.did());
+            let def_id = adt_def.did();
+            // Check for attributes first
+            if has_pn_attribute(tcx, def_id, "pn_mutex_guard") {
+                if let Some(inner) = substs.types().next() {
+                    return Some(LockGuardTy::StdMutex(inner));
+                }
+            }
+            if has_pn_attribute(tcx, def_id, "pn_rwlock_read_guard") {
+                if let Some(inner) = substs.types().next() {
+                    return Some(LockGuardTy::StdRwLockRead(inner));
+                }
+            }
+            if has_pn_attribute(tcx, def_id, "pn_rwlock_write_guard") {
+                if let Some(inner) = substs.types().next() {
+                    return Some(LockGuardTy::StdRwLockWrite(inner));
+                }
+            }
+
+            let path = tcx.def_path_str(def_id);
 
             if !path.contains("MutexGuard")
                 && !path.contains("RwLockReadGuard")
@@ -178,12 +198,20 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
             }
 
             if let TyKind::Adt(adt_def, _) = local_ty.kind() {
-                let path = self.tcx.def_path_str(adt_def.did());
-                if path.starts_with("std::sync::Condvar") {
+                let def_id = adt_def.did();
+                if has_pn_attribute(self.tcx, def_id, "pn_condvar") {
                     self.condvars.insert(
                         CondVarId::new(self.instance_id, local),
                         format!("{:?}", local_decl.source_info.span),
                     );
+                } else {
+                    let path = self.tcx.def_path_str(def_id);
+                    if path.starts_with("std::sync::Condvar") {
+                        self.condvars.insert(
+                            CondVarId::new(self.instance_id, local),
+                            format!("{:?}", local_decl.source_info.span),
+                        );
+                    }
                 }
             }
         }

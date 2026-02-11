@@ -270,7 +270,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
         if cfg!(feature = "atomic-violation") {
             self.construct_atomic_resources();
-            let key_api_regex = KeyApiRegex::new();
+            let key_api_regex = KeyApiRegex::new(&self.options.config);
             self.translate_all_functions(&key_api_regex);
             log::info!("Visitor Function Body Complete!");
             log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
@@ -282,7 +282,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         self.construct_atomic_resources();
         self.construct_unsafe_blocks();
 
-        let key_api_regex = KeyApiRegex::new();
+        let key_api_regex = KeyApiRegex::new(&self.options.config);
         self.translate_all_functions(&key_api_regex);
 
         log::info!("Visitor Function Body Complete!");

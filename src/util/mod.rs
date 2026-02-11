@@ -59,6 +59,11 @@ pub fn def_id_as_qualified_name_str(tcx: TyCtxt<'_>, def_id: DefId) -> Rc<str> {
     Rc::from(name.as_str())
 }
 
+pub fn has_pn_attribute(tcx: TyCtxt<'_>, def_id: DefId, attr_stem: &str) -> bool {
+    let mut attrs = tcx.get_attrs(def_id, rustc_span::symbol::Symbol::intern(attr_stem));
+    attrs.next().is_some()
+}
+
 pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
     if !matches!(
         tcx.def_kind(def_id),

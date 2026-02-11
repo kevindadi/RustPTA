@@ -5,6 +5,7 @@
 pub mod analysis;
 pub mod callback;
 pub mod concurrency;
+pub mod config;
 pub mod detect;
 pub mod memory;
 pub mod net;
@@ -73,7 +74,7 @@ fn main() {
             });
             std::process::exit(status.code().unwrap_or(1));
         }
-        
+
         if std::path::Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
             args.remove(1);
         }

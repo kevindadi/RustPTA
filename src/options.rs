@@ -2,10 +2,9 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 
+use crate::config::PnConfig;
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
-
-#[derive(Debug)]
 pub enum CrateNameList {
     White(Vec<String>),
     Black(Vec<String>),
@@ -58,6 +57,12 @@ fn make_options_parser() -> clap::Command {
                 .value_name("PATH")
                 .help("Directory for Petri net analysis outputs (default: ./tmp/<crate_name>)")
                 .default_value("./tmp"),
+        )
+        .arg(
+            Arg::new("config_file")
+                .long("config")
+                .value_name("FILE")
+                .help("Path to configuration file (default: pn.toml)"),
         )
         .arg(
             Arg::new("target_crate")
@@ -136,6 +141,7 @@ pub struct Options {
     pub crate_name: String,
     pub dump_options: DumpOptions,
     pub stop_after: StopAfter,
+    pub config: PnConfig,
 }
 
 impl Default for Options {
@@ -146,6 +152,7 @@ impl Default for Options {
             crate_name: String::new(),
             dump_options: DumpOptions::default(),
             stop_after: StopAfter::None,
+            config: PnConfig::default(),
         }
     }
 }
@@ -266,6 +273,22 @@ impl Options {
             },
             None => StopAfter::None,
         };
+
+        let config_path = matches
+            .get_one::<String>("config_file")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("pn.toml"));
+
+        match PnConfig::load_from_file(&config_path) {
+            Ok(cfg) => self.config = cfg,
+            Err(e) => {
+                // If user deliberately specified a config file and it failed, we should probably warn or error.
+                // But PnConfig::load_from_file returns Default if path doesn't exist.
+                // However, PnConfig::load_from_file implementation I wrote earlier returns Ok(Default) if not exists.
+                // Wait, if it fails to parse, it returns Error.
+                log::warn!("Failed to load config from {:?}: {}", config_path, e);
+            }
+        }
 
         rustc_args.to_vec()
     }

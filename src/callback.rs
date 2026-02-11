@@ -145,7 +145,8 @@ impl PTACallbacks {
             .collect();
 
         let mut callgraph = CallGraph::new();
-        callgraph.analyze(instances.clone(), tcx);
+        let key_api_regex = crate::translate::structure::KeyApiRegex::new(&self.options.config);
+        callgraph.analyze(instances.clone(), tcx, &key_api_regex);
 
         // 输出 MIR dot(如果启用)
         if self.options.dump_options.dump_mir {
@@ -251,7 +252,7 @@ impl PTACallbacks {
 
     fn dump_mir_dots<'tcx>(&self, tcx: TyCtxt<'tcx>, instances: &[Instance<'tcx>]) {
         use crate::util::mir_dot::write_mir_dot;
-        
+
         let mir_dir = self.output_directory.join("mir");
         std::fs::create_dir_all(&mir_dir).unwrap_or_else(|e| {
             error!("Failed to create MIR output directory: {}", e);
