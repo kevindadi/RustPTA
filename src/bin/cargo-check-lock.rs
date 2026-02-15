@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::Command;
 
 const CARGO_PN_HELP: &str = r#"Petri Net-based Analysis Tool for Rust Programs
@@ -13,7 +14,8 @@ OPTIONS:
     -m, --mode <TYPE>              Analysis mode:
                                    - deadlock: Deadlock detection
                                    - datarace: Data race detection
-                                   - atomic: Atomicity Violation detedtion
+                                   - atomic: Atomicity Violation detection
+                                   - pointsto: Standalone pointer analysis
                                    - [default: all]
     -p, --pn-crate <NAME>           Target crate for analysis(Only underlined links can be used)
     --pn-analysis-dir=<PATH>       Output path for analysis results [default: diagnostics.json]
@@ -48,22 +50,61 @@ fn has_arg_flag(name: &str) -> bool {
     args.any(|val| val == name)
 }
 
+fn find_pn_binary() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let pn = dir.join("pn");
+            if pn.exists() {
+                return pn;
+            }
+            let pn = dir.join("pn.exe");
+            if pn.exists() {
+                return pn;
+            }
+        }
+    }
+    PathBuf::from("pn")
+}
+
 fn in_cargo_pta() {
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let split_pos = args.iter().position(|a| a == "--");
+    let (flags, rest) = match split_pos {
+        Some(pos) => (&args[..pos], &args[pos + 1..]),
+        None => (args.as_slice(), &[][..]),
+    };
+    let flags_str = flags.join(" ");
+
+    let file_arg = flags.iter().position(|a| a == "-f" || a == "--file");
+    let single_file = file_arg.and_then(|i| flags.get(i + 1).cloned());
+
+    if let Some(file) = single_file {
+        let rustc = env::var_os("RUSTC").unwrap_or_else(|| OsString::from("rustc"));
+        let pn_path = find_pn_binary();
+        let mut cmd = Command::new(&pn_path);
+        cmd.arg(&rustc);
+        cmd.arg(&file);
+        cmd.env("RUST_BACKTRACE", "full");
+        cmd.env("PN_LOG", "info");
+        cmd.env("PN_FLAGS", flags_str);
+        let exit_status = cmd
+            .spawn()
+            .expect("could not run pn")
+            .wait()
+            .expect("failed to wait for pn?");
+        if !exit_status.success() {
+            std::process::exit(exit_status.code().unwrap_or(-1));
+        }
+        return;
+    }
+
     let mut cmd = cargo();
     cmd.arg("build");
-    cmd.env("RUSTC_WRAPPER", "pn");
+    cmd.env("RUSTC_WRAPPER", find_pn_binary());
     cmd.env("RUST_BACKTRACE", "full");
     cmd.env("PN_LOG", "info");
-    let args = std::env::args().skip(2);
-    let mut flags = Vec::new();
-    for arg in args {
-        if arg == "--" {
-            break;
-        }
-        flags.push(arg);
-    }
-    let flags = flags.join(" ");
-    cmd.env("PN_FLAGS", flags);
+    cmd.env("PN_FLAGS", flags_str);
+    cmd.args(rest);
     let exit_status = cmd
         .spawn()
         .expect("could not run cargo")

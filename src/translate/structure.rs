@@ -5,6 +5,7 @@ use regex::Regex;
 use rustc_hir::def_id::DefId;
 
 use crate::concurrency::atomic::AtomicOrdering;
+use crate::config::PnConfig;
 use crate::{memory::pointsto::AliasId, net::PlaceId};
 
 pub struct ResourceRegistry {
@@ -131,18 +132,27 @@ pub struct KeyApiRegex {
 }
 
 impl KeyApiRegex {
-    pub fn new() -> Self {
+    pub fn new(config: &PnConfig) -> Self {
+        let make_regex = |patterns: &[String]| -> Regex {
+            if patterns.is_empty() {
+                Regex::new("^$").unwrap() // Match nothing
+            } else {
+                let combined = patterns.join("|");
+                Regex::new(&combined).expect(&format!("Invalid regex in config: {}", combined))
+            }
+        };
+
         Self {
-            thread_spawn: Regex::new(r"std::thread[:a-zA-Z0-9_#\{\}]*::spawn").unwrap(),
-            thread_join: Regex::new(r"std::thread[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
-            scope_spwan: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::spawn").unwrap(),
-            scope_join: Regex::new(r"std::thread::scoped[:a-zA-Z0-9_#\{\}]*::join").unwrap(),
-            condvar_notify: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::notify").unwrap(),
-            condvar_wait: Regex::new(r"condvar[:a-zA-Z0-9_#\{\}]*::wait").unwrap(),
-            channel_send: Regex::new(r"mpsc[:a-zA-Z0-9_#\{\}]*::send").unwrap(),
-            channel_recv: Regex::new(r"mpsc[:a-zA-Z0-9_#\{\}]*::recv").unwrap(),
-            atomic_load: Regex::new(r"atomic[:a-zA-Z0-9]*::load").unwrap(),
-            atomic_store: Regex::new(r"atomic[:a-zA-Z0-9]*::store").unwrap(),
+            thread_spawn: make_regex(&config.thread_spawn),
+            thread_join: make_regex(&config.thread_join),
+            scope_spwan: make_regex(&config.scope_spawn),
+            scope_join: make_regex(&config.scope_join),
+            condvar_notify: make_regex(&config.condvar_notify),
+            condvar_wait: make_regex(&config.condvar_wait),
+            channel_send: make_regex(&config.channel_send),
+            channel_recv: make_regex(&config.channel_recv),
+            atomic_load: make_regex(&config.atomic_load),
+            atomic_store: make_regex(&config.atomic_store),
         }
     }
 }

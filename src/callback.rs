@@ -12,7 +12,7 @@ use crate::detect::datarace::DataRaceDetector;
 use crate::detect::deadlock::DeadlockDetector;
 #[cfg(feature = "atomic-violation")]
 use crate::net::{core::Net, structure::TransitionType};
-use crate::options::{DetectorKind, Options};
+use crate::options::{DetectorKind, Options, StopAfter};
 #[cfg(feature = "atomic-violation")]
 use crate::report::{AtomicOperation, ViolationPattern};
 use crate::report::{AtomicReport, DeadlockReport, RaceReport};
@@ -104,9 +104,16 @@ impl rustc_driver::Callbacks for PTACallbacks {
             return Compilation::Continue;
         }
 
+        // 检查是否在 MIR 后停止(在分析之前)
+        if self.options.stop_after == StopAfter::AfterMir {
+            log::info!("停止分析:在 MIR 输出后停止");
+            return Compilation::Stop;
+        }
+
         self.analyze_with_pta(compiler, tcx);
 
-        if self.test_run {
+        // 如果设置了停止点,在分析后停止编译
+        if self.options.stop_after != StopAfter::None || self.test_run {
             Compilation::Stop
         } else {
             Compilation::Continue
@@ -138,14 +145,56 @@ impl PTACallbacks {
             .collect();
 
         let mut callgraph = CallGraph::new();
-        callgraph.analyze(instances.clone(), tcx);
+        let key_api_regex = crate::translate::structure::KeyApiRegex::new(&self.options.config);
+        callgraph.analyze(instances.clone(), tcx, &key_api_regex);
+
+        // 输出 MIR dot(如果启用)
+        if self.options.dump_options.dump_mir {
+            self.dump_mir_dots(tcx, &instances);
+        }
+
+        // 检查是否在调用图后停止
+        if self.options.stop_after == StopAfter::AfterCallGraph {
+            log::info!("停止分析:在调用图构建后停止");
+            return;
+        }
 
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
 
+        // 在构建状态图之前执行连通性诊断
+        pn.net.log_diagnostics();
+
+        // 如果启用了诊断输出,保存诊断报告到文件
+        if self.options.dump_options.dump_petri_net {
+            let report = pn.net.diagnose_connectivity();
+            if report.has_issues() {
+                let report_path = self.output_directory.join("petri_net_diagnostics.txt");
+                if let Err(err) = report.save_to_file(report_path.to_str().unwrap_or("")) {
+                    error!("failed to save diagnostic report: {err}");
+                }
+            }
+        }
+
+        // 检查是否在指针分析后停止
+        if self.options.stop_after == StopAfter::AfterPointsTo
+            || matches!(self.options.detector_kind, DetectorKind::PointsTo)
+        {
+            log::info!("停止分析:在指针分析后停止");
+            self.handle_visualizations(&callgraph, &pn, &StateGraph::from_net(&pn.net), &instances);
+            return;
+        }
+
         let state_graph = StateGraph::from_net(&pn.net);
 
-        self.handle_visualizations(&callgraph, &pn, &state_graph);
+        // 检查是否在状态图后停止
+        if self.options.stop_after == StopAfter::AfterStateGraph {
+            log::info!("停止分析:在状态图构建后停止");
+            self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
+            return;
+        }
+
+        self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
         #[cfg(feature = "atomic-violation")]
         self.run_detectors(&pn, &state_graph);
         #[cfg(not(feature = "atomic-violation"))]
@@ -159,6 +208,7 @@ impl PTACallbacks {
         callgraph: &CallGraph<'tcx>,
         pn: &PetriNet<'analysis, 'tcx>,
         state_graph: &StateGraph,
+        instances: &[Instance<'tcx>],
     ) {
         let dump = &self.options.dump_options;
 
@@ -188,8 +238,50 @@ impl PTACallbacks {
         if dump.dump_unsafe_info {
             todo!()
         }
-        if dump.dump_points_to {
-            todo!()
+        if dump.dump_points_to || matches!(self.options.detector_kind, DetectorKind::PointsTo) {
+            pn.alias.borrow_mut().ensure_pts_for_instances(instances);
+            let report = pn.alias.borrow().format_points_to_report();
+            let path = self.output_directory.join("points_to_report.txt");
+            if let Err(err) = std::fs::write(&path, report) {
+                error!("failed to write points-to report to {:?}: {err}", path);
+            } else {
+                info!("points-to report exported to {:?}", path);
+            }
+        }
+    }
+
+    fn dump_mir_dots<'tcx>(&self, tcx: TyCtxt<'tcx>, instances: &[Instance<'tcx>]) {
+        use crate::util::mir_dot::write_mir_dot;
+
+        let mir_dir = self.output_directory.join("mir");
+        std::fs::create_dir_all(&mir_dir).unwrap_or_else(|e| {
+            error!("Failed to create MIR output directory: {}", e);
+        });
+
+        for instance in instances {
+            let def_id = instance.def_id();
+            if !tcx.is_mir_available(def_id) {
+                continue;
+            }
+
+            let body = tcx.optimized_mir(def_id);
+            if body.source.promoted.is_some() {
+                continue;
+            }
+
+            let fn_name = crate::util::format_name(def_id);
+            let safe_fn_name = fn_name
+                .replace(':', "_")
+                .replace('-', "_")
+                .replace('.', "_")
+                .replace('/', "_");
+            let mir_path = mir_dir.join(format!("{}.dot", safe_fn_name));
+
+            if let Err(err) = write_mir_dot(tcx, def_id, body, &mir_path) {
+                error!("Failed to write MIR dot for {}: {}", fn_name, err);
+            } else {
+                info!("MIR dot exported: {}", mir_path.display());
+            }
         }
     }
 
@@ -202,6 +294,9 @@ impl PTACallbacks {
             DetectorKind::DataRace => {
                 self.run_datarace_detector(state_graph);
             }
+            DetectorKind::PointsTo => {
+                // Points-to mode returns early; this arm is unreachable
+            }
             DetectorKind::AtomicityViolation => {
                 #[cfg(feature = "atomic-violation")]
                 {
@@ -210,7 +305,7 @@ impl PTACallbacks {
                 #[cfg(not(feature = "atomic-violation"))]
                 {
                     log::warn!(
-                        "请求执行原子性违背检测，但未启用 `atomic-violation` feature，分析被跳过。"
+                        "请求执行原子性违背检测,但未启用 atomic-violation feature,分析被跳过."
                     );
                 }
             }
@@ -220,7 +315,7 @@ impl PTACallbacks {
                 #[cfg(feature = "atomic-violation")]
                 {
                     log::info!(
-                        "由于数据竞争与原子性违背检测互斥，`--mode all` 默认执行数据竞争分析；如需原子性分析请使用 `--mode atomic` 并启用 feature。"
+                        "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
                     );
                 }
 
@@ -238,13 +333,16 @@ impl PTACallbacks {
             DetectorKind::DataRace => {
                 self.run_datarace_detector(state_graph);
             }
+            DetectorKind::PointsTo => {
+                // Points-to mode returns early; this arm is unreachable
+            }
             DetectorKind::AtomicityViolation => {
                 self.run_atomic_detector(pn);
             }
             DetectorKind::All => {
                 self.run_deadlock_detector(state_graph);
                 info!(
-                    "由于数据竞争与原子性违背检测互斥，`--mode all` 默认执行数据竞争分析；如需原子性分析请使用 `--mode atomic` 并启用 feature。"
+                    "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
                 );
                 self.run_datarace_detector(state_graph);
             }

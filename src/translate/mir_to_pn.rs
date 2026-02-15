@@ -5,13 +5,12 @@ use crate::{
         blocking::{CondVarId, LockGuardId, LockGuardMap, LockGuardTy},
     },
     memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
-    util::format_name,
-};
-use crate::{
     net::{
         Idx, Net, Place, PlaceId, Transition, TransitionId, TransitionType, structure::PlaceType,
     },
+    translate::callgraph::{ThreadControlKind, classify_thread_control},
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
+    util::{format_name, has_pn_attribute},
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -481,11 +480,92 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             TerminatorKind::Drop { place, target, .. } => {
                 self.handle_drop(&bb_idx, place, target, name, bb)
             }
-            TerminatorKind::Unreachable => {
-                todo!("unreachable")
+            // FalseEdge: 用于 match 语句,imaginary_target 是"假"边,real_target 是真正的后继
+            TerminatorKind::FalseEdge { real_target, .. } => {
+                self.handle_fallthrough(bb_idx, real_target, name, "false_edge");
             }
-            _ => {}
+            // FalseUnwind: 用于循环,real_target 是循环体,unwind 用于 panic
+            TerminatorKind::FalseUnwind { real_target, .. } => {
+                self.handle_fallthrough(bb_idx, real_target, name, "false_unwind");
+            }
+            // Yield: generator/async 中的 yield 点
+            TerminatorKind::Yield { resume, .. } => {
+                self.handle_fallthrough(bb_idx, resume, name, "yield");
+            }
+            // InlineAsm: 内联汇编,有可选的后继块
+            TerminatorKind::InlineAsm {
+                targets, unwind: _, ..
+            } => {
+                if let Some(target) = targets.first() {
+                    self.handle_fallthrough(bb_idx, target, name, "inline_asm");
+                } else {
+                    // 无后继块的内联汇编,连接到函数出口
+                    self.handle_terminal_block(bb_idx, name, "inline_asm_noreturn");
+                }
+            }
+            // Unreachable: 不可达代码,连接到函数出口(作为终止状态)
+            TerminatorKind::Unreachable => {
+                self.handle_terminal_block(bb_idx, name, "unreachable");
+            }
+            // UnwindResume: panic 展开恢复,连接到函数出口
+            TerminatorKind::UnwindResume => {
+                self.handle_terminal_block(bb_idx, name, "unwind_resume");
+            }
+            // UnwindTerminate: panic 展开终止(abort)
+            TerminatorKind::UnwindTerminate(_) => {
+                self.handle_terminal_block(bb_idx, name, "unwind_terminate");
+            }
+            // CoroutineDrop: 协程 drop
+            TerminatorKind::CoroutineDrop => {
+                self.handle_terminal_block(bb_idx, name, "coroutine_drop");
+            }
+            // TailCall: 尾调用优化(较新的 Rust 版本)
+            TerminatorKind::TailCall { .. } => {
+                // TailCall 不返回,视为函数出口
+                self.handle_terminal_block(bb_idx, name, "tail_call");
+            }
         }
+    }
+
+    /// 处理具有明确后继块的终止符(fallthrough 语义)
+    fn handle_fallthrough(
+        &mut self,
+        bb_idx: BasicBlock,
+        target: &BasicBlock,
+        name: &str,
+        kind: &str,
+    ) {
+        if self.exclude_bb.contains(&target.index()) {
+            log::debug!(
+                "Fallthrough {} from bb{} to excluded bb{}",
+                kind,
+                bb_idx.index(),
+                target.index()
+            );
+            return;
+        }
+
+        let transition_name = format!("{}_{}_{}", name, bb_idx.index(), kind);
+        let transition =
+            Transition::new_with_transition_type(transition_name, TransitionType::Goto);
+        let t_id = self.net.add_transition(transition);
+
+        self.net.add_input_arc(self.bb_graph.last(bb_idx), t_id, 1);
+        self.net
+            .add_output_arc(self.bb_graph.start(*target), t_id, 1);
+    }
+
+    /// 处理没有后继块的终止符(终止状态)
+    fn handle_terminal_block(&mut self, bb_idx: BasicBlock, name: &str, kind: &str) {
+        let transition_name = format!("{}_{}_{}", name, bb_idx.index(), kind);
+        let transition = Transition::new_with_transition_type(
+            transition_name,
+            TransitionType::Return(self.instance_id.index()),
+        );
+        let t_id = self.net.add_transition(transition);
+
+        self.net.add_input_arc(self.bb_graph.last(bb_idx), t_id, 1);
+        self.net.add_output_arc(self.entry_exit.1, t_id, 1);
     }
 
     fn handle_goto(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
@@ -609,6 +689,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_thread_call(
         &mut self,
+        callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
@@ -616,24 +697,36 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        if self.key_api_regex.thread_spawn.is_match(callee_func_name) {
-            self.handle_spawn(callee_func_name, args, target, bb_end);
-            true
-        } else if self.key_api_regex.scope_join.is_match(callee_func_name) {
-            self.handle_scope_join(callee_func_name, args, target, bb_end);
-            true
-        } else if self.key_api_regex.thread_join.is_match(callee_func_name) {
-            self.handle_join(callee_func_name, args, target, bb_end);
-            true
-        } else if callee_func_name.contains("rayon_core::join") {
-            self.handle_rayon_join(callee_func_name, bb_idx, args, target, bb_end, span);
-            true
-        } else if self.key_api_regex.scope_spwan.is_match(callee_func_name) {
-            self.handle_scope_spawn(callee_func_name, bb_idx, args, target, bb_end);
-            true
-        } else {
-            false
+        if let Some(kind) = classify_thread_control(
+            self.tcx,
+            callee_def_id,
+            callee_func_name,
+            self.key_api_regex,
+        ) {
+            match kind {
+                ThreadControlKind::Spawn => {
+                    self.handle_spawn(callee_func_name, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::ScopeSpawn => {
+                    self.handle_scope_spawn(callee_func_name, bb_idx, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::Join => {
+                    self.handle_join(callee_func_name, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::ScopeJoin => {
+                    self.handle_scope_join(callee_func_name, args, target, bb_end);
+                    return true;
+                }
+                ThreadControlKind::RayonJoin => {
+                    self.handle_rayon_join(callee_func_name, bb_idx, args, target, bb_end, span);
+                    return true;
+                }
+            }
         }
+        false
     }
 
     fn handle_scope_join(
@@ -1087,6 +1180,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_condvar_call(
         &mut self,
+        callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         bb_end: TransitionId,
@@ -1099,7 +1193,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return false;
         }
 
-        if self.key_api_regex.condvar_notify.is_match(callee_func_name) {
+        if has_pn_attribute(self.tcx, callee_def_id, "pn_condvar_notify")
+            || self.key_api_regex.condvar_notify.is_match(callee_func_name)
+        {
             let condvar_id = CondVarId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1121,7 +1217,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
             self.connect_to_target(bb_end, target);
             true
-        } else if self.key_api_regex.condvar_wait.is_match(callee_func_name) {
+        } else if has_pn_attribute(self.tcx, callee_def_id, "pn_condvar_wait")
+            || self.key_api_regex.condvar_wait.is_match(callee_func_name)
+        {
             let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
             let bb_wait_place =
                 Place::new(bb_wait_name, 0, 1, PlaceType::BasicBlock, span.to_string());
@@ -1192,6 +1290,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     fn handle_channel_call(
         &mut self,
+        callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         bb_end: TransitionId,
@@ -1205,7 +1304,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return false;
         }
 
-        if self.key_api_regex.channel_send.is_match(callee_func_name) {
+        if has_pn_attribute(self.tcx, callee_def_id, "pn_channel_send")
+            || self.key_api_regex.channel_send.is_match(callee_func_name)
+        {
             let channel_alias = AliasId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1216,7 +1317,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.connect_to_target(bb_end, target);
                 return true;
             }
-        } else if self.key_api_regex.channel_recv.is_match(callee_func_name) {
+        } else if has_pn_attribute(self.tcx, callee_def_id, "pn_channel_recv")
+            || self.key_api_regex.channel_recv.is_match(callee_func_name)
+        {
             let channel_alias = AliasId::new(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().local,
@@ -1281,7 +1384,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        if self.handle_condvar_call(&callee_func_name, args, bb_end, target, name, &bb_idx, span) {
+        if self.handle_condvar_call(
+            callee_def_id,
+            &callee_func_name,
+            args,
+            bb_end,
+            target,
+            name,
+            &bb_idx,
+            span,
+        ) {
             log::debug!("callee_func_name with condvar: {:?}", callee_func_name);
             return;
         }
@@ -1339,12 +1451,20 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        if self.handle_channel_call(&callee_func_name, args, bb_end, target) {
+        if self.handle_channel_call(callee_def_id, &callee_func_name, args, bb_end, target) {
             log::debug!("callee_func_name with channel: {:?}", callee_func_name);
             return;
         }
 
-        if self.handle_thread_call(&callee_func_name, args, target, bb_end, &bb_idx, span) {
+        if self.handle_thread_call(
+            callee_def_id,
+            &callee_func_name,
+            args,
+            target,
+            bb_end,
+            &bb_idx,
+            span,
+        ) {
             log::debug!("callee_func_name with thread: {:?}", callee_func_name);
             return;
         }

@@ -1,4 +1,5 @@
 pub mod mem_watcher;
+pub mod mir_dot;
 
 use std::io::Write;
 use std::rc::Rc;
@@ -56,6 +57,11 @@ pub fn def_id_as_qualified_name_str(tcx: TyCtxt<'_>, def_id: DefId) -> Rc<str> {
         name.push_str(&format!("{:?}", fn_sig.output()));
     }
     Rc::from(name.as_str())
+}
+
+pub fn has_pn_attribute(tcx: TyCtxt<'_>, def_id: DefId, attr_stem: &str) -> bool {
+    let mut attrs = tcx.get_attrs(def_id, rustc_span::symbol::Symbol::intern(attr_stem));
+    attrs.next().is_some()
 }
 
 pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {

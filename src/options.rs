@@ -2,10 +2,9 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 
+use crate::config::PnConfig;
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
-
-#[derive(Debug)]
 pub enum CrateNameList {
     White(Vec<String>),
     Black(Vec<String>),
@@ -24,13 +23,14 @@ pub enum DetectorKind {
     Deadlock,
     AtomicityViolation,
     DataRace,
+    PointsTo,
 }
 
 fn make_options_parser() -> clap::Command {
     let analysis_help = if cfg!(feature = "atomic-violation") {
-        "Analysis mode: deadlock detection, data race detection, atomic violation detection (requires feature), or all."
+        "Analysis mode: deadlock, datarace, atomic (requires feature), all, or pointsto (standalone pointer analysis)."
     } else {
-        "Analysis mode: deadlock detection, data race detection, or all."
+        "Analysis mode: deadlock, datarace, all, or pointsto (standalone pointer analysis)."
     };
 
     let analysis_arg = {
@@ -41,9 +41,9 @@ fn make_options_parser() -> clap::Command {
             .default_values(&["deadlock"])
             .hide_default_value(true);
         if cfg!(feature = "atomic-violation") {
-            arg.value_parser(["deadlock", "datarace", "atomic", "all"])
+            arg.value_parser(["deadlock", "datarace", "atomic", "all", "pointsto"])
         } else {
-            arg.value_parser(["deadlock", "datarace", "all"])
+            arg.value_parser(["deadlock", "datarace", "all", "pointsto"])
         }
     };
 
@@ -59,10 +59,23 @@ fn make_options_parser() -> clap::Command {
                 .default_value("./tmp"),
         )
         .arg(
+            Arg::new("config_file")
+                .long("config")
+                .value_name("FILE")
+                .help("Path to configuration file (default: pn.toml)"),
+        )
+        .arg(
             Arg::new("target_crate")
                 .short('p')
                 .long("pn-crate")
-                .help("Target crate for analysis"),
+                .help("Target crate for analysis (required for cargo; optional for single file)"),
+        )
+        .arg(
+            Arg::new("input_file")
+                .short('f')
+                .long("file")
+                .value_name("FILE")
+                .help("Single .rs file to analyze (use with rustc invocation)"),
         )
         .group(
             ArgGroup::new("visualization")
@@ -72,6 +85,7 @@ fn make_options_parser() -> clap::Command {
                     "dump_stategraph",
                     "dump_unsafe",
                     "dump_points_to",
+                    "dump_mir",
                 ])
                 .multiple(true),
         )
@@ -104,6 +118,19 @@ fn make_options_parser() -> clap::Command {
                 .long("viz-pointsto")
                 .help("Generate points-to relations report")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("dump_mir")
+                .long("viz-mir")
+                .help("Generate MIR visualization (dot format)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("stop_after")
+                .long("stop-after")
+                .value_name("STAGE")
+                .help("Stop analysis after specified stage: mir, callgraph, pointsto, petrinet, stategraph")
+                .value_parser(["mir", "callgraph", "pointsto", "petrinet", "stategraph"]),
         );
     parser
 }
@@ -113,6 +140,8 @@ pub struct Options {
     pub output: Option<PathBuf>,
     pub crate_name: String,
     pub dump_options: DumpOptions,
+    pub stop_after: StopAfter,
+    pub config: PnConfig,
 }
 
 impl Default for Options {
@@ -122,6 +151,8 @@ impl Default for Options {
             output: Option::default(),
             crate_name: String::new(),
             dump_options: DumpOptions::default(),
+            stop_after: StopAfter::None,
+            config: PnConfig::default(),
         }
     }
 }
@@ -133,6 +164,18 @@ pub struct DumpOptions {
     pub dump_state_graph: bool,
     pub dump_unsafe_info: bool,
     pub dump_points_to: bool,
+    pub dump_mir: bool,
+}
+
+/// 流水线停止点,用于调试
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopAfter {
+    None,
+    AfterMir,        // 在 MIR 输出后停止
+    AfterCallGraph,  // 在调用图构建后停止
+    AfterPointsTo,   // 在指针分析后停止
+    AfterPetriNet,   // 在 Petri 网构建后停止
+    AfterStateGraph, // 在状态图构建后停止
 }
 
 impl Default for DumpOptions {
@@ -143,6 +186,7 @@ impl Default for DumpOptions {
             dump_state_graph: false,
             dump_unsafe_info: false,
             dump_points_to: false,
+            dump_mir: false,
         }
     }
 }
@@ -180,20 +224,30 @@ impl Options {
             "atomic" => DetectorKind::AtomicityViolation,
             "all" => DetectorKind::All,
             "datarace" => DetectorKind::DataRace,
+            "pointsto" => DetectorKind::PointsTo,
             _ => DetectorKind::Deadlock,
         };
 
         if matches!(self.detector_kind, DetectorKind::AtomicityViolation)
             && !cfg!(feature = "atomic-violation")
         {
-            log::warn!("未启用 `atomic-violation` feature, 自动回退至死锁检测。");
+            log::warn!("未启用 atomic-violation feature, 自动回退至死锁检测.");
             self.detector_kind = DetectorKind::Deadlock;
         }
 
         self.crate_name = matches
             .get_one::<String>("target_crate")
-            .expect("The target crate must be declared and linked with an underscore.")
-            .clone();
+            .cloned()
+            .or_else(|| {
+                matches.get_one::<String>("input_file").map(|f| {
+                    std::path::Path::new(f)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("main")
+                        .to_string()
+                })
+            })
+            .unwrap_or_else(|| "main".to_string());
         self.output = matches
             .get_one::<String>("diagnostics_output")
             .cloned()
@@ -205,8 +259,62 @@ impl Options {
             dump_state_graph: matches.get_flag("dump_stategraph"),
             dump_unsafe_info: matches.get_flag("dump_unsafe"),
             dump_points_to: matches.get_flag("dump_points_to"),
+            dump_mir: matches.get_flag("dump_mir"),
         };
 
+        self.stop_after = match matches.get_one::<String>("stop_after") {
+            Some(stage) => match stage.as_str() {
+                "mir" => StopAfter::AfterMir,
+                "callgraph" => StopAfter::AfterCallGraph,
+                "pointsto" => StopAfter::AfterPointsTo,
+                "petrinet" => StopAfter::AfterPetriNet,
+                "stategraph" => StopAfter::AfterStateGraph,
+                _ => StopAfter::None,
+            },
+            None => StopAfter::None,
+        };
+
+        let config_path = matches
+            .get_one::<String>("config_file")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("pn.toml"));
+
+        match PnConfig::load_from_file(&config_path) {
+            Ok(cfg) => self.config = cfg,
+            Err(e) => {
+                // If user deliberately specified a config file and it failed, we should probably warn or error.
+                // But PnConfig::load_from_file returns Default if path doesn't exist.
+                // However, PnConfig::load_from_file implementation I wrote earlier returns Ok(Default) if not exists.
+                // Wait, if it fails to parse, it returns Error.
+                log::warn!("Failed to load config from {:?}: {}", config_path, e);
+            }
+        }
+
         rustc_args.to_vec()
+    }
+
+    /// 从 rustc 命令行参数中推断 crate 名（当 -p 和 -f 均未指定时）
+    pub fn infer_crate_name_from_rustc_args(&mut self, rustc_args: &[String]) {
+        if !self.crate_name.is_empty() && self.crate_name != "main" {
+            return;
+        }
+        // 查找 --crate-name 参数
+        if let Some(pos) = rustc_args.iter().position(|a| a == "--crate-name") {
+            if let Some(name) = rustc_args.get(pos + 1) {
+                self.crate_name = name.clone();
+                return;
+            }
+        }
+        // 查找 .rs 输入文件
+        for arg in rustc_args {
+            if arg.ends_with(".rs") {
+                self.crate_name = std::path::Path::new(arg)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("main")
+                    .to_string();
+                return;
+            }
+        }
     }
 }

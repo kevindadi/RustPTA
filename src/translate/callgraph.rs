@@ -8,6 +8,7 @@ use std::collections::hash_map::RandomState;
 use std::fs;
 use std::path::Path;
 
+use crate::translate::structure::KeyApiRegex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
@@ -137,7 +138,12 @@ impl<'tcx> CallGraph<'tcx> {
         self.spawn_calls.get(&def_id)
     }
 
-    pub fn analyze(&mut self, instances: Vec<Instance<'tcx>>, tcx: TyCtxt<'tcx>) {
+    pub fn analyze(
+        &mut self,
+        instances: Vec<Instance<'tcx>>,
+        tcx: TyCtxt<'tcx>,
+        key_api_regex: &KeyApiRegex,
+    ) {
         let idx_insts = instances
             .into_iter()
             .map(|inst| {
@@ -151,7 +157,7 @@ impl<'tcx> CallGraph<'tcx> {
             if body.source.promoted.is_some() {
                 continue;
             }
-            let mut collector = CallSiteCollector::new(caller, body, tcx);
+            let mut collector = CallSiteCollector::new(caller, body, tcx, key_api_regex);
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
                 let callee_idx = self.insert_instance(CallGraphNode::WithoutBody(callee));
@@ -232,10 +238,16 @@ struct CallSiteCollector<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     callsites: Vec<(Instance<'tcx>, CallSiteLocation)>,
     typing_env: TypingEnv<'tcx>,
+    key_api_regex: &'a KeyApiRegex,
 }
 
 impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
-    fn new(caller: Instance<'tcx>, body: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+    fn new(
+        caller: Instance<'tcx>,
+        body: &'a Body<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        key_api_regex: &'a KeyApiRegex,
+    ) -> Self {
         let typing_env = TypingEnv::post_analysis(tcx, caller.def_id());
         Self {
             caller,
@@ -243,6 +255,7 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
             tcx,
             callsites: Vec::new(),
             typing_env,
+            key_api_regex,
         }
     }
 
@@ -341,7 +354,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
 
             if let ty::FnDef(def_id, substs) = *func_ty.kind() {
                 let fn_path = self.tcx.def_path_str(def_id);
-                if let Some(control_kind) = classify_thread_control(&fn_path) {
+                if let Some(control_kind) =
+                    classify_thread_control(self.tcx, def_id, &fn_path, self.key_api_regex)
+                {
                     match control_kind {
                         ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn => {
                             if self.handle_spawn_call(
@@ -405,7 +420,31 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
     }
 }
 
-fn classify_thread_control(fn_path: &str) -> Option<ThreadControlKind> {
+use crate::util::has_pn_attribute;
+
+pub fn classify_thread_control(
+    tcx: TyCtxt<'_>,
+    def_id: DefId,
+    fn_path: &str,
+    key_api_regex: &KeyApiRegex,
+) -> Option<ThreadControlKind> {
+    // Check attributes first
+    if has_pn_attribute(tcx, def_id, "pn_spawn") {
+        return Some(ThreadControlKind::Spawn);
+    }
+    if has_pn_attribute(tcx, def_id, "pn_join") {
+        return Some(ThreadControlKind::Join);
+    }
+    if has_pn_attribute(tcx, def_id, "pn_scope_spawn") {
+        return Some(ThreadControlKind::ScopeSpawn);
+    }
+    if has_pn_attribute(tcx, def_id, "pn_scope_join") {
+        return Some(ThreadControlKind::ScopeJoin);
+    }
+    if has_pn_attribute(tcx, def_id, "pn_rayon_join") {
+        return Some(ThreadControlKind::RayonJoin);
+    }
+
     if RAYON_JOIN_PATTERNS
         .iter()
         .any(|pattern| fn_path.contains(pattern))
@@ -413,64 +452,23 @@ fn classify_thread_control(fn_path: &str) -> Option<ThreadControlKind> {
         return Some(ThreadControlKind::RayonJoin);
     }
 
-    if THREAD_SCOPE_SPAWN_PATTERNS
-        .iter()
-        .any(|pattern| fn_path.contains(pattern))
-    {
+    if key_api_regex.scope_spwan.is_match(fn_path) {
         return Some(ThreadControlKind::ScopeSpawn);
     }
 
-    if THREAD_SCOPE_JOIN_PATTERNS
-        .iter()
-        .any(|pattern| fn_path.contains(pattern))
-    {
+    if key_api_regex.scope_join.is_match(fn_path) {
         return Some(ThreadControlKind::ScopeJoin);
     }
 
-    if THREAD_SPAWN_PATTERNS
-        .iter()
-        .any(|pattern| fn_path.contains(pattern))
-    {
+    if key_api_regex.thread_spawn.is_match(fn_path) {
         return Some(ThreadControlKind::Spawn);
     }
 
-    if THREAD_JOIN_PATTERNS
-        .iter()
-        .any(|pattern| fn_path.contains(pattern))
-    {
+    if key_api_regex.thread_join.is_match(fn_path) {
         return Some(ThreadControlKind::Join);
     }
 
     None
 }
-
-const THREAD_SPAWN_PATTERNS: &[&str] = &[
-    "std::thread::spawn",
-    "tokio::task::spawn",
-    "tokio::runtime::Runtime::spawn",
-    "async_std::task::spawn",
-    "smol::Task::spawn",
-    "smol::spawn",
-    "rayon::spawn",
-];
-
-const THREAD_JOIN_PATTERNS: &[&str] = &[
-    "std::thread::JoinHandle::join",
-    "std::thread::JoinHandle::try_join",
-    "tokio::task::JoinHandle::await",
-    "tokio::task::JoinHandle::blocking_on",
-];
-
-const THREAD_SCOPE_SPAWN_PATTERNS: &[&str] = &[
-    "std::thread::scope::Scope::spawn",
-    "crossbeam::scope::Scope::spawn",
-    "rayon::scope::Scope::spawn",
-];
-
-const THREAD_SCOPE_JOIN_PATTERNS: &[&str] = &[
-    "std::thread::scope::Scope::join",
-    "crossbeam::scope::Scope::join",
-    "rayon::scope::Scope::join",
-];
 
 const RAYON_JOIN_PATTERNS: &[&str] = &["rayon_core::join", "rayon::join"];

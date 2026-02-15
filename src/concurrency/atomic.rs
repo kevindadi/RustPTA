@@ -117,7 +117,8 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
 
                 if def_id.is_local() && format_name(def_id).starts_with(&self.crate_name) {
                     if self.tcx.is_mir_available(def_id) {
-                        let body = self.tcx.optimized_mir(def_id);
+                        // 使用 instance_mir 确保与指针分析和 Petri 网转换使用相同的 MIR
+                        let body = self.tcx.instance_mir(instance.def);
                         self.collect_atomic_vars(instance, body);
                     }
                 }

@@ -270,7 +270,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
         if cfg!(feature = "atomic-violation") {
             self.construct_atomic_resources();
-            let key_api_regex = KeyApiRegex::new();
+            let key_api_regex = KeyApiRegex::new(&self.options.config);
             self.translate_all_functions(&key_api_regex);
             log::info!("Visitor Function Body Complete!");
             log::info!("Construct Petri Net Time: {:?}", start_time.elapsed());
@@ -282,7 +282,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         self.construct_atomic_resources();
         self.construct_unsafe_blocks();
 
-        let key_api_regex = KeyApiRegex::new();
+        let key_api_regex = KeyApiRegex::new(&self.options.config);
         self.translate_all_functions(&key_api_regex);
 
         log::info!("Visitor Function Body Complete!");
@@ -314,11 +314,18 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         caller: &CallGraphNode<'tcx>,
         key_api_regex: &KeyApiRegex,
     ) {
-        let body = self.tcx.optimized_mir(caller.instance().def_id());
+        // 使用 instance_mir 而非 optimized_mir,确保与指针分析使用相同的 MIR 版本
+        // instance_mir 会正确处理泛型单态化,而 optimized_mir 可能返回未实例化的版本
+        let body = self.tcx.instance_mir(caller.instance().def);
 
         if body.source.promoted.is_some() {
             return;
         }
+
+        // 如果启用了 MIR 输出,在转换前输出原始 MIR
+        // 注意:这里不输出,因为已经在 callback.rs 中统一输出了
+        // 但可以在这里输出转换后的中间状态
+
         let lock_infos = self.lock_info.clone();
 
         let mut func_body = BodyToPetriNet::new(

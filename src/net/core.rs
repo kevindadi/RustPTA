@@ -44,6 +44,69 @@ pub enum FireError {
     NonSequentialStep(usize),
 }
 
+/// Petri 网连通性诊断报告
+#[derive(Debug, Clone, Default)]
+pub struct DiagnosticReport {
+    /// 孤立库所(无任何连接的弧)
+    pub isolated_places: Vec<(PlaceId, String)>,
+    /// 孤立变迁(无任何连接的弧)
+    pub isolated_transitions: Vec<(TransitionId, String)>,
+    /// 警告信息
+    pub warnings: Vec<String>,
+    /// 总库所数
+    pub total_places: usize,
+    /// 总变迁数
+    pub total_transitions: usize,
+}
+
+impl DiagnosticReport {
+    /// 是否存在问题
+    pub fn has_issues(&self) -> bool {
+        !self.isolated_places.is_empty()
+            || !self.isolated_transitions.is_empty()
+            || !self.warnings.is_empty()
+    }
+
+    /// 保存诊断报告到文件
+    pub fn save_to_file(&self, path: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = fs::File::create(path)?;
+
+        writeln!(file, "=== Petri 网连通性诊断报告 ===")?;
+        writeln!(
+            file,
+            "总计: {} 个库所, {} 个变迁",
+            self.total_places, self.total_transitions
+        )?;
+        writeln!(file)?;
+
+        if !self.isolated_places.is_empty() {
+            writeln!(file, "孤立库所 ({}):", self.isolated_places.len())?;
+            for (id, name) in &self.isolated_places {
+                writeln!(file, "  [{}] {}", id.index(), name)?;
+            }
+            writeln!(file)?;
+        }
+
+        if !self.isolated_transitions.is_empty() {
+            writeln!(file, "孤立变迁 ({}):", self.isolated_transitions.len())?;
+            for (id, name) in &self.isolated_transitions {
+                writeln!(file, "  [{}] {}", id.index(), name)?;
+            }
+            writeln!(file)?;
+        }
+
+        if !self.warnings.is_empty() {
+            writeln!(file, "警告 ({}):", self.warnings.len())?;
+            for warning in &self.warnings {
+                writeln!(file, "  - {}", warning)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Net {
     pub places: IndexVec<PlaceId, Place>,
@@ -314,6 +377,116 @@ impl Net {
             fs::create_dir_all(parent)?;
         }
         fs::write(path, self.to_dot())
+    }
+
+    /// 诊断信息:检测 Petri 网中的孤立节点和连通性问题
+    /// 返回 (孤立库所列表, 孤立变迁列表, 警告信息列表)
+    pub fn diagnose_connectivity(&self) -> DiagnosticReport {
+        let mut isolated_places = Vec::new();
+        let mut isolated_transitions = Vec::new();
+        let mut warnings = Vec::new();
+
+        // 检查每个库所是否有连接
+        for (place_id, place) in self.places.iter_enumerated() {
+            let has_input = self.pre.rows()[place_id].iter().any(|w| *w > 0);
+            let has_output = self.post.rows()[place_id].iter().any(|w| *w > 0);
+
+            if !has_input && !has_output {
+                isolated_places.push((place_id, place.name.clone()));
+            } else if !has_input && place.tokens == 0 {
+                // 没有输入弧且初始标记为 0 的库所永远不会被激活
+                warnings.push(format!(
+                    "库所 '{}' (id={}) 无输入弧且初始标记为 0,永远不会被激活",
+                    place.name,
+                    place_id.index()
+                ));
+            } else if !has_output {
+                // 没有输出弧的库所是汇点(可能是正常的函数结束点)
+                if !place.name.contains("_end") {
+                    warnings.push(format!(
+                        "库所 '{}' (id={}) 无输出弧(汇点),检查是否为预期行为",
+                        place.name,
+                        place_id.index()
+                    ));
+                }
+            }
+        }
+
+        // 检查每个变迁是否有连接
+        for (trans_id, trans) in self.transitions.iter_enumerated() {
+            let has_preset = self
+                .pre
+                .rows()
+                .iter()
+                .any(|row| row.get(trans_id.index()).map_or(false, |w| *w > 0));
+            let has_postset = self
+                .post
+                .rows()
+                .iter()
+                .any(|row| row.get(trans_id.index()).map_or(false, |w| *w > 0));
+
+            if !has_preset && !has_postset {
+                isolated_transitions.push((trans_id, trans.name.clone()));
+            } else if !has_preset {
+                warnings.push(format!(
+                    "变迁 '{}' (id={}) 无前置库所,永远无法触发",
+                    trans.name,
+                    trans_id.index()
+                ));
+            } else if !has_postset {
+                warnings.push(format!(
+                    "变迁 '{}' (id={}) 无后置库所,检查是否为预期行为",
+                    trans.name,
+                    trans_id.index()
+                ));
+            }
+        }
+
+        DiagnosticReport {
+            isolated_places,
+            isolated_transitions,
+            warnings,
+            total_places: self.places_len(),
+            total_transitions: self.transitions_len(),
+        }
+    }
+
+    /// 打印诊断报告到日志
+    pub fn log_diagnostics(&self) {
+        let report = self.diagnose_connectivity();
+
+        if report.has_issues() {
+            log::warn!("=== Petri 网连通性诊断报告 ===");
+            log::warn!(
+                "总计: {} 个库所, {} 个变迁",
+                report.total_places,
+                report.total_transitions
+            );
+
+            if !report.isolated_places.is_empty() {
+                log::warn!("发现 {} 个孤立库所:", report.isolated_places.len());
+                for (id, name) in &report.isolated_places {
+                    log::warn!("  - [{}] {}", id.index(), name);
+                }
+            }
+
+            if !report.isolated_transitions.is_empty() {
+                log::warn!("发现 {} 个孤立变迁:", report.isolated_transitions.len());
+                for (id, name) in &report.isolated_transitions {
+                    log::warn!("  - [{}] {}", id.index(), name);
+                }
+            }
+
+            if !report.warnings.is_empty() {
+                log::warn!("其他警告 ({}):", report.warnings.len());
+                for warning in &report.warnings {
+                    log::warn!("  - {}", warning);
+                }
+            }
+            log::warn!("=== 诊断报告结束 ===");
+        } else {
+            log::info!("Petri 网连通性检查通过,无孤立节点");
+        }
     }
 
     pub fn enabled_transitions(&self, marking: &Marking) -> Vec<TransitionId> {
