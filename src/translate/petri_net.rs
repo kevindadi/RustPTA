@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
+use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::concurrency::blocking::{BlockingCollector, LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
@@ -47,6 +48,8 @@ pub struct PetriNet<'analysis, 'tcx> {
     lock_info: LockGuardMap<'tcx>,
     resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
+    /// 异步任务调度上下文 (tokio::spawn / JoinHandle.await)
+    pub async_ctx: AsyncTranslateContext,
 }
 
 impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
@@ -77,6 +80,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             lock_info: HashMap::default(),
             resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
+            async_ctx: AsyncTranslateContext::new(1),
         }
     }
 
@@ -341,6 +345,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             &self.resources,
             self.entry_exit,
             key_api_regex,
+            &mut self.async_ctx,
         );
         func_body.translate();
     }

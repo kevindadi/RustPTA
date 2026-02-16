@@ -27,6 +27,10 @@ pub enum ThreadControlKind {
     ScopeSpawn,
     ScopeJoin,
     RayonJoin,
+    /// tokio::spawn - 协作式任务,非 OS 线程
+    AsyncSpawn,
+    /// JoinHandle.await - 等待任务完成
+    AsyncJoin,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -358,7 +362,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                     classify_thread_control(self.tcx, def_id, &fn_path, self.key_api_regex)
                 {
                     match control_kind {
-                        ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn => {
+                        ThreadControlKind::Spawn
+                        | ThreadControlKind::ScopeSpawn
+                        | ThreadControlKind::AsyncSpawn => {
                             if self.handle_spawn_call(
                                 args.as_ref(),
                                 destination.local,
@@ -374,7 +380,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                                 return;
                             }
                         }
-                        ThreadControlKind::Join | ThreadControlKind::ScopeJoin => {
+                        ThreadControlKind::Join
+                        | ThreadControlKind::ScopeJoin
+                        | ThreadControlKind::AsyncJoin => {
                             if let Some(callee) = self.resolve_instance(def_id, substs) {
                                 self.callsites.push((
                                     callee,
@@ -458,6 +466,17 @@ pub fn classify_thread_control(
 
     if key_api_regex.scope_join.is_match(fn_path) {
         return Some(ThreadControlKind::ScopeJoin);
+    }
+
+    // tokio async 优先于 std::thread
+    if fn_path.contains("tokio::task::spawn") || fn_path.contains("tokio::runtime::Runtime::spawn")
+    {
+        return Some(ThreadControlKind::AsyncSpawn);
+    }
+    if fn_path.contains("tokio::task::JoinHandle")
+        && (fn_path.contains("await") || fn_path.contains("blocking_on"))
+    {
+        return Some(ThreadControlKind::AsyncJoin);
     }
 
     if key_api_regex.thread_spawn.is_match(fn_path) {
