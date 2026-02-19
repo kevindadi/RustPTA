@@ -9,9 +9,7 @@ use rustc_middle::ty::TyCtxt;
 use crate::net::structure::{Transition, TransitionType};
 use crate::net::{Net, PlaceId, TransitionId};
 
-use super::async_ppn::{
-    AsyncPoint, EventId, SourceLoc, TaskId, add_task_lifecycle_places, add_worker_place,
-};
+use super::async_ppn::{AsyncPoint, EventId, SourceLoc, TaskId, add_worker_place};
 
 /// 从 MIR Body 中检测 async 挂起点 (Yield 终止符).
 pub fn collect_async_points_from_mir<'tcx>(
@@ -301,7 +299,12 @@ mod tests {
             String::new(),
         ));
 
-        let tp = add_task_lifecycle_places(&mut net, TaskId::new(0), &[], false);
+        let tp = crate::translate::async_ppn::add_task_lifecycle_places(
+            &mut net,
+            TaskId::new(0),
+            &[],
+            false,
+        );
 
         let mut builder = AsyncNetBuilder::new(&mut net, 1);
         let task_id = TaskId::new(0);
