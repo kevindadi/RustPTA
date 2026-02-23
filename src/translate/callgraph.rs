@@ -150,10 +150,21 @@ impl<'tcx> CallGraph<'tcx> {
         let Some(&entry_idx) = self.instance_index.get(&entry_instance) else {
             return FxHashSet::default();
         };
+        self.reachable_from_roots(std::iter::once(entry_idx))
+    }
+
+    /// 从多个根节点出发,沿调用边 BFS 得到可达的 InstanceId 集合的并集.
+    /// 用于将使用锁/原子变量/条件变量的函数及其被调用者纳入翻译范围.
+    pub fn reachable_from_roots<I>(&self, roots: I) -> FxHashSet<InstanceId>
+    where
+        I: IntoIterator<Item = InstanceId>,
+    {
         let mut reachable = FxHashSet::default();
-        let mut bfs = Bfs::new(&self.graph, entry_idx);
-        while let Some(node) = bfs.next(&self.graph) {
-            reachable.insert(node);
+        for root in roots {
+            let mut bfs = Bfs::new(&self.graph, root);
+            while let Some(node) = bfs.next(&self.graph) {
+                reachable.insert(node);
+            }
         }
         reachable
     }

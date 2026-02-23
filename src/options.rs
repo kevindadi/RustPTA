@@ -143,7 +143,7 @@ fn make_options_parser() -> clap::Command {
         .arg(
             Arg::new("full")
                 .long("full")
-                .help("Translate all functions (disable entry-reachable filtering)")
+                .help("Translate all functions (disables entry-reachable and concurrent-roots filtering)")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -170,6 +170,12 @@ fn make_options_parser() -> clap::Command {
             Arg::new("por")
                 .long("por")
                 .help("Enable partial order reduction (POR) to reduce equivalent interleavings")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no_concurrent_roots")
+                .long("no-concurrent-roots")
+                .help("Disable translating functions that use locks/atomics/condvars/channels (and their callees)")
                 .action(clap::ArgAction::SetTrue),
         );
     parser
@@ -344,6 +350,9 @@ impl Options {
         }
         if matches.get_flag("por") {
             self.config.por_enabled = true;
+        }
+        if matches.get_flag("no_concurrent_roots") {
+            self.config.translate_concurrent_roots = false;
         }
 
         rustc_args.to_vec()

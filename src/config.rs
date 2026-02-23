@@ -17,6 +17,9 @@ pub struct PnConfig {
     /// 是否启用部分序约简 (POR), 对独立变迁减少等价交错探索. 进阶优化.
     #[serde(default)]
     pub por_enabled: bool,
+    /// 是否额外翻译使用锁/原子变量/信号量/条件变量的函数及其调用者. 防止遗漏并发交错导致的 bug.
+    #[serde(default = "default_true")]
+    pub translate_concurrent_roots: bool,
     #[serde(default = "default_thread_spawn")]
     pub thread_spawn: Vec<String>,
     #[serde(default = "default_thread_join")]
@@ -46,6 +49,7 @@ impl Default for PnConfig {
             entry_reachable: true,
             reduce_net: default_reduce_net(),
             por_enabled: false,
+            translate_concurrent_roots: default_true(),
             thread_spawn: default_thread_spawn(),
             thread_join: default_thread_join(),
             scope_spawn: default_scope_spawn(),

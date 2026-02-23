@@ -19,6 +19,8 @@ OPTIONS:
                                    - [default: all]
     -p, --pn-crate <NAME>           Target crate for analysis(Only underlined links can be used)
     --pn-analysis-dir=<PATH>       Output path for analysis results [default: diagnostics.json]
+    --full                         Translate all functions (disables entry-reachable and concurrent-roots filtering)
+    --no-concurrent-roots           Disable translating functions that use locks/atomics/condvars/channels (and their callees)
 
 VISUALIZATION OPTIONS:
         --viz-callgraph            Generate call graph visualization

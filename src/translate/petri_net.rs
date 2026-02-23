@@ -1,5 +1,6 @@
 use crate::Options;
 use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
+use crate::concurrency::blocking::BlockingCollector;
 use crate::concurrency::channel::{ChannelCollector, ChannelInfo, EndpointType};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
@@ -9,7 +10,7 @@ use crate::util::format_name;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -18,7 +19,7 @@ use std::time::Instant;
 
 use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use crate::concurrency::blocking::{BlockingCollector, LockGuardId, LockGuardMap, LockGuardTy};
+use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
 use crate::net::{Net, Place, PlaceId};
 use crate::translate::mir_to_pn::BodyToPetriNet;
@@ -418,12 +419,64 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         include && !exclude
     }
 
-    fn reachable_instance_ids(&self) -> Option<rustc_hash::FxHashSet<InstanceId>> {
+    /// 收集使用锁/原子变量/条件变量/通道的函数对应的 InstanceId.
+    /// 用于 translate_concurrent_roots: 将这些函数及其被调用者纳入翻译范围.
+    fn concurrent_root_instance_ids(&self) -> FxHashSet<InstanceId> {
+        let mut roots = FxHashSet::default();
+
+        for (instance_id, node) in self.callgraph.graph.node_references() {
+            let instance = match node {
+                CallGraphNode::WithBody(inst) => inst,
+                _ => continue,
+            };
+            if !instance.def_id().is_local() {
+                continue;
+            }
+            let body = self.tcx.instance_mir(instance.def);
+            let mut blocking = BlockingCollector::new(instance_id, instance, body, self.tcx);
+            blocking.analyze();
+            if !blocking.lockguards.is_empty() || !blocking.condvars.is_empty() {
+                roots.insert(instance_id);
+            }
+        }
+
+        let mut atomic = AtomicCollector::new(
+            self.tcx,
+            self.callgraph,
+            self.options.crate_name.clone(),
+        );
+        for info in atomic.analyze().into_values() {
+            roots.insert(info.instance_id);
+        }
+
+        let mut channel = ChannelCollector::new(
+            self.tcx,
+            self.callgraph,
+            self.options.crate_name.clone(),
+        );
+        channel.analyze();
+        for (channel_id, _) in channel.channels {
+            roots.insert(channel_id.instance_id);
+        }
+
+        roots
+    }
+
+    fn reachable_instance_ids(&self) -> Option<FxHashSet<InstanceId>> {
         if !self.options.config.entry_reachable {
             return None;
         }
         let main_func = self.tcx.entry_fn(()).map(|(id, _)| id)?;
-        Some(self.callgraph.reachable_from_entry(self.tcx, main_func))
+        let mut reachable = self.callgraph.reachable_from_entry(self.tcx, main_func);
+
+        if self.options.config.translate_concurrent_roots {
+            let concurrent_roots = self.concurrent_root_instance_ids();
+            let reachable_from_concurrent =
+                self.callgraph.reachable_from_roots(concurrent_roots.into_iter());
+            reachable.extend(reachable_from_concurrent);
+        }
+
+        Some(reachable)
     }
 
     fn should_ignore_function(func_name: &str) -> bool {
