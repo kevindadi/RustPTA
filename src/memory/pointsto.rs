@@ -106,8 +106,6 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
     }
 
     fn propagate_points_to(&mut self) {
-        let mut updated_pts = self.pts.clone();
-
         let mut field_parent_map = FxHashMap::default();
         for node in self.pts.keys() {
             if let ConstraintNode::Place(place) | ConstraintNode::Alloc(place) = node {
@@ -120,26 +118,26 @@ impl<'a, 'tcx> Andersen<'a, 'tcx> {
                 }
             }
         }
-
         for (field_node, parent_node) in field_parent_map {
-            if let Some(parent_pts) = self.pts.get(&parent_node) {
-                updated_pts
-                    .entry(field_node)
-                    .or_default()
-                    .extend(parent_pts.iter().cloned());
+            let to_add: Vec<_> = self
+                .pts
+                .get(&parent_node)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+            if !to_add.is_empty() {
+                self.pts.entry(field_node).or_default().extend(to_add);
             }
         }
-        self.pts = updated_pts;
     }
 
     fn union_pts(&mut self, target: &ConstraintNode<'tcx>, source: &ConstraintNode<'tcx>) -> bool {
         if matches!(target, ConstraintNode::Alloc(_)) {
             return false;
         }
-        let old_len = self.pts.get(target).unwrap().len();
-        let source_pts = self.pts.get(source).unwrap().clone();
+        let to_add: Vec<_> = self.pts.get(source).unwrap().iter().cloned().collect();
         let target_pts = self.pts.get_mut(target).unwrap();
-        target_pts.extend(source_pts);
+        let old_len = target_pts.len();
+        target_pts.extend(to_add);
         old_len != target_pts.len()
     }
 

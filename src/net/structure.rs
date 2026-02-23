@@ -99,6 +99,16 @@ pub enum TransitionType {
     Spawn(String),
     Join(String),
 
+    // Async-PPN: tokio-like task lifecycle
+    AsyncSpawn { task_id: usize },
+    AsyncJoin { task_id: usize },
+    AsyncPoll { task_id: usize },
+    AwaitReady { task_id: usize, await_point: usize },
+    AwaitPending { task_id: usize, await_point: usize, event_id: Option<usize> },
+    AsyncWake { task_id: usize, event_id: usize },
+    AsyncDone { task_id: usize },
+    AsyncAbort { task_id: usize },
+
     Function,
     Normal,
     Inhibitor,

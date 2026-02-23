@@ -1,5 +1,6 @@
 use crate::Options;
 use crate::concurrency::atomic::{AtomicCollector, AtomicOrdering};
+use crate::concurrency::blocking::BlockingCollector;
 use crate::concurrency::channel::{ChannelCollector, ChannelInfo, EndpointType};
 use crate::memory::pointsto::AliasId;
 use crate::memory::unsafe_memory::UnsafeAnalyzer;
@@ -9,14 +10,16 @@ use crate::util::format_name;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
+use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use crate::concurrency::blocking::{BlockingCollector, LockGuardId, LockGuardMap, LockGuardTy};
+use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
 use crate::net::{Net, Place, PlaceId};
 use crate::translate::mir_to_pn::BodyToPetriNet;
@@ -44,9 +47,11 @@ pub struct PetriNet<'analysis, 'tcx> {
     callgraph: &'analysis CallGraph<'tcx>,
     pub alias: RefCell<AliasAnalysis<'analysis, 'tcx>>,
     functions: FunctionRegistry,
-    lock_info: LockGuardMap<'tcx>,
+    lock_info: Arc<LockGuardMap<'tcx>>,
     resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
+    /// 异步任务调度上下文 (tokio::spawn / JoinHandle.await)
+    pub async_ctx: AsyncTranslateContext,
 }
 
 impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
@@ -74,9 +79,10 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             callgraph,
             alias,
             functions: FunctionRegistry::new(),
-            lock_info: HashMap::default(),
+            lock_info: Arc::new(HashMap::default()),
             resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
+            async_ctx: AsyncTranslateContext::new(1),
         }
     }
 
@@ -290,10 +296,16 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
     }
 
     fn translate_all_functions(&mut self, key_api_regex: &KeyApiRegex) {
+        let reachable = self.reachable_instance_ids();
         let mut visited_func_id = HashSet::<DefId>::new();
         for (node, caller) in self.callgraph.graph.node_references() {
+            if let Some(ref set) = reachable {
+                if !set.contains(&node) {
+                    continue;
+                }
+            }
             if self.tcx.is_mir_available(caller.instance().def_id())
-                && format_name(caller.instance().def_id()).starts_with(&self.options.crate_name)
+                && self.crate_filter_match(&format_name(caller.instance().def_id()))
             {
                 log::debug!(
                     "Current visitor function body: {:?}",
@@ -326,8 +338,6 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         // 注意:这里不输出,因为已经在 callback.rs 中统一输出了
         // 但可以在这里输出转换后的中间状态
 
-        let lock_infos = self.lock_info.clone();
-
         let mut func_body = BodyToPetriNet::new(
             node,
             caller.instance(),
@@ -336,11 +346,12 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             &self.callgraph,
             &mut self.net,
             &mut self.alias,
-            lock_infos,
+            Arc::clone(&self.lock_info),
             &self.functions,
             &self.resources,
             self.entry_exit,
             key_api_regex,
+            &mut self.async_ctx,
         );
         func_body.translate();
     }
@@ -369,11 +380,17 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
     where
         F: Fn(&mut Self, DefId, String) -> (PlaceId, PlaceId),
     {
+        let reachable = self.reachable_instance_ids();
         for node_idx in self.callgraph.graph.node_indices() {
+            if let Some(ref set) = reachable {
+                if !set.contains(&node_idx) {
+                    continue;
+                }
+            }
             let func_instance = self.callgraph.graph.node_weight(node_idx).unwrap();
             let func_id = func_instance.instance().def_id();
             let func_name = format_name(func_id);
-            if !func_name.starts_with(&self.options.crate_name)
+            if !self.crate_filter_match(&func_name)
                 || self.functions.contains(&func_id)
                 || Self::should_ignore_function(&func_name)
             {
@@ -383,6 +400,83 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             let (start, end) = create_places(self, func_id, func_name);
             self.functions.insert(func_id, start, end);
         }
+    }
+
+    fn crate_filter_match(&self, func_name: &str) -> bool {
+        use crate::options::CrateNameList;
+        let include = match &self.options.crate_filter {
+            CrateNameList::White(list) if !list.is_empty() => {
+                list.iter().any(|c| func_name.starts_with(c))
+            }
+            _ => func_name.starts_with(&self.options.crate_name),
+        };
+        let exclude = match &self.options.crate_filter {
+            CrateNameList::Black(list) if !list.is_empty() => {
+                list.iter().any(|c| func_name.starts_with(c))
+            }
+            _ => false,
+        };
+        include && !exclude
+    }
+
+    /// 收集使用锁/原子变量/条件变量/通道的函数对应的 InstanceId.
+    /// 用于 translate_concurrent_roots: 将这些函数及其被调用者纳入翻译范围.
+    fn concurrent_root_instance_ids(&self) -> FxHashSet<InstanceId> {
+        let mut roots = FxHashSet::default();
+
+        for (instance_id, node) in self.callgraph.graph.node_references() {
+            let instance = match node {
+                CallGraphNode::WithBody(inst) => inst,
+                _ => continue,
+            };
+            if !instance.def_id().is_local() {
+                continue;
+            }
+            let body = self.tcx.instance_mir(instance.def);
+            let mut blocking = BlockingCollector::new(instance_id, instance, body, self.tcx);
+            blocking.analyze();
+            if !blocking.lockguards.is_empty() || !blocking.condvars.is_empty() {
+                roots.insert(instance_id);
+            }
+        }
+
+        let mut atomic = AtomicCollector::new(
+            self.tcx,
+            self.callgraph,
+            self.options.crate_name.clone(),
+        );
+        for info in atomic.analyze().into_values() {
+            roots.insert(info.instance_id);
+        }
+
+        let mut channel = ChannelCollector::new(
+            self.tcx,
+            self.callgraph,
+            self.options.crate_name.clone(),
+        );
+        channel.analyze();
+        for (channel_id, _) in channel.channels {
+            roots.insert(channel_id.instance_id);
+        }
+
+        roots
+    }
+
+    fn reachable_instance_ids(&self) -> Option<FxHashSet<InstanceId>> {
+        if !self.options.config.entry_reachable {
+            return None;
+        }
+        let main_func = self.tcx.entry_fn(()).map(|(id, _)| id)?;
+        let mut reachable = self.callgraph.reachable_from_entry(self.tcx, main_func);
+
+        if self.options.config.translate_concurrent_roots {
+            let concurrent_roots = self.concurrent_root_instance_ids();
+            let reachable_from_concurrent =
+                self.callgraph.reachable_from_roots(concurrent_roots.into_iter());
+            reachable.extend(reachable_from_concurrent);
+        }
+
+        Some(reachable)
     }
 
     fn should_ignore_function(func_name: &str) -> bool {
@@ -546,7 +640,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
             if !collector.lockguards.is_empty() {
                 lockguards.insert(instance_id, collector.lockguards.clone());
-                self.lock_info.extend(collector.lockguards);
+                Arc::make_mut(&mut self.lock_info).extend(collector.lockguards);
             }
 
             if !collector.condvars.is_empty() {

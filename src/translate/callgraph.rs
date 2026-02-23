@@ -1,3 +1,4 @@
+use petgraph::visit::Bfs;
 use petgraph::Direction::Incoming;
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
@@ -27,6 +28,10 @@ pub enum ThreadControlKind {
     ScopeSpawn,
     ScopeJoin,
     RayonJoin,
+    /// tokio::spawn - 协作式任务,非 OS 线程
+    AsyncSpawn,
+    /// JoinHandle.await - 等待任务完成
+    AsyncJoin,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -136,6 +141,32 @@ impl<'tcx> CallGraph<'tcx> {
 
     pub fn get_spawn_calls(&self, def_id: DefId) -> Option<&FxHashMap<Local, FxHashSet<DefId>>> {
         self.spawn_calls.get(&def_id)
+    }
+
+    /// 从入口函数出发,沿调用边 BFS 得到可达的 InstanceId 集合.
+    /// 用于入口导向翻译,仅分析从 main 可达的函数.
+    pub fn reachable_from_entry(&self, tcx: TyCtxt<'tcx>, entry_def_id: DefId) -> FxHashSet<InstanceId> {
+        let entry_instance = Instance::mono(tcx, entry_def_id);
+        let Some(&entry_idx) = self.instance_index.get(&entry_instance) else {
+            return FxHashSet::default();
+        };
+        self.reachable_from_roots(std::iter::once(entry_idx))
+    }
+
+    /// 从多个根节点出发,沿调用边 BFS 得到可达的 InstanceId 集合的并集.
+    /// 用于将使用锁/原子变量/条件变量的函数及其被调用者纳入翻译范围.
+    pub fn reachable_from_roots<I>(&self, roots: I) -> FxHashSet<InstanceId>
+    where
+        I: IntoIterator<Item = InstanceId>,
+    {
+        let mut reachable = FxHashSet::default();
+        for root in roots {
+            let mut bfs = Bfs::new(&self.graph, root);
+            while let Some(node) = bfs.next(&self.graph) {
+                reachable.insert(node);
+            }
+        }
+        reachable
     }
 
     pub fn analyze(
@@ -358,7 +389,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                     classify_thread_control(self.tcx, def_id, &fn_path, self.key_api_regex)
                 {
                     match control_kind {
-                        ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn => {
+                        ThreadControlKind::Spawn
+                        | ThreadControlKind::ScopeSpawn
+                        | ThreadControlKind::AsyncSpawn => {
                             if self.handle_spawn_call(
                                 args.as_ref(),
                                 destination.local,
@@ -374,7 +407,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                                 return;
                             }
                         }
-                        ThreadControlKind::Join | ThreadControlKind::ScopeJoin => {
+                        ThreadControlKind::Join
+                        | ThreadControlKind::ScopeJoin
+                        | ThreadControlKind::AsyncJoin => {
                             if let Some(callee) = self.resolve_instance(def_id, substs) {
                                 self.callsites.push((
                                     callee,
@@ -458,6 +493,17 @@ pub fn classify_thread_control(
 
     if key_api_regex.scope_join.is_match(fn_path) {
         return Some(ThreadControlKind::ScopeJoin);
+    }
+
+    // tokio async 优先于 std::thread
+    if fn_path.contains("tokio::task::spawn") || fn_path.contains("tokio::runtime::Runtime::spawn")
+    {
+        return Some(ThreadControlKind::AsyncSpawn);
+    }
+    if fn_path.contains("tokio::task::JoinHandle")
+        && (fn_path.contains("await") || fn_path.contains("blocking_on"))
+    {
+        return Some(ThreadControlKind::AsyncJoin);
     }
 
     if key_api_regex.thread_spawn.is_match(fn_path) {
