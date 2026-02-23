@@ -29,6 +29,7 @@ use rustc_span::source_map::Spanned;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    sync::Arc,
 };
 
 #[derive(Default)]
@@ -96,7 +97,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     callgraph: &'translate CallGraph<'tcx>,
     pub net: &'translate mut Net,
     alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>,
-    pub lockguards: LockGuardMap<'tcx>,
+    pub lockguards: Arc<LockGuardMap<'tcx>>,
     functions: &'translate FunctionRegistry,
     resources: &'translate ResourceRegistry,
     bb_graph: BasicBlockGraph,
@@ -355,7 +356,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         callgraph: &'translate CallGraph<'tcx>,
         net: &'translate mut Net,
         alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>,
-        lockguards: LockGuardMap<'tcx>,
+        lockguards: Arc<LockGuardMap<'tcx>>,
         functions: &'translate FunctionRegistry,
         resources: &'translate ResourceRegistry,
         entry_exit: (PlaceId, PlaceId),
@@ -658,7 +659,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
 
         let lockguard_id = LockGuardId::new(self.instance_id, destination.local);
-        if let Some(guard) = self.lockguards.get_mut(&lockguard_id) {
+        if let Some(guard) = self.lockguards.get(&lockguard_id) {
             let lock_alias = lockguard_id.get_alias_id();
             let lock_node = self.resources.locks().get(&lock_alias).unwrap();
 
@@ -1553,7 +1554,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.instance_id,
                 args.get(0).unwrap().node.place().unwrap().local,
             );
-            if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
+            if let Some(_) = self.lockguards.get(&lockguard_id) {
                 let lock_alias = lockguard_id.get_alias_id();
                 let lock_node = self.resources.locks().get(&lock_alias).unwrap();
                 match &self.lockguards[&lockguard_id].lockguard_ty {
@@ -1656,7 +1657,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if !bb.is_cleanup {
             let lockguard_id = LockGuardId::new(self.instance_id, place.local);
 
-            if let Some(_) = self.lockguards.get_mut(&lockguard_id) {
+            if let Some(_) = self.lockguards.get(&lockguard_id) {
                 let lock_alias = lockguard_id.get_alias_id();
                 let lock_node = self.resources.locks().get(&lock_alias).unwrap();
                 match &self.lockguards[&lockguard_id].lockguard_ty {

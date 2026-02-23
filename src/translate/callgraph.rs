@@ -1,3 +1,4 @@
+use petgraph::visit::Bfs;
 use petgraph::Direction::Incoming;
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
@@ -140,6 +141,21 @@ impl<'tcx> CallGraph<'tcx> {
 
     pub fn get_spawn_calls(&self, def_id: DefId) -> Option<&FxHashMap<Local, FxHashSet<DefId>>> {
         self.spawn_calls.get(&def_id)
+    }
+
+    /// 从入口函数出发,沿调用边 BFS 得到可达的 InstanceId 集合.
+    /// 用于入口导向翻译,仅分析从 main 可达的函数.
+    pub fn reachable_from_entry(&self, tcx: TyCtxt<'tcx>, entry_def_id: DefId) -> FxHashSet<InstanceId> {
+        let entry_instance = Instance::mono(tcx, entry_def_id);
+        let Some(&entry_idx) = self.instance_index.get(&entry_instance) else {
+            return FxHashSet::default();
+        };
+        let mut reachable = FxHashSet::default();
+        let mut bfs = Bfs::new(&self.graph, entry_idx);
+        while let Some(node) = bfs.next(&self.graph) {
+            reachable.insert(node);
+        }
+        reachable
     }
 
     pub fn analyze(

@@ -5,6 +5,18 @@ use std::path::Path;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PnConfig {
+    /// 状态图探索上限. None 表示不设限. 用于防止大型项目 OOM.
+    #[serde(default = "default_state_limit")]
+    pub state_limit: Option<usize>,
+    /// 是否仅翻译从入口可达的函数 (入口导向). 可显著减少大型项目的网规模.
+    #[serde(default = "default_true")]
+    pub entry_reachable: bool,
+    /// 是否在状态图构建前对 Petri 网做缩减.
+    #[serde(default = "default_reduce_net")]
+    pub reduce_net: bool,
+    /// 是否启用部分序约简 (POR), 对独立变迁减少等价交错探索. 进阶优化.
+    #[serde(default)]
+    pub por_enabled: bool,
     #[serde(default = "default_thread_spawn")]
     pub thread_spawn: Vec<String>,
     #[serde(default = "default_thread_join")]
@@ -30,6 +42,10 @@ pub struct PnConfig {
 impl Default for PnConfig {
     fn default() -> Self {
         Self {
+            state_limit: default_state_limit(),
+            entry_reachable: true,
+            reduce_net: default_reduce_net(),
+            por_enabled: false,
             thread_spawn: default_thread_spawn(),
             thread_join: default_thread_join(),
             scope_spawn: default_scope_spawn(),
@@ -56,6 +72,18 @@ impl PnConfig {
             .with_context(|| format!("Failed to parse config file: {:?}", path))?;
         Ok(config)
     }
+}
+
+fn default_state_limit() -> Option<usize> {
+    Some(50_000)
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_reduce_net() -> bool {
+    true
 }
 
 // Default values matching original hardcoded patterns

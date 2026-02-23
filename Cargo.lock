@@ -27,6 +27,7 @@ dependencies = [
  "once_cell",
  "petgraph",
  "rand",
+ "rayon",
  "regex",
  "ron",
  "rustc_version",
