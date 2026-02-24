@@ -6,3 +6,5 @@
 RustPetriNet.tar.gz
 example/rayon
 /example
+
+/.cursor/**

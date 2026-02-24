@@ -6,13 +6,13 @@ use crate::{
         blocking::{CondVarId, LockGuardId, LockGuardMap, LockGuardTy},
     },
     memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind},
-    net::{
-        Idx, Net, Place, PlaceId, Transition, TransitionId, TransitionType, structure::PlaceType,
-    },
+    net::{Idx, Net, PlaceId, Transition, TransitionId, TransitionType},
     translate::callgraph::{ThreadControlKind, classify_thread_control},
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
     util::{format_name, has_pn_attribute},
 };
+#[cfg(feature = "atomic-violation")]
+use crate::net::{structure::PlaceType, Place};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
@@ -167,14 +167,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 current_id.instance_id.index(),
                 bb_idx.index()
             );
-            let intermediate_place = Place::new(
-                intermediate_name,
-                0,
-                1,
-                PlaceType::BasicBlock,
-                span_owned.clone(),
-            );
-            let intermediate_id = self.net.add_place(intermediate_place);
+            let intermediate_id = crate::bb_place!(self.net, intermediate_name, span_owned.clone());
             self.net.add_input_arc(intermediate_id, bb_end, 1);
 
             if let Some(order) = self.resources.atomic_orders().get(&current_id) {
@@ -416,8 +409,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             });
 
             let bb_name = format!("{}_{}", body_name, bb_idx.index());
-            let bb_start_place = Place::new(bb_name, 0, 1, PlaceType::BasicBlock, bb_span);
-            let bb_start = self.net.add_place(bb_start_place);
+            let bb_start = crate::bb_place!(self.net, bb_name, bb_span);
             self.bb_graph.register(bb_idx, bb_start);
         }
     }
@@ -438,15 +430,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     fn handle_assert(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
-        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "assert");
-        let bb_term_transition =
-            Transition::new_with_transition_type(bb_term_name, TransitionType::Assert);
-        let bb_end = self.net.add_transition(bb_term_transition);
-
-        self.net
-            .add_input_arc(self.bb_graph.last(bb_idx), bb_end, 1);
-        self.net
-            .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
+        crate::add_fallthrough_transition!(
+            self,
+            bb_idx,
+            name,
+            "assert",
+            TransitionType::Assert,
+            target
+        );
     }
 
     fn handle_terminator(
@@ -550,27 +541,18 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        let transition_name = format!("{}_{}_{}", name, bb_idx.index(), kind);
-        let transition =
-            Transition::new_with_transition_type(transition_name, TransitionType::Goto);
-        let t_id = self.net.add_transition(transition);
-
-        self.net.add_input_arc(self.bb_graph.last(bb_idx), t_id, 1);
-        self.net
-            .add_output_arc(self.bb_graph.start(*target), t_id, 1);
+        crate::add_fallthrough_transition!(self, bb_idx, name, kind, TransitionType::Goto, target);
     }
 
     /// 处理没有后继块的终止符(终止状态)
     fn handle_terminal_block(&mut self, bb_idx: BasicBlock, name: &str, kind: &str) {
-        let transition_name = format!("{}_{}_{}", name, bb_idx.index(), kind);
-        let transition = Transition::new_with_transition_type(
-            transition_name,
-            TransitionType::Return(self.instance_id.index()),
+        crate::add_terminal_transition!(
+            self,
+            bb_idx,
+            name,
+            kind,
+            TransitionType::Return(self.instance_id.index())
         );
-        let t_id = self.net.add_transition(transition);
-
-        self.net.add_input_arc(self.bb_graph.last(bb_idx), t_id, 1);
-        self.net.add_output_arc(self.entry_exit.1, t_id, 1);
     }
 
     fn handle_goto(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
@@ -579,16 +561,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "goto");
-        let bb_term_transition =
-            Transition::new_with_transition_type(bb_term_name, TransitionType::Goto);
-        let bb_end = self.net.add_transition(bb_term_transition);
-
-        self.net
-            .add_input_arc(self.bb_graph.last(bb_idx), bb_end, 1);
-
-        let target_bb_start = self.bb_graph.start(*target);
-        self.net.add_output_arc(target_bb_start, bb_end, 1);
+        crate::add_fallthrough_transition!(self, bb_idx, name, "goto", TransitionType::Goto, target);
     }
 
     fn handle_switch(&mut self, bb_idx: BasicBlock, targets: &SwitchTargets, name: &str) {
@@ -597,9 +570,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             if self.exclude_bb.contains(&t.index()) {
                 continue;
             }
-            let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "switch")
-                + "switch"
-                + t_num.to_string().as_str();
+            let bb_term_name = crate::transition_name!(name, bb_idx, "switch", t_num.to_string());
             t_num += 1;
             let bb_term_transition =
                 Transition::new_with_transition_type(bb_term_name, TransitionType::Switch);
@@ -620,7 +591,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .expect("return place missing");
 
         if self.return_transition.raw() == 0 {
-            let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "return");
+            let bb_term_name = crate::transition_name!(name, bb_idx, "return");
             let bb_term_transition = Transition::new_with_transition_type(
                 bb_term_name,
                 TransitionType::Return(self.instance_id.index()),
@@ -803,7 +774,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end: TransitionId,
     ) {
         if self.return_transition.index() == 0 {
-            let bb_term_name = format!("{}_{}_{}", callee_func_name, bb_idx.index(), "return");
+            let bb_term_name = crate::transition_name!(callee_func_name, bb_idx, "return");
             let bb_term_transition =
                 Transition::new_with_transition_type(bb_term_name, TransitionType::Function);
             self.return_transition = self.net.add_transition(bb_term_transition);
@@ -868,19 +839,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         span: &str,
     ) {
         log::debug!("handle_rayon_join: {:?}", callee_func_name);
-        let bb_wait_name = format!("{}_{}_{}", callee_func_name, bb_idx.index(), "wait_closure");
-        let bb_wait_place = Place::new(bb_wait_name, 0, 1, PlaceType::BasicBlock, span.to_string());
-        let bb_wait = self.net.add_place(bb_wait_place);
-
-        let bb_join_name = format!("{}_{}_{}", callee_func_name, bb_idx.index(), "join");
-        let bb_join_transition = Transition::new_with_transition_type(
-            bb_join_name,
+        let (_bb_wait, bb_join) = crate::add_wait_ret_subnet!(
+            self,
+            callee_func_name,
+            bb_idx,
+            "wait_closure",
+            "join",
             TransitionType::Join(callee_func_name.to_string()),
+            span.to_string(),
+            bb_end
         );
-        let bb_join = self.net.add_transition(bb_join_transition);
-
-        self.net.add_output_arc(bb_wait, bb_end, 1);
-        self.net.add_input_arc(bb_wait, bb_join, 1);
 
         self.connect_to_target(bb_join, target);
 
@@ -1156,18 +1124,17 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         args: &Box<[Spanned<Operand<'tcx>>]>,
     ) {
         if let Some((callee_start, callee_end)) = self.functions_map().get(callee_id).copied() {
-            let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
-            let bb_wait_place =
-                Place::new(bb_wait_name, 0, 1, PlaceType::BasicBlock, span.to_string());
-            let bb_wait = self.net.add_place(bb_wait_place);
+            let (_bb_wait, bb_ret) = crate::add_wait_ret_subnet!(
+                self,
+                name,
+                bb_idx,
+                "wait",
+                "return",
+                TransitionType::Function,
+                span.to_string(),
+                bb_end
+            );
 
-            let bb_ret_name = format!("{}_{}_{}", name, bb_idx.index(), "return");
-            let bb_ret_transition =
-                Transition::new_with_transition_type(bb_ret_name, TransitionType::Function);
-            let bb_ret = self.net.add_transition(bb_ret_transition);
-
-            self.net.add_output_arc(bb_wait, bb_end, 1);
-            self.net.add_input_arc(bb_wait, bb_ret, 1);
             self.net.add_output_arc(callee_start, bb_end, 1);
             match target {
                 Some(return_block) => {
@@ -1189,27 +1156,17 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                             if let Some((callee_start, callee_end)) =
                                 self.functions_map().get(&closure_def_id).copied()
                             {
-                                let bb_wait_name =
-                                    format!("{}_{}_{}", name, bb_idx.index(), "wait");
-                                let bb_wait_place = Place::new(
-                                    bb_wait_name,
-                                    0,
-                                    1,
-                                    PlaceType::BasicBlock,
-                                    span.to_string(),
-                                );
-                                let bb_wait = self.net.add_place(bb_wait_place);
-
-                                let bb_ret_name =
-                                    format!("{}_{}_{}", name, bb_idx.index(), "return");
-                                let bb_ret_transition = Transition::new_with_transition_type(
-                                    bb_ret_name,
+                                let (_bb_wait, bb_ret) = crate::add_wait_ret_subnet!(
+                                    self,
+                                    name,
+                                    bb_idx,
+                                    "wait",
+                                    "return",
                                     TransitionType::Function,
+                                    span.to_string(),
+                                    bb_end
                                 );
-                                let bb_ret = self.net.add_transition(bb_ret_transition);
 
-                                self.net.add_output_arc(bb_wait, bb_end, 1);
-                                self.net.add_input_arc(bb_wait, bb_ret, 1);
                                 self.net.add_output_arc(callee_start, bb_end, 1);
                                 match target {
                                     Some(return_block) => {
@@ -1370,18 +1327,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         } else if has_pn_attribute(self.tcx, callee_def_id, "pn_condvar_wait")
             || self.key_api_regex.condvar_wait.is_match(callee_func_name)
         {
-            let bb_wait_name = format!("{}_{}_{}", name, bb_idx.index(), "wait");
-            let bb_wait_place =
-                Place::new(bb_wait_name, 0, 1, PlaceType::BasicBlock, span.to_string());
-            let bb_wait = self.net.add_place(bb_wait_place);
-
-            let bb_ret_name = format!("{}_{}_{}", name, bb_idx.index(), "ret");
-            let bb_ret_transition =
-                Transition::new_with_transition_type(bb_ret_name, TransitionType::Wait);
-            let bb_ret = self.net.add_transition(bb_ret_transition);
-
-            self.net.add_output_arc(bb_wait, bb_end, 1);
-            self.net.add_input_arc(bb_wait, bb_ret, 1);
+            let (_bb_wait, bb_ret) = crate::add_wait_ret_subnet!(
+                self,
+                name,
+                bb_idx,
+                "wait",
+                "ret",
+                TransitionType::Wait,
+                span.to_string(),
+                bb_end
+            );
 
             let condvar_id = CondVarId::new(
                 self.instance_id,
@@ -1415,27 +1370,23 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     fn handle_unwind_continue(&mut self, bb_idx: BasicBlock, name: &str) {
-        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "unwind");
-        let bb_term_transition = Transition::new_with_transition_type(
-            bb_term_name,
-            TransitionType::Return(self.instance_id.index()),
+        crate::add_terminal_transition!(
+            self,
+            bb_idx,
+            name,
+            "unwind",
+            TransitionType::Return(self.instance_id.index())
         );
-        let bb_term_node = self.net.add_transition(bb_term_transition);
-        self.net
-            .add_input_arc(self.bb_graph.last(bb_idx), bb_term_node, 1);
-        self.net.add_output_arc(self.entry_exit.1, bb_term_node, 1);
     }
 
     fn handle_panic(&mut self, bb_idx: BasicBlock, name: &str) {
-        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "panic");
-        let bb_term_transition = Transition::new_with_transition_type(
-            bb_term_name,
-            TransitionType::Return(self.instance_id.index()),
+        crate::add_terminal_transition!(
+            self,
+            bb_idx,
+            name,
+            "panic",
+            TransitionType::Return(self.instance_id.index())
         );
-        let bb_term_node = self.net.add_transition(bb_term_transition);
-        self.net
-            .add_input_arc(self.bb_graph.last(bb_idx), bb_term_node, 1);
-        self.net.add_output_arc(self.entry_exit.1, bb_term_node, 1);
     }
 
     fn handle_channel_call(
@@ -1510,7 +1461,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             _ => {}
         }
 
-        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "call");
+        let bb_term_name = crate::transition_name!(name, bb_idx, "call");
         let bb_end = self.create_call_transition(bb_idx, &bb_term_name);
         let callee_ty = func.ty(self.body, self.tcx);
         let callee_def_id = match callee_ty.kind() {
@@ -1640,7 +1591,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         name: &str,
         bb: &BasicBlockData<'tcx>,
     ) {
-        let bb_term_name = format!("{}_{}_{}", name, bb_idx.index(), "drop");
+        let bb_term_name = crate::transition_name!(name, bb_idx, "drop");
         let bb_term_transition =
             Transition::new_with_transition_type(bb_term_name, TransitionType::Drop);
         let bb_end = self.net.add_transition(bb_term_transition);
@@ -1779,15 +1730,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.net.add_output_arc(unsafe_place, unsafe_read_t, 1);
                 self.net.add_input_arc(unsafe_place, unsafe_read_t, 1);
 
-                let place_name = format!("{}_rready", &transition_name.as_str());
-                let temp_place = Place::new(
-                    place_name,
-                    0,
-                    1,
-                    PlaceType::BasicBlock,
-                    span_str.to_string(),
-                );
-                let temp_place_node = self.net.add_place(temp_place);
+            let place_name = format!("{}_rready", &transition_name.as_str());
+            let temp_place_node = crate::bb_place!(self.net, place_name, span_str.to_string());
                 self.net.add_output_arc(temp_place_node, unsafe_read_t, 1);
 
                 self.bb_graph.push(bb_idx, temp_place_node);
@@ -1827,14 +1771,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_input_arc(unsafe_place, unsafe_write_t, 1);
 
             let place_name = format!("{}_wready", &transition_name.as_str());
-            let temp_place = Place::new(
-                place_name,
-                0,
-                1,
-                PlaceType::BasicBlock,
-                span_str.to_string(),
-            );
-            let temp_place_node = self.net.add_place(temp_place);
+            let temp_place_node = crate::bb_place!(self.net, place_name, span_str.to_string());
             self.net.add_output_arc(temp_place_node, unsafe_write_t, 1);
 
             self.bb_graph.push(bb_idx, temp_place_node);
