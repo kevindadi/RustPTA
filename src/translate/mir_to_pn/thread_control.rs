@@ -73,41 +73,25 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             args.first().unwrap().node.place().unwrap().as_ref(),
         );
 
-        if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
-            let matching_callees: Vec<_> = spawn_calls
-                .iter()
-                .filter_map(|(spawn_dest_id, callees)| {
-                    let alias_kind = self
-                        .alias
-                        .borrow_mut()
-                        .alias(join_id, *spawn_dest_id);
+        let matching_callees = self.get_matching_spawn_callees(join_id);
 
-                    if alias_kind.may_alias(self.alias_unknown_policy) {
-                        Some(callees.iter().copied())
-                    } else {
-                        None
-                    }
-                })
-                .flatten()
-                .collect();
+        if matching_callees.is_empty() {
+            log::error!(
+                "No matching spawn call found for join in {:?}",
+                self.instance.def_id()
+            );
+        }
 
-            if matching_callees.is_empty() {
-                log::error!(
-                    "No matching spawn call found for join in {:?}",
-                    self.instance.def_id()
-                );
-            }
+        if let Some(transition) = self.net.get_transition_mut(bb_end) {
+            transition.transition_type = TransitionType::Join(callee_func_name.to_string());
+        }
 
-            if let Some(transition) = self.net.get_transition_mut(bb_end) {
-                transition.transition_type = TransitionType::Join(callee_func_name.to_string());
-            }
-
-            for spawn_def_id in matching_callees {
-                if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
-                    self.net.add_input_arc(spawn_end, bb_end, 1);
-                }
+        for spawn_def_id in matching_callees {
+            if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
+                self.net.add_input_arc(spawn_end, bb_end, 1);
             }
         }
+
         self.connect_to_target(bb_end, target);
     }
 
@@ -193,39 +177,22 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             args.first().unwrap().node.place().unwrap().as_ref(),
         );
 
-        if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
-            let matching_callees: Vec<_> = spawn_calls
-                .iter()
-                .filter_map(|(spawn_dest_id, callees)| {
-                    let alias_kind = self
-                        .alias
-                        .borrow_mut()
-                        .alias(join_id, *spawn_dest_id);
+        let matching_callees = self.get_matching_spawn_callees(join_id);
 
-                    if alias_kind.may_alias(self.alias_unknown_policy) {
-                        Some(callees.iter().copied())
-                    } else {
-                        None
-                    }
-                })
-                .flatten()
-                .collect();
+        if matching_callees.is_empty() {
+            log::error!(
+                "No matching spawn call found for join in {:?}",
+                self.instance.def_id()
+            );
+        }
 
-            if matching_callees.is_empty() {
-                log::error!(
-                    "No matching spawn call found for join in {:?}",
-                    self.instance.def_id()
-                );
-            }
+        if let Some(transition) = self.net.get_transition_mut(bb_end) {
+            transition.transition_type = TransitionType::Join(callee_func_name.to_string());
+        }
 
-            if let Some(transition) = self.net.get_transition_mut(bb_end) {
-                transition.transition_type = TransitionType::Join(callee_func_name.to_string());
-            }
-
-            for spawn_def_id in matching_callees {
-                if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
-                    self.net.add_input_arc(spawn_end, bb_end, 1);
-                }
+        for spawn_def_id in matching_callees {
+            if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
+                self.net.add_input_arc(spawn_end, bb_end, 1);
             }
         }
 

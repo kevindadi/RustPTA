@@ -1,8 +1,8 @@
-use petgraph::visit::Bfs;
 use petgraph::Direction::Incoming;
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
+use petgraph::visit::Bfs;
 use petgraph::{Directed, Graph};
 
 use std::collections::hash_map::RandomState;
@@ -59,7 +59,9 @@ impl CallSiteLocation {
         match self {
             Self::ThreadControl {
                 destination: Some(destination),
-                kind: ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn,
+                kind: ThreadControlKind::Spawn
+                    | ThreadControlKind::ScopeSpawn
+                    | ThreadControlKind::AsyncSpawn,
                 ..
             } => Some(*destination),
             _ => None,
@@ -113,10 +115,7 @@ impl<'tcx> CallGraph<'tcx> {
             output.push_str(&format!("\nIn function {caller_name}:\n"));
 
             for (destination, callees) in spawn_set {
-                output.push_str(&format!(
-                    "  - Stored in _{}:\n",
-                    destination.local.index()
-                ));
+                output.push_str(&format!("  - Stored in _{}:\n", destination.local.index()));
                 for callee in callees {
                     let closure_name = tcx.def_path_str(*callee);
                     output.push_str(&format!("      * {closure_name}\n"));
@@ -140,7 +139,11 @@ impl<'tcx> CallGraph<'tcx> {
 
     /// 从入口函数出发,沿调用边 BFS 得到可达的 InstanceId 集合.
     /// 用于入口导向翻译,仅分析从 main 可达的函数.
-    pub fn reachable_from_entry(&self, tcx: TyCtxt<'tcx>, entry_def_id: DefId) -> FxHashSet<InstanceId> {
+    pub fn reachable_from_entry(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        entry_def_id: DefId,
+    ) -> FxHashSet<InstanceId> {
         let entry_instance = Instance::mono(tcx, entry_def_id);
         let Some(&entry_idx) = self.instance_index.get(&entry_instance) else {
             return FxHashSet::default();
@@ -190,7 +193,9 @@ impl<'tcx> CallGraph<'tcx> {
                 let callee_idx = self.insert_instance(CallGraphNode::WithoutBody(callee));
 
                 if let CallSiteLocation::ThreadControl {
-                    kind: ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn,
+                    kind: ThreadControlKind::Spawn
+                        | ThreadControlKind::ScopeSpawn
+                        | ThreadControlKind::AsyncSpawn,
                     destination: Some(alias_id),
                     ..
                 } = location

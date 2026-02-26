@@ -16,7 +16,7 @@ use bb_graph::BasicBlockGraph;
 use bb_graph::SegState;
 use crate::{
     concurrency::blocking::LockGuardMap,
-    memory::pointsto::AliasAnalysis,
+    memory::pointsto::{AliasAnalysis, AliasId},
     net::{Net, PlaceId, TransitionId},
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
 };
@@ -60,6 +60,28 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn functions_map(&self) -> &HashMap<DefId, (PlaceId, PlaceId)> {
         self.functions.counter()
+    }
+
+    /// 按 join_id 从 spawn_calls 中 alias 匹配，返回可能对应的 spawn callee DefIds.
+    fn get_matching_spawn_callees(&mut self, join_id: AliasId) -> Vec<DefId> {
+        self.callgraph
+            .get_spawn_calls(self.instance.def_id())
+            .map(|spawn_calls| {
+                spawn_calls
+                    .iter()
+                    .filter_map(|(spawn_dest_id, callees)| {
+                        let alias_kind =
+                            self.alias.borrow_mut().alias(join_id, *spawn_dest_id);
+                        if alias_kind.may_alias(self.alias_unknown_policy) {
+                            Some(callees.iter().copied())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     }
 
     pub fn new(

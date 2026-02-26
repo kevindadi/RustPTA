@@ -81,27 +81,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             args.first().unwrap().node.place().unwrap().as_ref(),
         );
 
-        let matching_callees: Vec<_> = self
-            .callgraph
-            .get_spawn_calls(self.instance.def_id())
-            .map(|spawn_calls| {
-                spawn_calls
-                    .iter()
-                    .filter_map(|(spawn_dest_id, callees)| {
-                        let alias_kind = self
-                            .alias
-                            .borrow_mut()
-                            .alias(join_id, *spawn_dest_id);
-                        if alias_kind.may_alias(self.alias_unknown_policy) {
-                            Some(callees.iter().copied())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let matching_callees = self.get_matching_spawn_callees(join_id);
 
         for spawn_def_id in &matching_callees {
             if let Some(task_id) = self.async_ctx.get_task_for_spawn(*spawn_def_id) {
