@@ -274,7 +274,11 @@ mod alias_id_serde {
     where
         S: Serializer,
     {
-        let tuple = (value.instance_id.index(), value.local.index());
+        let tuple = (
+            value.instance_id.index(),
+            value.local.index(),
+            value.array_index,
+        );
         tuple.serialize(serializer)
     }
 
@@ -282,10 +286,13 @@ mod alias_id_serde {
     where
         D: Deserializer<'de>,
     {
-        let (instance_idx, local_idx) = <(usize, usize)>::deserialize(deserializer)?;
+        let (instance_idx, local_idx, array_index) =
+            <(usize, usize, Option<u64>)>::deserialize(deserializer)?;
         let instance = NodeIndex::new(instance_idx);
         let local = Local::from_usize(local_idx);
-        Ok(AliasId::new(instance, local))
+        let mut id = AliasId::new(instance, local);
+        id.array_index = array_index;
+        Ok(id)
     }
 }
 

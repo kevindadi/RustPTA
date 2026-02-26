@@ -11,7 +11,8 @@ use crate::{memory::pointsto::AliasId, net::PlaceId};
 pub struct ResourceRegistry {
     locks: HashMap<AliasId, PlaceId>,
     condvars: HashMap<AliasId, PlaceId>,
-    atomic_places: HashMap<AliasId, PlaceId>,
+    /// 每个 alias 可映射到多个 place（消除 first match 后，一个指针可能别名多个原子变量）
+    atomic_places: HashMap<AliasId, Vec<PlaceId>>,
     atomic_orders: HashMap<AliasId, AtomicOrdering>,
     unsafe_places: HashMap<AliasId, PlaceId>,
     channel_places: HashMap<AliasId, PlaceId>,
@@ -45,11 +46,11 @@ impl ResourceRegistry {
         &mut self.condvars
     }
 
-    pub fn atomic_places(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn atomic_places(&self) -> &HashMap<AliasId, Vec<PlaceId>> {
         &self.atomic_places
     }
 
-    pub fn atomic_places_mut(&mut self) -> &mut HashMap<AliasId, PlaceId> {
+    pub fn atomic_places_mut(&mut self) -> &mut HashMap<AliasId, Vec<PlaceId>> {
         &mut self.atomic_places
     }
 

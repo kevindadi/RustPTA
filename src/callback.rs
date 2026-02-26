@@ -1,7 +1,7 @@
 extern crate rustc_driver;
 extern crate rustc_hir;
 
-use crate::analysis::reachability::StateGraph;
+use crate::analysis::reachability::{StateGraph, StateGraphConfig};
 #[cfg(feature = "atomic-violation")]
 use crate::detect::atomic_violation_detector::{
     Witness, detect_atomicity_violations, marking_from_places, print_witnesses,
@@ -20,6 +20,7 @@ use crate::translate::callgraph::CallGraph;
 use crate::translate::petri_net::PetriNet;
 use crate::util::mem_watcher::MemoryWatcher;
 use log::{debug, error, info};
+use rayon::join;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
@@ -162,6 +163,21 @@ impl PTACallbacks {
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
 
+        if self.options.config.reduce_net {
+            use crate::net::reduce::{reduce_in_place, ReductionOptions};
+            match reduce_in_place(&mut pn.net, ReductionOptions::default()) {
+                Ok(result) => {
+                    log::info!(
+                        "Petri net reduced: {} steps (loops/sequences/intermediate)",
+                        result.steps.len()
+                    );
+                }
+                Err(e) => {
+                    log::warn!("Petri net reduction failed: {}, continuing without reduction", e);
+                }
+            }
+        }
+
         // 在构建状态图之前执行连通性诊断
         pn.net.log_diagnostics();
 
@@ -181,11 +197,32 @@ impl PTACallbacks {
             || matches!(self.options.detector_kind, DetectorKind::PointsTo)
         {
             log::info!("停止分析:在指针分析后停止");
-            self.handle_visualizations(&callgraph, &pn, &StateGraph::from_net(&pn.net), &instances);
+            let sg_config = StateGraphConfig {
+                state_limit: self.options.config.state_limit,
+                include_zero_tokens: false,
+                use_por: self.options.config.por_enabled,
+            };
+            self.handle_visualizations(
+                &callgraph,
+                &pn,
+                &StateGraph::with_config(&pn.net, sg_config),
+                &instances,
+            );
             return;
         }
 
-        let state_graph = StateGraph::from_net(&pn.net);
+        let sg_config = StateGraphConfig {
+            state_limit: self.options.config.state_limit,
+            include_zero_tokens: false,
+            use_por: self.options.config.por_enabled,
+        };
+        let state_graph = StateGraph::with_config(&pn.net, sg_config);
+        if state_graph.truncated {
+            log::warn!(
+                "状态空间已截断 (limit={:?}), 分析结果可能不完整",
+                self.options.config.state_limit
+            );
+        }
 
         // 检查是否在状态图后停止
         if self.options.stop_after == StopAfter::AfterStateGraph {
@@ -310,16 +347,16 @@ impl PTACallbacks {
                 }
             }
             DetectorKind::All => {
-                self.run_deadlock_detector(state_graph);
-
                 #[cfg(feature = "atomic-violation")]
                 {
                     log::info!(
                         "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
                     );
                 }
-
-                self.run_datarace_detector(state_graph);
+                join(
+                    || self.run_deadlock_detector(state_graph),
+                    || self.run_datarace_detector(state_graph),
+                );
             }
         }
     }
@@ -340,11 +377,13 @@ impl PTACallbacks {
                 self.run_atomic_detector(pn);
             }
             DetectorKind::All => {
-                self.run_deadlock_detector(state_graph);
                 info!(
                     "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
                 );
-                self.run_datarace_detector(state_graph);
+                join(
+                    || self.run_deadlock_detector(state_graph),
+                    || self.run_datarace_detector(state_graph),
+                );
             }
         }
     }

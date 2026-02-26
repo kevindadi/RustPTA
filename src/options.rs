@@ -2,9 +2,10 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 
-use crate::config::PnConfig;
+use crate::config::{AliasUnknownPolicy, PnConfig};
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
+#[derive(Debug, Clone)]
 pub enum CrateNameList {
     White(Vec<String>),
     Black(Vec<String>),
@@ -131,6 +132,58 @@ fn make_options_parser() -> clap::Command {
                 .value_name("STAGE")
                 .help("Stop analysis after specified stage: mir, callgraph, pointsto, petrinet, stategraph")
                 .value_parser(["mir", "callgraph", "pointsto", "petrinet", "stategraph"]),
+        )
+        .arg(
+            Arg::new("state_limit")
+                .long("state-limit")
+                .value_name("N")
+                .help("Max states to explore in reachability (default: 50000, 0 = unlimited)")
+                .value_parser(clap::value_parser!(usize)),
+        )
+        .arg(
+            Arg::new("full")
+                .long("full")
+                .help("Translate all functions (disables entry-reachable and concurrent-roots filtering)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("crate_whitelist")
+                .long("crate-whitelist")
+                .value_name("CRATES")
+                .help("Comma-separated crate names to analyze (only these crates)")
+                .value_delimiter(','),
+        )
+        .arg(
+            Arg::new("crate_blacklist")
+                .long("crate-blacklist")
+                .value_name("CRATES")
+                .help("Comma-separated crate names to exclude from analysis")
+                .value_delimiter(','),
+        )
+        .arg(
+            Arg::new("no_reduce")
+                .long("no-reduce")
+                .help("Disable Petri net reduction before reachability")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("por")
+                .long("por")
+                .help("Enable partial order reduction (POR) to reduce equivalent interleavings")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no_concurrent_roots")
+                .long("no-concurrent-roots")
+                .help("Disable translating functions that use locks/atomics/condvars/channels (and their callees)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("alias_unknown_policy")
+                .long("alias-unknown-policy")
+                .value_name("POLICY")
+                .help("When alias analysis returns Unknown: conservative (treat as Possibly, sound) or optimistic (treat as Unlikely)")
+                .value_parser(["conservative", "optimistic"]),
         );
     parser
 }
@@ -139,6 +192,7 @@ pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: Option<PathBuf>,
     pub crate_name: String,
+    pub crate_filter: CrateNameList,
     pub dump_options: DumpOptions,
     pub stop_after: StopAfter,
     pub config: PnConfig,
@@ -150,6 +204,7 @@ impl Default for Options {
             detector_kind: DetectorKind::Deadlock,
             output: Option::default(),
             crate_name: String::new(),
+            crate_filter: CrateNameList::default(),
             dump_options: DumpOptions::default(),
             stop_after: StopAfter::None,
             config: PnConfig::default(),
@@ -282,12 +337,35 @@ impl Options {
         match PnConfig::load_from_file(&config_path) {
             Ok(cfg) => self.config = cfg,
             Err(e) => {
-                // If user deliberately specified a config file and it failed, we should probably warn or error.
-                // But PnConfig::load_from_file returns Default if path doesn't exist.
-                // However, PnConfig::load_from_file implementation I wrote earlier returns Ok(Default) if not exists.
-                // Wait, if it fails to parse, it returns Error.
                 log::warn!("Failed to load config from {:?}: {}", config_path, e);
             }
+        }
+
+        if let Some(&n) = matches.get_one::<usize>("state_limit") {
+            self.config.state_limit = if n == 0 { None } else { Some(n) };
+        }
+        if matches.get_flag("full") {
+            self.config.entry_reachable = false;
+        }
+        if let Some(crates) = matches.get_many::<String>("crate_whitelist") {
+            self.crate_filter = CrateNameList::White(crates.cloned().collect());
+        } else if let Some(crates) = matches.get_many::<String>("crate_blacklist") {
+            self.crate_filter = CrateNameList::Black(crates.cloned().collect());
+        }
+        if matches.get_flag("no_reduce") {
+            self.config.reduce_net = false;
+        }
+        if matches.get_flag("por") {
+            self.config.por_enabled = true;
+        }
+        if matches.get_flag("no_concurrent_roots") {
+            self.config.translate_concurrent_roots = false;
+        }
+        if let Some(policy) = matches.get_one::<String>("alias_unknown_policy") {
+            self.config.alias_unknown_policy = match policy.as_str() {
+                "optimistic" => AliasUnknownPolicy::Optimistic,
+                _ => AliasUnknownPolicy::Conservative,
+            };
         }
 
         rustc_args.to_vec()

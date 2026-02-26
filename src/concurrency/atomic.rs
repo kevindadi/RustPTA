@@ -9,13 +9,31 @@ use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::StatementKind;
 use rustc_middle::mir::{
-    Body, Local, Location, Operand, Terminator, TerminatorKind, visit::Visitor,
+    Body, Local, Location, Operand, PlaceElem, Terminator, TerminatorKind, visit::Visitor,
 };
 use rustc_middle::ty::{self, GenericArg, Instance, List, Ty, TyCtxt, TyKind};
 use serde_json::json;
 
 use crate::memory::pointsto::AliasId;
 use crate::translate::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use rustc_middle::mir::PlaceRef;
+
+fn extract_array_index(place: PlaceRef<'_>) -> Option<u64> {
+    if place.projection.iter().any(|e| matches!(e, PlaceElem::Index(_))) {
+        return None;
+    }
+    place
+        .projection
+        .iter()
+        .rev()
+        .find_map(|elem| {
+            if let PlaceElem::ConstantIndex { offset, .. } = elem {
+                Some(*offset)
+            } else {
+                None
+            }
+        })
+}
 use crate::util::format_name;
 
 static ATOMIC_PTR_STORE: Lazy<Regex> =
@@ -81,13 +99,16 @@ pub struct AtomicVarInfo {
     pub var_type: String,
     pub instance_id: InstanceId,
     pub local_id: Local,
+    pub array_index: Option<u64>,
     pub span: String,
     pub operations: Vec<AtomicOperation>,
 }
 
 impl AtomicVarInfo {
     pub fn get_alias_id(&self) -> AliasId {
-        AliasId::new(self.instance_id, self.local_id)
+        let mut id = AliasId::new(self.instance_id, self.local_id);
+        id.array_index = self.array_index;
+        id
     }
 }
 
@@ -140,6 +161,7 @@ impl<'a, 'tcx> AtomicCollector<'a, 'tcx> {
                     var_type: ty.to_string(),
                     instance_id: self.callgraph.instance_to_index(instance).unwrap(),
                     local_id: local,
+                    array_index: None,
                     span: format!("{:?}", local_decl.source_info.span),
                     operations: Vec::new(),
                 };
@@ -231,10 +253,12 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
 
                     if let Some(arg) = args.get(0) {
                         if let Operand::Move(first_place) | Operand::Copy(first_place) = &arg.node {
+                            let array_index = extract_array_index(first_place.as_ref());
                             let var_name = format!(
-                                "{}_{}",
+                                "{}_{}_{}",
                                 self.tcx.def_path_str(self.instance.def_id()),
-                                first_place.local.index()
+                                first_place.local.index(),
+                                array_index.map(|i| i.to_string()).unwrap_or_else(|| "n".to_string())
                             );
                             let first_place_ty = &self.body.local_decls[first_place.local].ty;
 
@@ -355,6 +379,7 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
                                                             var_type: first_place_ty.to_string(),
                                                             instance_id: self.instance_id,
                                                             local_id: first_place.local,
+                                                            array_index,
                                                             span: format!(
                                                                 "{:?}",
                                                                 self.body

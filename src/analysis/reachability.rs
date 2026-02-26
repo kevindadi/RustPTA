@@ -5,8 +5,8 @@ use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
+use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
 
@@ -224,15 +224,36 @@ pub struct StateGraphConfig {
     pub state_limit: Option<usize>,
     /// 是否在节点快照中保留 token 为 0 的库所.
     pub include_zero_tokens: bool,
+    /// 是否启用部分序约简 (POR), 对独立变迁减少等价交错.
+    pub use_por: bool,
 }
 
 impl Default for StateGraphConfig {
     fn default() -> Self {
         Self {
-            state_limit: None,
+            state_limit: Some(50_000),
             include_zero_tokens: false,
+            use_por: false,
         }
     }
+}
+
+/// 判断两个变迁是否独立 (不共享任何库所).
+/// 独立变迁可交换发生顺序, 用于 POR 减少等价交错.
+fn transitions_are_independent(net: &Net, t1: TransitionId, t2: TransitionId) -> bool {
+    if t1 == t2 {
+        return false;
+    }
+    for (place_id, _) in net.places.iter_enumerated() {
+        let w1_pre = *net.pre.get(place_id, t1);
+        let w1_post = *net.post.get(place_id, t1);
+        let w2_pre = *net.pre.get(place_id, t2);
+        let w2_post = *net.post.get(place_id, t2);
+        if (w1_pre > 0 || w1_post > 0) && (w2_pre > 0 || w2_post > 0) {
+            return false;
+        }
+    }
+    true
 }
 
 #[derive(Debug)]
@@ -302,9 +323,17 @@ impl StateGraph {
     }
 
     pub fn with_config(net: &Net, config: StateGraphConfig) -> Self {
+        if config.use_por {
+            Self::with_config_por(net, config)
+        } else {
+            Self::with_config_standard(net, config)
+        }
+    }
+
+    fn with_config_standard(net: &Net, config: StateGraphConfig) -> Self {
         let mut graph = StableGraph::new();
         let mut markings: FxHashMap<Marking, NodeIndex> = FxHashMap::default();
-        let mut queue = VecDeque::new();
+        let mut queue: VecDeque<NodeIndex> = VecDeque::new();
         let mut deadlocks = FxHashSet::default();
         let mut failures = Vec::new();
         let mut truncated = false;
@@ -316,7 +345,7 @@ impl StateGraph {
             net,
             config.include_zero_tokens,
         ));
-        markings.insert(initial_marking.clone(), initial_index);
+        markings.insert(initial_marking, initial_index);
         queue.push_back(initial_index);
 
         while let Some(state_index) = queue.pop_front() {
@@ -332,7 +361,7 @@ impl StateGraph {
             for transition_id in enabled {
                 match net.fire_transition(&current_marking, transition_id) {
                     Ok(next_marking) => {
-                        let target_index = match markings.entry(next_marking.clone()) {
+                        let target_index = match markings.entry(next_marking) {
                             Entry::Occupied(entry) => *entry.get(),
                             Entry::Vacant(entry) => {
                                 if let Some(limit) = config.state_limit {
@@ -343,7 +372,7 @@ impl StateGraph {
                                 }
                                 let index = graph.add_node(StateNode::new(
                                     graph.node_count(),
-                                    next_marking.clone(),
+                                    entry.key().clone(),
                                     net,
                                     config.include_zero_tokens,
                                 ));
@@ -353,8 +382,123 @@ impl StateGraph {
                             }
                         };
 
-                        let edge =
-                            StateEdge::new(net, transition_id, &current_marking, &next_marking);
+                        let edge = StateEdge::new(
+                            net,
+                            transition_id,
+                            &current_marking,
+                            &graph[target_index].marking,
+                        );
+                        graph.add_edge(state_index, target_index, edge);
+                    }
+                    Err(err) => {
+                        failures.push(TransitionFailure {
+                            source: state_index,
+                            transition: transition_id,
+                            transition_name: net.transitions[transition_id].name.clone(),
+                            reason: err.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Self {
+            graph,
+            initial: initial_index,
+            deadlocks,
+            truncated,
+            failures,
+            markings,
+        }
+    }
+
+    /// 使用部分序约简 (POR) 的 sleep set 方法减少等价交错探索.
+    fn with_config_por(net: &Net, config: StateGraphConfig) -> Self {
+        let mut graph = StableGraph::new();
+        let mut markings: FxHashMap<Marking, NodeIndex> = FxHashMap::default();
+        let mut sleep_sets: FxHashMap<NodeIndex, FxHashSet<TransitionId>> = FxHashMap::default();
+        let mut queue: VecDeque<(NodeIndex, FxHashSet<TransitionId>)> = VecDeque::new();
+        let mut deadlocks = FxHashSet::default();
+        let mut failures = Vec::new();
+        let mut truncated = false;
+
+        let initial_marking = net.initial_marking();
+        let initial_index = graph.add_node(StateNode::new(
+            0,
+            initial_marking.clone(),
+            net,
+            config.include_zero_tokens,
+        ));
+        markings.insert(initial_marking.clone(), initial_index);
+        queue.push_back((initial_index, FxHashSet::default()));
+
+        while let Some((state_index, sleep)) = queue.pop_front() {
+            let current_marking = graph[state_index].marking.clone();
+            let enabled: FxHashSet<TransitionId> =
+                net.enabled_transitions(&current_marking).into_iter().collect();
+            graph[state_index].update_enabled(net, &enabled.iter().copied().collect::<Vec<_>>());
+
+            if enabled.is_empty() {
+                deadlocks.insert(state_index);
+                continue;
+            }
+
+            let to_fire: Vec<TransitionId> = enabled.difference(&sleep).copied().collect();
+
+            for transition_id in to_fire {
+                match net.fire_transition(&current_marking, transition_id) {
+                    Ok(next_marking) => {
+                        let enabled_next: FxHashSet<TransitionId> = net
+                            .enabled_transitions(&next_marking)
+                            .into_iter()
+                            .collect();
+                        let mut new_sleep = sleep.clone();
+                        for &t in &enabled {
+                            if t != transition_id && transitions_are_independent(net, transition_id, t)
+                            {
+                                new_sleep.insert(t);
+                            }
+                        }
+                        new_sleep = new_sleep.intersection(&enabled_next).copied().collect();
+
+                        let target_index = match markings.entry(next_marking) {
+                            Entry::Occupied(entry) => {
+                                let old_ni = *entry.get();
+                                let old_sleep = sleep_sets.get(&old_ni).cloned().unwrap_or_default();
+                                let merged_sleep: FxHashSet<TransitionId> =
+                                    old_sleep.intersection(&new_sleep).copied().collect();
+                                if merged_sleep != old_sleep {
+                                    sleep_sets.insert(old_ni, merged_sleep.clone());
+                                    queue.push_back((old_ni, merged_sleep));
+                                }
+                                old_ni
+                            }
+                            Entry::Vacant(entry) => {
+                                if let Some(limit) = config.state_limit {
+                                    if graph.node_count() >= limit {
+                                        truncated = true;
+                                        continue;
+                                    }
+                                }
+                                let index = graph.add_node(StateNode::new(
+                                    graph.node_count(),
+                                    entry.key().clone(),
+                                    net,
+                                    config.include_zero_tokens,
+                                ));
+                                entry.insert(index);
+                                sleep_sets.insert(index, new_sleep.clone());
+                                queue.push_back((index, new_sleep));
+                                index
+                            }
+                        };
+
+                        let edge = StateEdge::new(
+                            net,
+                            transition_id,
+                            &current_marking,
+                            &graph[target_index].marking,
+                        );
                         graph.add_edge(state_index, target_index, edge);
                     }
                     Err(err) => {
@@ -420,10 +564,31 @@ mod tests {
         let config = StateGraphConfig {
             state_limit: Some(1),
             include_zero_tokens: false,
+            use_por: false,
         };
         let state_graph = StateGraph::with_config(&net, config);
 
         assert!(state_graph.truncated);
         assert_eq!(state_graph.graph.node_count(), 1);
+    }
+
+    #[test]
+    fn por_produces_same_reachable_states() {
+        // POR 应保持可达状态集不变, 仅减少探索的边数.
+        let net = build_simple_net();
+        let config_std = StateGraphConfig {
+            state_limit: None,
+            include_zero_tokens: false,
+            use_por: false,
+        };
+        let config_por = StateGraphConfig {
+            state_limit: None,
+            include_zero_tokens: false,
+            use_por: true,
+        };
+        let sg_std = StateGraph::with_config(&net, config_std);
+        let sg_por = StateGraph::with_config(&net, config_por);
+        assert_eq!(sg_std.graph.node_count(), sg_por.graph.node_count());
+        assert_eq!(sg_std.deadlocks.len(), sg_por.deadlocks.len());
     }
 }
