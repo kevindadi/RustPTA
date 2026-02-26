@@ -68,20 +68,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) {
-        let join_id = AliasId::new(
+        let join_id = AliasId::from_place(
             self.instance_id,
-            args.first().unwrap().node.place().unwrap().local,
+            args.first().unwrap().node.place().unwrap().as_ref(),
         );
 
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
             let matching_callees: Vec<_> = spawn_calls
                 .iter()
-                .filter_map(|(destination, callees)| {
-                    let spawn_local_id = AliasId::new(self.instance_id, *destination);
+                .filter_map(|(spawn_dest_id, callees)| {
                     let alias_kind = self
                         .alias
                         .borrow_mut()
-                        .alias(join_id.into(), spawn_local_id.into());
+                        .alias(join_id, *spawn_dest_id);
 
                     if alias_kind.may_alias(self.alias_unknown_policy) {
                         Some(callees.iter().copied())
@@ -189,20 +188,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) {
-        let join_id = AliasId::new(
+        let join_id = AliasId::from_place(
             self.instance_id,
-            args.first().unwrap().node.place().unwrap().local,
+            args.first().unwrap().node.place().unwrap().as_ref(),
         );
 
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
             let matching_callees: Vec<_> = spawn_calls
                 .iter()
-                .filter_map(|(destination, callees)| {
-                    let spawn_local_id = AliasId::new(self.instance_id, *destination);
+                .filter_map(|(spawn_dest_id, callees)| {
                     let alias_kind = self
                         .alias
                         .borrow_mut()
-                        .alias(join_id.into(), spawn_local_id.into());
+                        .alias(join_id, *spawn_dest_id);
 
                     if alias_kind.may_alias(self.alias_unknown_policy) {
                         Some(callees.iter().copied())
