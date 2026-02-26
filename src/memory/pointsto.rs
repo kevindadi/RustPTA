@@ -763,6 +763,18 @@ impl PartialOrd for ApproximateAliasKind {
     }
 }
 
+impl ApproximateAliasKind {
+    /// 在给定 Unknown 策略下，该别名结果是否应添加弧（视为可能别名）
+    pub fn may_alias(self, policy: crate::config::AliasUnknownPolicy) -> bool {
+        use crate::config::AliasUnknownPolicy;
+        match self {
+            ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => true,
+            ApproximateAliasKind::Unlikely => false,
+            ApproximateAliasKind::Unknown => matches!(policy, AliasUnknownPolicy::Conservative),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AliasId {
     pub instance_id: InstanceId,

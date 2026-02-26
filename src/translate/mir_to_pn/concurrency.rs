@@ -3,7 +3,7 @@
 use super::BodyToPetriNet;
 use crate::{
     concurrency::atomic::AtomicOrdering,
-    memory::pointsto::{AliasId, ApproximateAliasKind},
+    memory::pointsto::AliasId,
     net::{PlaceId, Transition, TransitionId, TransitionType},
 };
 #[cfg(feature = "atomic-violation")]
@@ -11,17 +11,22 @@ use crate::net::{structure::PlaceType, Place};
 use rustc_middle::mir::BasicBlock;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    pub(super) fn find_atomic_match(&mut self, current_id: &AliasId) -> Option<(AliasId, PlaceId)> {
-        for (alias_id, place_id) in self.resources.atomic_places().iter() {
-            let alias_kind = self.alias.borrow_mut().alias_atomic(*current_id, *alias_id);
-            if matches!(
-                alias_kind,
-                ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
-            ) {
-                return Some((*alias_id, *place_id));
+    /// 返回所有匹配的 (alias_id, place_id)，消除 first match
+    pub(super) fn find_atomic_matches(&mut self, current_id: &AliasId) -> Vec<(AliasId, PlaceId)> {
+        let mut matches = Vec::new();
+        for (alias_id, place_ids) in self.resources.atomic_places().iter() {
+            if self
+                .alias
+                .borrow_mut()
+                .alias_atomic(*current_id, *alias_id)
+                .may_alias(self.alias_unknown_policy)
+            {
+                for &place_id in place_ids {
+                    matches.push((*alias_id, place_id));
+                }
             }
         }
-        None
+        matches
     }
 
     #[cfg(feature = "atomic-violation")]
@@ -55,24 +60,29 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     where
         F: FnMut(&AliasId, &AtomicOrdering, String) -> TransitionType,
     {
-        if let Some((alias_id, resource_place)) = self.find_atomic_match(&current_id) {
-            let span_owned = span.to_string();
-            let intermediate_name = format!(
-                "atomic_{}_in_{:?}_{:?}",
-                op_name,
-                current_id.instance_id.index(),
-                bb_idx.index()
-            );
-            let intermediate_id = crate::bb_place!(self.net, intermediate_name, span_owned.clone());
-            self.net.add_input_arc(intermediate_id, bb_end, 1);
+        let matches = self.find_atomic_matches(&current_id);
+        if matches.is_empty() {
+            return false;
+        }
+        let span_owned = span.to_string();
+        let intermediate_name = format!(
+            "atomic_{}_in_{:?}_{:?}",
+            op_name,
+            current_id.instance_id.index(),
+            bb_idx.index()
+        );
+        let intermediate_id = crate::bb_place!(self.net, intermediate_name, span_owned.clone());
+        self.net.add_input_arc(intermediate_id, bb_end, 1);
 
-            if let Some(order) = self.resources.atomic_orders().get(&current_id) {
+        if let Some(order) = self.resources.atomic_orders().get(&current_id) {
+            for (idx, (alias_id, resource_place)) in matches.into_iter().enumerate() {
                 let transition_name = format!(
-                    "atomic_{:?}_{}_{:?}_{:?}",
+                    "atomic_{:?}_{}_{:?}_{:?}_{}",
                     self.instance_id.index(),
                     op_name,
                     order,
-                    bb_idx.index()
+                    bb_idx.index(),
+                    idx
                 );
                 let transition_type = transition_builder(&alias_id, order, span_owned.clone());
                 let transition =
@@ -88,9 +98,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         .add_input_arc(self.bb_graph.start(*t), transition_id, 1);
                 }
             }
-            return true;
         }
-        false
+        true
     }
 
     #[cfg(feature = "atomic-violation")]
@@ -103,10 +112,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        let Some((alias_id, resource_place)) = self.find_atomic_match(&current_id) else {
+        let matches = self.find_atomic_matches(&current_id);
+        if matches.is_empty() {
             log::warn!("no alias found for atomic operation in {:?}", span);
             return false;
-        };
+        }
 
         let Some(order) = self.resources.atomic_orders().get(&current_id).copied() else {
             log::warn!(
@@ -120,6 +130,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         let tid = self.instance_id.index();
         let span_owned = span.to_string();
+        let alias_id = matches.first().map(|(a, _)| *a).unwrap_or(current_id);
 
         let transition_name = {
             let name = format!(
@@ -144,8 +155,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             name
         };
 
-        self.net.add_input_arc(resource_place, bb_end, 1);
-        self.net.add_output_arc(resource_place, bb_end, 1);
+        for (_, resource_place) in matches {
+            self.net.add_input_arc(resource_place, bb_end, 1);
+            self.net.add_output_arc(resource_place, bb_end, 1);
+        }
         self.wire_segment_for_ordering(bb_end, tid, order);
         self.connect_to_target(bb_end, target);
 
@@ -227,10 +240,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 .alias
                 .borrow_mut()
                 .alias_atomic(channel_alias, *alias_id);
-            if matches!(
-                alias_kind,
-                ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
-            ) {
+            if alias_kind.may_alias(self.alias_unknown_policy) {
                 return Some(*node);
             }
         }

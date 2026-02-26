@@ -3,7 +3,7 @@
 use super::BodyToPetriNet;
 use crate::{
     concurrency::blocking::{CondVarId, LockGuardId, LockGuardTy},
-    memory::pointsto::{AliasId, ApproximateAliasKind},
+    memory::pointsto::AliasId,
     net::{Idx, PlaceId, TransitionId, TransitionType},
     util::has_pn_attribute,
 };
@@ -222,16 +222,18 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let condvar_alias = condvar_id.get_alias_id();
 
             for (id, node) in self.resources.condvars().iter() {
-                match self.alias.borrow_mut().alias_atomic(condvar_alias, *id) {
-                    ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {
-                        self.net.add_output_arc(*node, bb_end, 1);
+                if self
+                    .alias
+                    .borrow_mut()
+                    .alias_atomic(condvar_alias, *id)
+                    .may_alias(self.alias_unknown_policy)
+                {
+                    self.net.add_output_arc(*node, bb_end, 1);
 
-                        if let Some(transition) = self.net.get_transition_mut(bb_end) {
-                            transition.transition_type = TransitionType::Notify(node.index());
-                        }
-                        break;
+                    if let Some(transition) = self.net.get_transition_mut(bb_end) {
+                        transition.transition_type = TransitionType::Notify(node.index());
                     }
-                    _ => continue,
+                    break;
                 }
             }
             self.connect_to_target(bb_end, target);
@@ -257,11 +259,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             let condvar_alias = condvar_id.get_alias_id();
 
             for (id, node) in self.resources.condvars().iter() {
-                match self.alias.borrow_mut().alias_atomic(condvar_alias, *id) {
-                    ApproximateAliasKind::Possibly | ApproximateAliasKind::Probably => {
-                        self.net.add_input_arc(*node, bb_ret, 1);
-                    }
-                    _ => continue,
+                if self
+                    .alias
+                    .borrow_mut()
+                    .alias_atomic(condvar_alias, *id)
+                    .may_alias(self.alias_unknown_policy)
+                {
+                    self.net.add_input_arc(*node, bb_ret, 1);
                 }
             }
 

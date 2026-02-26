@@ -52,6 +52,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     entry_exit: (PlaceId, PlaceId),
     key_api_regex: &'translate KeyApiRegex,
     async_ctx: &'translate mut AsyncTranslateContext,
+    alias_unknown_policy: crate::config::AliasUnknownPolicy,
     #[cfg(feature = "atomic-violation")]
     seg: SegState,
 }
@@ -75,6 +76,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         entry_exit: (PlaceId, PlaceId),
         key_api_regex: &'translate KeyApiRegex,
         async_ctx: &'translate mut AsyncTranslateContext,
+        alias_unknown_policy: crate::config::AliasUnknownPolicy,
     ) -> Self {
         #[allow(unused_mut)]
         let mut s = Self {
@@ -94,6 +96,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             entry_exit,
             key_api_regex,
             async_ctx,
+            alias_unknown_policy,
             #[cfg(feature = "atomic-violation")]
             seg: SegState::default(),
         };

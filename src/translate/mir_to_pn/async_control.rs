@@ -2,7 +2,7 @@
 
 use super::BodyToPetriNet;
 use crate::{
-    memory::pointsto::{AliasId, ApproximateAliasKind},
+    memory::pointsto::AliasId,
     net::{Transition, TransitionId, TransitionType},
 };
 use rustc_middle::mir::{BasicBlock, Operand};
@@ -81,42 +81,44 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             args.first().unwrap().node.place().unwrap().local,
         );
 
-        let spawn_def_id = self
+        let matching_callees: Vec<_> = self
             .callgraph
             .get_spawn_calls(self.instance.def_id())
-            .and_then(|spawn_calls| {
-                spawn_calls.iter().find_map(|(destination, callees)| {
-                    let spawn_local_id = AliasId::new(self.instance_id, *destination);
-                    let alias_kind = self
-                        .alias
-                        .borrow_mut()
-                        .alias(join_id.into(), spawn_local_id.into());
-                    if matches!(
-                        alias_kind,
-                        ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
-                    ) {
-                        callees.iter().copied().next()
-                    } else {
-                        None
-                    }
-                })
-            });
+            .map(|spawn_calls| {
+                spawn_calls
+                    .iter()
+                    .filter_map(|(destination, callees)| {
+                        let spawn_local_id = AliasId::new(self.instance_id, *destination);
+                        let alias_kind = self
+                            .alias
+                            .borrow_mut()
+                            .alias(join_id.into(), spawn_local_id.into());
+                        if alias_kind.may_alias(self.alias_unknown_policy) {
+                            Some(callees.iter().copied())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
-        if let Some(spawn_def_id) = spawn_def_id {
-            if let Some(task_id) = self.async_ctx.get_task_for_spawn(spawn_def_id) {
+        for spawn_def_id in &matching_callees {
+            if let Some(task_id) = self.async_ctx.get_task_for_spawn(*spawn_def_id) {
                 if let Some(tp) = self.async_ctx.get_task_places(task_id) {
                     self.net.add_input_arc(tp.completed, bb_end, 1);
                 }
             }
         }
 
+        let task_id = matching_callees
+            .first()
+            .and_then(|d| self.async_ctx.get_task_for_spawn(*d))
+            .map(|t| t.index())
+            .unwrap_or(0);
         if let Some(transition) = self.net.get_transition_mut(bb_end) {
-            transition.transition_type = TransitionType::AsyncJoin {
-                task_id: spawn_def_id
-                    .and_then(|d| self.async_ctx.get_task_for_spawn(d))
-                    .map(|t| t.index())
-                    .unwrap_or(0),
-            };
+            transition.transition_type = TransitionType::AsyncJoin { task_id };
         }
         self.connect_to_target(bb_end, target);
     }

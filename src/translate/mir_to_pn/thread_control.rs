@@ -2,7 +2,7 @@
 
 use super::BodyToPetriNet;
 use crate::{
-    memory::pointsto::{AliasId, ApproximateAliasKind},
+    memory::pointsto::AliasId,
     net::{Idx, Transition, TransitionId, TransitionType},
     translate::callgraph::{ThreadControlKind, classify_thread_control},
 };
@@ -74,37 +74,36 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         );
 
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
-            let spawn_def_id = spawn_calls
+            let matching_callees: Vec<_> = spawn_calls
                 .iter()
-                .find_map(|(destination, callees)| {
+                .filter_map(|(destination, callees)| {
                     let spawn_local_id = AliasId::new(self.instance_id, *destination);
                     let alias_kind = self
                         .alias
                         .borrow_mut()
                         .alias(join_id.into(), spawn_local_id.into());
 
-                    if matches!(
-                        alias_kind,
-                        ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
-                    ) {
-                        callees.iter().copied().next()
+                    if alias_kind.may_alias(self.alias_unknown_policy) {
+                        Some(callees.iter().copied())
                     } else {
                         None
                     }
                 })
-                .or_else(|| {
-                    log::error!(
-                        "No matching spawn call found for join in {:?}",
-                        self.instance.def_id()
-                    );
-                    None
-                });
+                .flatten()
+                .collect();
+
+            if matching_callees.is_empty() {
+                log::error!(
+                    "No matching spawn call found for join in {:?}",
+                    self.instance.def_id()
+                );
+            }
 
             if let Some(transition) = self.net.get_transition_mut(bb_end) {
                 transition.transition_type = TransitionType::Join(callee_func_name.to_string());
             }
 
-            if let Some(spawn_def_id) = spawn_def_id {
+            for spawn_def_id in matching_callees {
                 if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
                     self.net.add_input_arc(spawn_end, bb_end, 1);
                 }
@@ -196,41 +195,40 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         );
 
         if let Some(spawn_calls) = self.callgraph.get_spawn_calls(self.instance.def_id()) {
-            let spawn_def_id = spawn_calls
+            let matching_callees: Vec<_> = spawn_calls
                 .iter()
-                .find_map(|(destination, callees)| {
+                .filter_map(|(destination, callees)| {
                     let spawn_local_id = AliasId::new(self.instance_id, *destination);
                     let alias_kind = self
                         .alias
                         .borrow_mut()
                         .alias(join_id.into(), spawn_local_id.into());
 
-                    if matches!(
-                        alias_kind,
-                        ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
-                    ) {
-                        callees.iter().copied().next()
+                    if alias_kind.may_alias(self.alias_unknown_policy) {
+                        Some(callees.iter().copied())
                     } else {
                         None
                     }
                 })
-                .or_else(|| {
-                    log::error!(
-                        "No matching spawn call found for join in {:?}",
-                        self.instance.def_id()
-                    );
-                    None
-                });
+                .flatten()
+                .collect();
+
+            if matching_callees.is_empty() {
+                log::error!(
+                    "No matching spawn call found for join in {:?}",
+                    self.instance.def_id()
+                );
+            }
 
             if let Some(transition) = self.net.get_transition_mut(bb_end) {
                 transition.transition_type = TransitionType::Join(callee_func_name.to_string());
             }
 
-            self.net.add_input_arc(
-                self.functions_map().get(&spawn_def_id.unwrap()).unwrap().1,
-                bb_end,
-                1,
-            );
+            for spawn_def_id in matching_callees {
+                if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
+                    self.net.add_input_arc(spawn_end, bb_end, 1);
+                }
+            }
         }
 
         self.connect_to_target(bb_end, target);

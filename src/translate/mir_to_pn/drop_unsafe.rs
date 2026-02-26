@@ -3,7 +3,7 @@
 use super::BodyToPetriNet;
 use crate::{
     concurrency::blocking::{LockGuardId, LockGuardTy},
-    memory::pointsto::{AliasId, ApproximateAliasKind},
+    memory::pointsto::AliasId,
     net::{Idx, PlaceId, Transition, TransitionType},
 };
 use rustc_middle::mir::{BasicBlock, BasicBlockData, Operand, Rvalue};
@@ -63,15 +63,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     pub(super) fn has_unsafe_alias(&self, place_id: AliasId) -> (bool, PlaceId, Option<AliasId>) {
         for (unsafe_place, node_index) in self.resources.unsafe_places().iter() {
-            match self
+            if self
                 .alias
                 .borrow_mut()
                 .alias_atomic(place_id, *unsafe_place)
+                .may_alias(self.alias_unknown_policy)
             {
-                ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                    return (true, *node_index, Some(*unsafe_place));
-                }
-                _ => return (false, PlaceId::new(0), None),
+                return (true, *node_index, Some(*unsafe_place));
             }
         }
         (false, PlaceId::new(0), None)
