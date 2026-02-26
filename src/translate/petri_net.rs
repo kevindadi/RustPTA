@@ -20,7 +20,7 @@ use std::time::Instant;
 use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
-use crate::memory::pointsto::{AliasAnalysis, ApproximateAliasKind};
+use crate::memory::pointsto::AliasAnalysis;
 use crate::net::{Net, Place, PlaceId};
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
@@ -160,37 +160,37 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                     .insert(alias_id, AtomicOrdering::Relaxed);
             }
 
-            let canonical = {
+            let policy = self.options.config.alias_unknown_policy;
+            let place_ids: Vec<_> = {
                 let mut alias_analysis = self.alias.borrow_mut();
-                self.resources
-                    .atomic_places()
-                    .keys()
-                    .copied()
-                    .find(|existing| {
-                        matches!(
-                            alias_analysis.alias_atomic(alias_id, *existing),
-                            ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly
-                        )
-                    })
-                    .unwrap_or(alias_id)
+                let mut all_places = Vec::new();
+                for (existing, places) in self.resources.atomic_places().iter() {
+                    if alias_analysis
+                        .alias_atomic(alias_id, *existing)
+                        .may_alias(policy)
+                    {
+                        all_places.extend(places.iter().copied());
+                    }
+                }
+                all_places
             };
 
-            let place_id = if let Some(&pid) = self.resources.atomic_places().get(&canonical) {
-                pid
-            } else {
+            let place_ids: Vec<_> = if place_ids.is_empty() {
                 let place_name = format!(
                     "Atomic({},{})",
-                    canonical.instance_id.index(),
-                    canonical.local.index()
+                    alias_id.instance_id.index(),
+                    alias_id.local.index()
                 );
-                let pid = self.create_resource_place(place_name, 1, 1, atomic_info.span.clone());
-                self.resources.atomic_places_mut().insert(canonical, pid);
-                pid
+                let pid =
+                    self.create_resource_place(place_name, 1, 1, atomic_info.span.clone());
+                vec![pid]
+            } else {
+                place_ids.into_iter().collect::<HashSet<_>>().into_iter().collect()
             };
 
             self.resources
                 .atomic_places_mut()
-                .insert(alias_id, place_id);
+                .insert(alias_id, place_ids);
         }
     }
 
@@ -236,13 +236,11 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
             let mut current_group = vec![(local_i.clone(), info_i.clone())];
 
+            let policy = self.options.config.alias_unknown_policy;
             for j in i + 1..places_data.len() {
                 let (local_j, info_j) = &places_data[j];
-                match self.alias.borrow_mut().alias(*local_i, *local_j) {
-                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                        current_group.push((local_j.clone(), info_j.clone()));
-                    }
-                    _ => {}
+                if self.alias.borrow_mut().alias(*local_i, *local_j).may_alias(policy) {
+                    current_group.push((local_j.clone(), info_j.clone()));
                 }
             }
 
@@ -352,6 +350,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             self.entry_exit,
             key_api_regex,
             &mut self.async_ctx,
+            self.options.config.alias_unknown_policy,
         );
         func_body.translate();
     }
@@ -567,18 +566,17 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             union_find.insert(lock_id.clone(), lock_id.clone());
         }
 
+        let policy = self.options.config.alias_unknown_policy;
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
-                match self
+                if self
                     .alias
                     .borrow_mut()
                     .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
+                    .may_alias(policy)
                 {
-                    ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => {
-                        log::debug!("锁 {:?} 和 {:?} 存在别名关系", lockid_vec[i], lockid_vec[j]);
-                        union(&mut union_find, &lockid_vec[i], &lockid_vec[j]);
-                    }
-                    _ => {}
+                    log::debug!("锁 {:?} 和 {:?} 存在别名关系", lockid_vec[i], lockid_vec[j]);
+                    union(&mut union_find, &lockid_vec[i], &lockid_vec[j]);
                 }
             }
         }

@@ -40,6 +40,20 @@ pub struct PnConfig {
     pub atomic_load: Vec<String>,
     #[serde(default = "default_atomic_store")]
     pub atomic_store: Vec<String>,
+    /// Unknown 别名策略: conservative (sound) 将 Unknown 视为 Possibly; optimistic 将 Unknown 视为 Unlikely
+    #[serde(default = "default_alias_unknown_policy")]
+    pub alias_unknown_policy: AliasUnknownPolicy,
+}
+
+/// Unknown 别名策略: 当指针分析返回 Unknown 时如何对待
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AliasUnknownPolicy {
+    /// 保守策略 (sound): Unknown 视为 Possibly，添加弧，减少漏报
+    #[default]
+    Conservative,
+    /// 乐观策略: Unknown 视为 Unlikely，不添加弧，减少误报
+    Optimistic,
 }
 
 impl Default for PnConfig {
@@ -60,8 +74,13 @@ impl Default for PnConfig {
             channel_recv: default_channel_recv(),
             atomic_load: default_atomic_load(),
             atomic_store: default_atomic_store(),
+            alias_unknown_policy: default_alias_unknown_policy(),
         }
     }
+}
+
+fn default_alias_unknown_policy() -> AliasUnknownPolicy {
+    AliasUnknownPolicy::Conservative
 }
 
 impl PnConfig {

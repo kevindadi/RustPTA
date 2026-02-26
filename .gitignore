@@ -5,4 +5,6 @@
 **/tmp
 RustPetriNet.tar.gz
 example/rayon
-example/
+/example
+
+/.cursor/**

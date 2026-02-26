@@ -1,20 +1,21 @@
-use petgraph::visit::Bfs;
 use petgraph::Direction::Incoming;
 use petgraph::algo;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
+use petgraph::visit::Bfs;
 use petgraph::{Directed, Graph};
 
 use std::collections::hash_map::RandomState;
 use std::fs;
 use std::path::Path;
 
+use crate::memory::pointsto::AliasId;
 use crate::translate::structure::KeyApiRegex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
-    Body, Local, LocalDecl, LocalKind, Location, Operand, Terminator, TerminatorKind,
+    Body, Local, LocalDecl, LocalKind, Location, Operand, Place, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{self, GenericArgsRef, Instance, TyCtxt, TyKind, TypingEnv};
 use rustc_span::source_map::Spanned;
@@ -41,7 +42,7 @@ pub enum CallSiteLocation {
     ThreadControl {
         kind: ThreadControlKind,
         location: Location,
-        destination: Option<Local>,
+        destination: Option<AliasId>,
     },
 }
 
@@ -54,11 +55,13 @@ impl CallSiteLocation {
         }
     }
 
-    pub fn spawn_destination(&self) -> Option<Local> {
+    pub fn spawn_destination(&self) -> Option<AliasId> {
         match self {
             Self::ThreadControl {
                 destination: Some(destination),
-                kind: ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn,
+                kind: ThreadControlKind::Spawn
+                    | ThreadControlKind::ScopeSpawn
+                    | ThreadControlKind::AsyncSpawn,
                 ..
             } => Some(*destination),
             _ => None,
@@ -91,7 +94,7 @@ impl<'tcx> CallGraphNode<'tcx> {
 pub struct CallGraph<'tcx> {
     pub graph: Graph<CallGraphNode<'tcx>, Vec<CallSiteLocation>, Directed>,
 
-    pub spawn_calls: FxHashMap<DefId, FxHashMap<Local, FxHashSet<DefId>>>,
+    pub spawn_calls: FxHashMap<DefId, FxHashMap<AliasId, FxHashSet<DefId>>>,
     instance_index: FxHashMap<Instance<'tcx>, InstanceId>,
 }
 
@@ -112,7 +115,7 @@ impl<'tcx> CallGraph<'tcx> {
             output.push_str(&format!("\nIn function {caller_name}:\n"));
 
             for (destination, callees) in spawn_set {
-                output.push_str(&format!("  - Stored in _{}:\n", destination.index()));
+                output.push_str(&format!("  - Stored in _{}:\n", destination.local.index()));
                 for callee in callees {
                     let closure_name = tcx.def_path_str(*callee);
                     output.push_str(&format!("      * {closure_name}\n"));
@@ -130,22 +133,17 @@ impl<'tcx> CallGraph<'tcx> {
         self.graph.node_weight(idx)
     }
 
-    fn record_spawn_call(&mut self, caller: DefId, closure_idx: DefId, destination: Local) {
-        self.spawn_calls
-            .entry(caller)
-            .or_default()
-            .entry(destination)
-            .or_default()
-            .insert(closure_idx);
-    }
-
-    pub fn get_spawn_calls(&self, def_id: DefId) -> Option<&FxHashMap<Local, FxHashSet<DefId>>> {
+    pub fn get_spawn_calls(&self, def_id: DefId) -> Option<&FxHashMap<AliasId, FxHashSet<DefId>>> {
         self.spawn_calls.get(&def_id)
     }
 
     /// 从入口函数出发,沿调用边 BFS 得到可达的 InstanceId 集合.
     /// 用于入口导向翻译,仅分析从 main 可达的函数.
-    pub fn reachable_from_entry(&self, tcx: TyCtxt<'tcx>, entry_def_id: DefId) -> FxHashSet<InstanceId> {
+    pub fn reachable_from_entry(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        entry_def_id: DefId,
+    ) -> FxHashSet<InstanceId> {
         let entry_instance = Instance::mono(tcx, entry_def_id);
         let Some(&entry_idx) = self.instance_index.get(&entry_instance) else {
             return FxHashSet::default();
@@ -188,18 +186,26 @@ impl<'tcx> CallGraph<'tcx> {
             if body.source.promoted.is_some() {
                 continue;
             }
-            let mut collector = CallSiteCollector::new(caller, body, tcx, key_api_regex);
+            let mut collector =
+                CallSiteCollector::new(caller, caller_idx, body, tcx, key_api_regex);
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
                 let callee_idx = self.insert_instance(CallGraphNode::WithoutBody(callee));
 
                 if let CallSiteLocation::ThreadControl {
-                    kind: ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn,
-                    destination: Some(destination),
+                    kind: ThreadControlKind::Spawn
+                        | ThreadControlKind::ScopeSpawn
+                        | ThreadControlKind::AsyncSpawn,
+                    destination: Some(alias_id),
                     ..
                 } = location
                 {
-                    self.record_spawn_call(caller.def_id(), callee.def_id(), destination);
+                    self.spawn_calls
+                        .entry(caller.def_id())
+                        .or_default()
+                        .entry(alias_id)
+                        .or_default()
+                        .insert(callee.def_id());
                 }
                 if let Some(edge_idx) = self.graph.find_edge(caller_idx, callee_idx) {
                     self.graph.edge_weight_mut(edge_idx).unwrap().push(location);
@@ -265,6 +271,7 @@ impl<'tcx> CallGraph<'tcx> {
 
 struct CallSiteCollector<'a, 'tcx> {
     caller: Instance<'tcx>,
+    caller_idx: InstanceId,
     body: &'a Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     callsites: Vec<(Instance<'tcx>, CallSiteLocation)>,
@@ -275,6 +282,7 @@ struct CallSiteCollector<'a, 'tcx> {
 impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
     fn new(
         caller: Instance<'tcx>,
+        caller_idx: InstanceId,
         body: &'a Body<'tcx>,
         tcx: TyCtxt<'tcx>,
         key_api_regex: &'a KeyApiRegex,
@@ -282,6 +290,7 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
         let typing_env = TypingEnv::post_analysis(tcx, caller.def_id());
         Self {
             caller,
+            caller_idx,
             body,
             tcx,
             callsites: Vec::new(),
@@ -323,11 +332,12 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
     fn handle_spawn_call(
         &mut self,
         args: &[Spanned<Operand<'tcx>>],
-        destination: Local,
+        destination: Place<'tcx>,
         location: Location,
         substs: GenericArgsRef<'tcx>,
         kind: ThreadControlKind,
     ) -> bool {
+        let alias_id = AliasId::from_place(self.caller_idx, destination.as_ref());
         for operand in args.iter().take(2) {
             if let Some(callee) = self.operand_closure_instance(&operand.node, substs) {
                 self.callsites.push((
@@ -335,7 +345,7 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
                     CallSiteLocation::ThreadControl {
                         kind,
                         location,
-                        destination: Some(destination),
+                        destination: Some(alias_id),
                     },
                 ));
                 return true;
@@ -394,7 +404,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                         | ThreadControlKind::AsyncSpawn => {
                             if self.handle_spawn_call(
                                 args.as_ref(),
-                                destination.local,
+                                destination,
                                 location,
                                 substs,
                                 control_kind,
@@ -411,12 +421,14 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                         | ThreadControlKind::ScopeJoin
                         | ThreadControlKind::AsyncJoin => {
                             if let Some(callee) = self.resolve_instance(def_id, substs) {
+                                let alias_id =
+                                    AliasId::from_place(self.caller_idx, destination.as_ref());
                                 self.callsites.push((
                                     callee,
                                     CallSiteLocation::ThreadControl {
                                         kind: control_kind,
                                         location,
-                                        destination: Some(destination.local),
+                                        destination: Some(alias_id),
                                     },
                                 ));
                             }

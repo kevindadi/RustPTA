@@ -763,15 +763,57 @@ impl PartialOrd for ApproximateAliasKind {
     }
 }
 
+impl ApproximateAliasKind {
+    /// 在给定 Unknown 策略下，该别名结果是否应添加弧（视为可能别名）
+    pub fn may_alias(self, policy: crate::config::AliasUnknownPolicy) -> bool {
+        use crate::config::AliasUnknownPolicy;
+        match self {
+            ApproximateAliasKind::Probably | ApproximateAliasKind::Possibly => true,
+            ApproximateAliasKind::Unlikely => false,
+            ApproximateAliasKind::Unknown => matches!(policy, AliasUnknownPolicy::Conservative),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AliasId {
     pub instance_id: InstanceId,
     pub local: Local,
+    /// 常量索引时区分 arr[0] vs arr[1]；动态索引或非数组时为 None（合并）
+    pub array_index: Option<u64>,
 }
 
 impl AliasId {
     pub fn new(instance_id: InstanceId, local: Local) -> Self {
-        Self { instance_id, local }
+        Self {
+            instance_id,
+            local,
+            array_index: None,
+        }
+    }
+
+    /// 从 Place 构造，提取常量索引以区分 arr[0] vs arr[1]
+    pub fn from_place<'tcx>(instance_id: InstanceId, place: PlaceRef<'tcx>) -> Self {
+        let array_index = if place.projection.iter().any(|e| matches!(e, PlaceElem::Index(_))) {
+            None
+        } else {
+            place
+                .projection
+                .iter()
+                .rev()
+                .find_map(|elem| {
+                    if let PlaceElem::ConstantIndex { offset, .. } = elem {
+                        Some(*offset)
+                    } else {
+                        None
+                    }
+                })
+        };
+        Self {
+            instance_id,
+            local: place.local,
+            array_index,
+        }
     }
 }
 
@@ -780,6 +822,7 @@ impl std::convert::From<LockGuardId> for AliasId {
         Self {
             instance_id: lockguard_id.instance_id,
             local: lockguard_id.local,
+            array_index: None,
         }
     }
 }
@@ -789,6 +832,7 @@ impl std::convert::From<CondVarId> for AliasId {
         Self {
             instance_id: condvar_id.instance_id,
             local: condvar_id.local,
+            array_index: None,
         }
     }
 }
@@ -798,6 +842,7 @@ impl std::convert::From<ChannelId> for AliasId {
         Self {
             instance_id: channel_id.instance_id,
             local: channel_id.local,
+            array_index: None,
         }
     }
 }
@@ -958,11 +1003,28 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         let AliasId {
             instance_id: id1,
             local: local1,
+            array_index: idx1,
+            ..
         } = aid1;
         let AliasId {
             instance_id: id2,
             local: local2,
+            array_index: idx2,
+            ..
         } = aid2;
+
+        if local1 == local2 {
+            if let (Some(i), Some(j)) = (idx1, idx2) {
+                return if i == j {
+                    ApproximateAliasKind::Probably
+                } else {
+                    ApproximateAliasKind::Unlikely
+                };
+            }
+            if idx1.is_none() && idx2.is_none() {
+                return ApproximateAliasKind::Probably;
+            }
+        }
 
         let instance1 = self
             .callgraph
@@ -979,9 +1041,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
 
                 if instance1.def_id() == instance2.def_id() {
-                    if local1 == local2 {
-                        return ApproximateAliasKind::Probably;
-                    }
                     self.intraproc_alias(instance1, &node1, &node2)
                         .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
@@ -997,11 +1056,28 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         let AliasId {
             instance_id: id1,
             local: local1,
+            array_index: idx1,
+            ..
         } = aid1;
         let AliasId {
             instance_id: id2,
             local: local2,
+            array_index: idx2,
+            ..
         } = aid2;
+
+        if local1 == local2 {
+            if let (Some(i), Some(j)) = (idx1, idx2) {
+                return if i == j {
+                    ApproximateAliasKind::Probably
+                } else {
+                    ApproximateAliasKind::Unlikely
+                };
+            }
+            if idx1.is_none() && idx2.is_none() {
+                return ApproximateAliasKind::Probably;
+            }
+        }
 
         let instance1 = self
             .callgraph
@@ -1017,9 +1093,6 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
                 let node1 = ConstraintNode::Place(Place::from(local1).as_ref());
                 let node2 = ConstraintNode::Place(Place::from(local2).as_ref());
                 if instance1.def_id() == instance2.def_id() {
-                    if local1 == local2 {
-                        return ApproximateAliasKind::Probably;
-                    }
                     self.atomic_intraproc_alias(instance1, &node1, &node2)
                         .unwrap_or(ApproximateAliasKind::Unknown)
                 } else {
@@ -1035,10 +1108,12 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         let AliasId {
             instance_id: id1,
             local: local1,
+            ..
         } = pointer;
         let AliasId {
             instance_id: id2,
             local: local2,
+            ..
         } = pointee;
 
         let instance1 = self

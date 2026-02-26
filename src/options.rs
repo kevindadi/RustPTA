@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 
-use crate::config::PnConfig;
+use crate::config::{AliasUnknownPolicy, PnConfig};
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
 #[derive(Debug, Clone)]
@@ -177,6 +177,13 @@ fn make_options_parser() -> clap::Command {
                 .long("no-concurrent-roots")
                 .help("Disable translating functions that use locks/atomics/condvars/channels (and their callees)")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("alias_unknown_policy")
+                .long("alias-unknown-policy")
+                .value_name("POLICY")
+                .help("When alias analysis returns Unknown: conservative (treat as Possibly, sound) or optimistic (treat as Unlikely)")
+                .value_parser(["conservative", "optimistic"]),
         );
     parser
 }
@@ -353,6 +360,12 @@ impl Options {
         }
         if matches.get_flag("no_concurrent_roots") {
             self.config.translate_concurrent_roots = false;
+        }
+        if let Some(policy) = matches.get_one::<String>("alias_unknown_policy") {
+            self.config.alias_unknown_policy = match policy.as_str() {
+                "optimistic" => AliasUnknownPolicy::Optimistic,
+                _ => AliasUnknownPolicy::Conservative,
+            };
         }
 
         rustc_args.to_vec()
