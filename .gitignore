@@ -1,5 +1,5 @@
 **/target/
-/.vscode
+.vscode
 *.dot
 /toys
 **/tmp
@@ -7,4 +7,7 @@ RustPetriNet.tar.gz
 example/rayon
 /example
 
-/.cursor/**
+.cursor
+mir_dump/
+
+**/__pycache__
