@@ -1,0 +1,46 @@
+fn main() -> () {
+    let mut _0: ();
+    let _1: std::sync::Mutex<i32>;
+    let mut _3: std::result::Result<std::sync::MutexGuard<'_, i32>, std::sync::PoisonError<std::sync::MutexGuard<'_, i32>>>;
+    let mut _4: &std::sync::Mutex<i32>;
+    scope 1 {
+        debug m => _1;
+        let _2: std::sync::MutexGuard<'_, i32>;
+        scope 2 {
+            debug _g => _2;
+        }
+    }
+
+    bb0: {
+        _1 = std::sync::Mutex::<i32>::new(const 1_i32) -> [return: bb1, unwind continue];
+    }
+
+    bb1: {
+        _4 = &_1;
+        _3 = std::sync::Mutex::<i32>::lock(move _4) -> [return: bb2, unwind: bb6];
+    }
+
+    bb2: {
+        _2 = Result::<std::sync::MutexGuard<'_, i32>, PoisonError<std::sync::MutexGuard<'_, i32>>>::unwrap(move _3) -> [return: bb3, unwind: bb6];
+    }
+
+    bb3: {
+        drop(_2) -> [return: bb4, unwind: bb6];
+    }
+
+    bb4: {
+        drop(_1) -> [return: bb5, unwind continue];
+    }
+
+    bb5: {
+        return;
+    }
+
+    bb6 (cleanup): {
+        drop(_1) -> [return: bb7, unwind terminate(cleanup)];
+    }
+
+    bb7 (cleanup): {
+        resume;
+    }
+}
