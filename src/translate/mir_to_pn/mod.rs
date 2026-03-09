@@ -31,7 +31,7 @@ use rustc_middle::{
 };
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
 };
 
@@ -53,6 +53,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     key_api_regex: &'translate KeyApiRegex,
     async_ctx: &'translate mut AsyncTranslateContext,
     alias_unknown_policy: crate::config::AliasUnknownPolicy,
+    ordered_spawn_ends: VecDeque<PlaceId>,
     #[cfg(feature = "atomic-violation")]
     seg: SegState,
 }
@@ -119,6 +120,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             key_api_regex,
             async_ctx,
             alias_unknown_policy,
+            ordered_spawn_ends: VecDeque::new(),
             #[cfg(feature = "atomic-violation")]
             seg: SegState::default(),
         };

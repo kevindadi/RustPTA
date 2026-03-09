@@ -11,6 +11,22 @@ use rustc_middle::mir::{BasicBlock, Operand};
 use rustc_span::source_map::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
+    /// 记录 spawn 产生的线程结束库所,供 join 按 MIR 出现顺序消费.
+    fn record_spawn_end_in_order(&mut self, args: &[Spanned<Operand<'tcx>>]) -> Option<crate::net::PlaceId> {
+        let (closure_start, closure_end) = self.resolve_closure_places(args)?;
+        self.ordered_spawn_ends.push_back(closure_end);
+        Some(closure_start)
+    }
+
+    /// 优先按函数内 spawn/join 出现顺序建立 join 依赖.
+    fn connect_join_from_recorded_order(&mut self, bb_end: TransitionId) -> bool {
+        if let Some(spawn_end) = self.ordered_spawn_ends.pop_front() {
+            self.net.add_input_arc(spawn_end, bb_end, 1);
+            return true;
+        }
+        false
+    }
+
     pub(super) fn handle_thread_call(
         &mut self,
         callee_def_id: DefId,
@@ -155,7 +171,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) {
-        if let Some(closure_start) = self.resolve_closure_start(args) {
+        if let Some(closure_start) = self.record_spawn_end_in_order(args) {
             self.net.add_output_arc(closure_start, bb_end, 1);
         }
 
@@ -172,27 +188,29 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) {
-        let join_id = AliasId::from_place(
-            self.instance_id,
-            args.first().unwrap().node.place().unwrap().as_ref(),
-        );
-
-        let matching_callees = self.get_matching_spawn_callees(join_id);
-
-        if matching_callees.is_empty() {
-            log::error!(
-                "No matching spawn call found for join in {:?}",
-                self.instance.def_id()
-            );
-        }
-
         if let Some(transition) = self.net.get_transition_mut(bb_end) {
             transition.transition_type = TransitionType::Join(callee_func_name.to_string());
         }
 
-        for spawn_def_id in matching_callees {
-            if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
-                self.net.add_input_arc(spawn_end, bb_end, 1);
+        if !self.connect_join_from_recorded_order(bb_end) {
+            let join_id = AliasId::from_place(
+                self.instance_id,
+                args.first().unwrap().node.place().unwrap().as_ref(),
+            );
+
+            let matching_callees = self.get_matching_spawn_callees(join_id);
+
+            if matching_callees.is_empty() {
+                log::error!(
+                    "No matching spawn call found for join in {:?}",
+                    self.instance.def_id()
+                );
+            }
+
+            for spawn_def_id in matching_callees {
+                if let Some((_, spawn_end)) = self.functions_map().get(&spawn_def_id).copied() {
+                    self.net.add_input_arc(spawn_end, bb_end, 1);
+                }
             }
         }
 

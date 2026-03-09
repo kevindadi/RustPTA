@@ -49,14 +49,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .and_then(|def_id| self.functions_map().get(&def_id).copied())
     }
 
-    /// 从 args 中解析首个 closure，仅返回 closure_start（用于 spawn 等只需起点的场景）
-    pub(super) fn resolve_closure_start(
-        &self,
-        args: &[Spanned<Operand<'tcx>>],
-    ) -> Option<PlaceId> {
-        self.resolve_closure_places(args).map(|(start, _)| start)
-    }
-
     /// 从 args 中解析指定索引的 closure，返回 (closure_start, closure_end)
     pub(super) fn resolve_closure_places_at(
         &self,
