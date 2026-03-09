@@ -12,3 +12,9 @@ mir_dump/
 
 **/__pycache__
 **/results/**
+
+# rustc single-file and no-link intermediates
+*.rcgu.o
+*.rlink
+*.rlib
+*.dSYM/

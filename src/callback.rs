@@ -25,6 +25,7 @@ use rustc_driver::Compilation;
 use rustc_interface::interface;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
+use serde::Serialize;
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
 #[cfg(feature = "atomic-violation")]
@@ -202,12 +203,9 @@ impl PTACallbacks {
                 include_zero_tokens: false,
                 use_por: self.options.config.por_enabled,
             };
-            self.handle_visualizations(
-                &callgraph,
-                &pn,
-                &StateGraph::with_config(&pn.net, sg_config),
-                &instances,
-            );
+            let sg = StateGraph::with_config(&pn.net, sg_config);
+            self.handle_visualizations(&callgraph, &pn, &sg, &instances);
+            self.write_summary(&callgraph, &pn, &sg);
             return;
         }
 
@@ -228,10 +226,12 @@ impl PTACallbacks {
         if self.options.stop_after == StopAfter::AfterStateGraph {
             log::info!("停止分析:在状态图构建后停止");
             self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
+            self.write_summary(&callgraph, &pn, &state_graph);
             return;
         }
 
         self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
+        self.write_summary(&callgraph, &pn, &state_graph);
         #[cfg(feature = "atomic-violation")]
         self.run_detectors(&pn, &state_graph);
         #[cfg(not(feature = "atomic-violation"))]
@@ -457,6 +457,88 @@ impl PTACallbacks {
                 }
             }
             None => error!("report path contains invalid UTF-8: {:?}", path),
+        }
+    }
+
+    fn write_summary<'analysis, 'tcx>(
+        &self,
+        callgraph: &CallGraph<'tcx>,
+        pn: &PetriNet<'analysis, 'tcx>,
+        state_graph: &StateGraph,
+    ) {
+        #[derive(Serialize)]
+        struct SummaryMetrics {
+            callable_functions: usize,
+            places: usize,
+            transitions: usize,
+            state_classes: usize,
+            state_edges: usize,
+            deadlock_states: usize,
+            truncated: bool,
+        }
+
+        #[derive(Serialize)]
+        struct SummaryArtifacts {
+            callgraph_dot: &'static str,
+            petrinet_dot: &'static str,
+            stategraph_dot: &'static str,
+            deadlock_report_json: &'static str,
+            datarace_report_json: &'static str,
+            atomicity_report_json: &'static str,
+            points_to_report: &'static str,
+        }
+
+        #[derive(Serialize)]
+        struct Summary {
+            crate_name: String,
+            mode: String,
+            reduced: bool,
+            metrics: SummaryMetrics,
+            artifacts: SummaryArtifacts,
+        }
+
+        let stats = state_graph.stats();
+        let mode = match self.options.detector_kind {
+            DetectorKind::All => "all",
+            DetectorKind::Deadlock => "deadlock",
+            DetectorKind::AtomicityViolation => "atomic",
+            DetectorKind::DataRace => "datarace",
+            DetectorKind::PointsTo => "pointsto",
+        }
+        .to_string();
+
+        let summary = Summary {
+            crate_name: self.options.crate_name.clone(),
+            mode,
+            reduced: self.options.config.reduce_net,
+            metrics: SummaryMetrics {
+                callable_functions: callgraph.graph.node_count(),
+                places: pn.net.places_len(),
+                transitions: pn.net.transitions_len(),
+                state_classes: stats.state_count,
+                state_edges: stats.edge_count,
+                deadlock_states: stats.deadlock_count,
+                truncated: stats.truncated,
+            },
+            artifacts: SummaryArtifacts {
+                callgraph_dot: "callgraph.dot",
+                petrinet_dot: "petrinet.dot",
+                stategraph_dot: "stategraph.dot",
+                deadlock_report_json: "deadlock_report.txt.json",
+                datarace_report_json: "datarace_report.txt.json",
+                atomicity_report_json: "atomicity_report.txt.json",
+                points_to_report: "points_to_report.txt",
+            },
+        };
+
+        let path = self.output_directory.join("summary.json");
+        match serde_json::to_vec_pretty(&summary) {
+            Ok(buf) => {
+                if let Err(err) = std::fs::write(&path, buf) {
+                    error!("failed to write summary {:?}: {err}", path);
+                }
+            }
+            Err(err) => error!("failed to serialize summary: {err}"),
         }
     }
 

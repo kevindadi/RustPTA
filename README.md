@@ -1,6 +1,7 @@
 # RustPTA
 
 RustPTA 是一个基于 Petri 网的 Rust 并发静态分析工具，当前重点支持：
+
 - 死锁检测（`--mode deadlock`）
 - 数据竞争检测（`--mode datarace`）
 - 原子性违背检测（`--mode atomic`，需 `atomic-violation` feature）
@@ -39,7 +40,46 @@ cargo run --bin pn -- \
   -- path/to/file.rs
 ```
 
-macOS 若遇到链接环境问题，可在 `--` 后追加 `-Zno-link`。
+macOS 若遇到链接环境问题，可在 `--` 后追加 ` `。
+
+## 快速验证脚本
+
+```bash
+./scripts/check_pn_case.sh deadlock benchmarks/cases/deadlock/dl_1.rs
+./scripts/check_pn_case.sh datarace benchmarks/cases/datarace/dr_1.rs
+```
+
+每次分析会在结果目录额外产出 `summary.json`（供前端读取）。
+
+## Web Viewer（Rust 后端）
+
+```bash
+cargo run --bin pn-web -- --cases-root ./benchmarks/cases --runs-root ./tmp/web --port 7878
+```
+
+打开 `http://127.0.0.1:7878`，可选择某次运行并查看：
+
+- `callgraph.dot`
+- `petrinet.dot`
+- `stategraph.dot`
+- `summary.json` 与检测报告
+- 支持图缩放/拖拽/重置（Fit）
+- 支持递归扫描 `--root` 下的运行目录
+- 死锁报告会显示更易读摘要与死锁状态位置（`state_id` + marking）
+- 页面可直接选择 `benchmark case` 并点击 `Generate` 重新生成结果
+
+也可用脚本启动：
+
+```bash
+./scripts/run_web_viewer.sh ./benchmarks/cases ./tmp/web 7878
+```
+
+## Docker 使用
+
+```bash
+docker compose build
+docker compose run --rm rustpta cargo pn -m deadlock -p your_crate --pn-analysis-dir ./tmp
+```
 
 ## 常用参数
 
@@ -56,12 +96,14 @@ macOS 若遇到链接环境问题，可在 `--` 后追加 `-Zno-link`。
 ## 输出文件
 
 输出目录为 `<pn-analysis-dir>/<crate_or_file_stem>/`，常见文件：
+
 - `callgraph.dot`
 - `petrinet.dot`
 - `stategraph.dot`
 - `deadlock_report.txt(.json)` / `datarace_report.txt(.json)` / `atomicity_report.txt(.json)`
 - `points_to_report.txt`（`pointsto` 模式或 `--viz-pointsto`）
 
-## 已知限制
+## 设计与规划文档
 
-见 [limition.md](./limition.md)。
+- 验证与前端规划：[`docs/VALIDATION_UI_PLAN.md`](./docs/VALIDATION_UI_PLAN.md)
+- 已知限制：[`limition.md`](./limition.md)

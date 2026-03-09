@@ -22,7 +22,7 @@ use crate::{
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
-    BasicBlock, BasicBlockData, Statement, StatementKind,
+    BasicBlock, BasicBlockData, Local, Operand, Rvalue, Statement, StatementKind,
     TerminatorKind, visit::Visitor,
 };
 use rustc_middle::{
@@ -54,6 +54,13 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     async_ctx: &'translate mut AsyncTranslateContext,
     alias_unknown_policy: crate::config::AliasUnknownPolicy,
     ordered_spawn_ends: VecDeque<PlaceId>,
+    spawn_handle_end: HashMap<Local, PlaceId>,
+    local_ref_source: HashMap<Local, Local>,
+    vec_alias_source: HashMap<Local, Local>,
+    vec_spawn_ends: HashMap<Local, VecDeque<PlaceId>>,
+    iter_vec_source: HashMap<Local, Local>,
+    option_vec_source: HashMap<Local, Local>,
+    handle_vec_source: HashMap<Local, Local>,
     #[cfg(feature = "atomic-violation")]
     seg: SegState,
 }
@@ -121,6 +128,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             async_ctx,
             alias_unknown_policy,
             ordered_spawn_ends: VecDeque::new(),
+            spawn_handle_end: HashMap::new(),
+            local_ref_source: HashMap::new(),
+            vec_alias_source: HashMap::new(),
+            vec_spawn_ends: HashMap::new(),
+            iter_vec_source: HashMap::new(),
+            option_vec_source: HashMap::new(),
+            handle_vec_source: HashMap::new(),
             #[cfg(feature = "atomic-violation")]
             seg: SegState::default(),
         };
@@ -221,10 +235,41 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let span_str = format!("{:?}", statement.source_info.span);
         if let StatementKind::Assign(box (dest, rvalue)) = &statement.kind {
             let fn_name = self.tcx.def_path_str(self.instance.def_id());
+            self.track_joinhandle_dataflow(dest.local, rvalue);
 
             self.process_rvalue_reads(rvalue, &fn_name, bb_idx, &span_str);
 
             self.process_place_writes(dest, &fn_name, bb_idx, &span_str);
+        }
+    }
+
+    fn track_joinhandle_dataflow(&mut self, dest: Local, rvalue: &Rvalue<'tcx>) {
+        match rvalue {
+            Rvalue::Ref(_, _, place) => {
+                self.local_ref_source.insert(dest, place.local);
+            }
+            Rvalue::Use(op) => {
+                if let Operand::Move(place) | Operand::Copy(place) = op {
+                    let src = place.local;
+                    if let Some(end) = self.spawn_handle_end.get(&src).copied() {
+                        self.spawn_handle_end.insert(dest, end);
+                    }
+                    if let Some(vec_local) = self.iter_vec_source.get(&src).copied() {
+                        self.iter_vec_source.insert(dest, vec_local);
+                    }
+                    if let Some(vec_local) = self.option_vec_source.get(&src).copied() {
+                        self.option_vec_source.insert(dest, vec_local);
+                    }
+                    if let Some(vec_local) = self.handle_vec_source.get(&src).copied() {
+                        self.handle_vec_source.insert(dest, vec_local);
+                    }
+                    let src_vec = self.resolve_vec_local(src);
+                    if self.vec_spawn_ends.contains_key(&src_vec) {
+                        self.vec_alias_source.insert(dest, src_vec);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

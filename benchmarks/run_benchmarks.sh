@@ -47,14 +47,14 @@ run_case() {
 
   if [ "$detector" = "atomic" ]; then
     cargo run --features atomic-violation --bin pn -- -f "$file" -m "$mode" \
-      --pn-analysis-dir "$red_dir" --viz-callgraph --viz-petrinet --viz-stategraph -- "$file" -Zno-link >/dev/null
+      --pn-analysis-dir "$red_dir" --viz-callgraph --viz-petrinet --viz-stategraph -- "$file"   >/dev/null
     cargo run --features atomic-violation --bin pn -- -f "$file" -m "$mode" \
-      --pn-analysis-dir "$raw_dir" --viz-callgraph --viz-petrinet --viz-stategraph --no-reduce -- "$file" -Zno-link >/dev/null
+      --pn-analysis-dir "$raw_dir" --viz-callgraph --viz-petrinet --viz-stategraph --no-reduce -- "$file"   >/dev/null
   else
     cargo run --bin pn -- -f "$file" -m "$mode" \
-      --pn-analysis-dir "$red_dir" --viz-callgraph --viz-petrinet --viz-stategraph -- "$file" -Zno-link >/dev/null
+      --pn-analysis-dir "$red_dir" --viz-callgraph --viz-petrinet --viz-stategraph -- "$file"   >/dev/null
     cargo run --bin pn -- -f "$file" -m "$mode" \
-      --pn-analysis-dir "$raw_dir" --viz-callgraph --viz-petrinet --viz-stategraph --no-reduce -- "$file" -Zno-link >/dev/null
+      --pn-analysis-dir "$raw_dir" --viz-callgraph --viz-petrinet --viz-stategraph --no-reduce -- "$file"   >/dev/null
   fi
 
   local red_case_dir="$red_dir/$stem"

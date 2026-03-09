@@ -7,17 +7,10 @@ use crate::{
     translate::callgraph::{ThreadControlKind, classify_thread_control},
 };
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Operand};
+use rustc_middle::mir::{BasicBlock, Local, Operand};
 use rustc_span::source_map::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    /// 记录 spawn 产生的线程结束库所,供 join 按 MIR 出现顺序消费.
-    fn record_spawn_end_in_order(&mut self, args: &[Spanned<Operand<'tcx>>]) -> Option<crate::net::PlaceId> {
-        let (closure_start, closure_end) = self.resolve_closure_places(args)?;
-        self.ordered_spawn_ends.push_back(closure_end);
-        Some(closure_start)
-    }
-
     /// 优先按函数内 spawn/join 出现顺序建立 join 依赖.
     fn connect_join_from_recorded_order(&mut self, bb_end: TransitionId) -> bool {
         if let Some(spawn_end) = self.ordered_spawn_ends.pop_front() {
@@ -27,11 +20,82 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         false
     }
 
+    pub(super) fn resolve_vec_local(&self, local: Local) -> Local {
+        self.vec_alias_source.get(&local).copied().unwrap_or(local)
+    }
+
+    pub(super) fn track_joinhandle_container_call(
+        &mut self,
+        callee_func_name: &str,
+        args: &[Spanned<Operand<'tcx>>],
+        destination: Local,
+    ) {
+        if callee_func_name.contains("Vec<")
+            && callee_func_name.contains("JoinHandle")
+            && callee_func_name.contains("::push")
+        {
+            let Some(vec_ref_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local)
+            else {
+                return;
+            };
+            let Some(handle_local) = args.get(1).and_then(|a| a.node.place()).map(|p| p.local)
+            else {
+                return;
+            };
+            let vec_local = self
+                .local_ref_source
+                .get(&vec_ref_local)
+                .copied()
+                .unwrap_or(vec_ref_local);
+            let vec_root = self.resolve_vec_local(vec_local);
+            self.vec_alias_source.insert(vec_local, vec_root);
+            if let Some(spawn_end) = self.spawn_handle_end.get(&handle_local).copied() {
+                self.vec_spawn_ends
+                    .entry(vec_root)
+                    .or_default()
+                    .push_back(spawn_end);
+            }
+            return;
+        }
+
+        if callee_func_name.contains("IntoIterator>::into_iter")
+            && callee_func_name.contains("JoinHandle")
+        {
+            let Some(src_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local) else {
+                return;
+            };
+            let vec_local = self.resolve_vec_local(src_local);
+            if self.vec_spawn_ends.contains_key(&vec_local) {
+                self.iter_vec_source.insert(destination, vec_local);
+            }
+            return;
+        }
+
+        if callee_func_name.contains("IntoIter<")
+            && callee_func_name.contains("JoinHandle")
+            && callee_func_name.contains("Iterator>::next")
+        {
+            let Some(iter_ref_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local)
+            else {
+                return;
+            };
+            let iter_local = self
+                .local_ref_source
+                .get(&iter_ref_local)
+                .copied()
+                .unwrap_or(iter_ref_local);
+            if let Some(vec_local) = self.iter_vec_source.get(&iter_local).copied() {
+                self.option_vec_source.insert(destination, vec_local);
+            }
+        }
+    }
+
     pub(super) fn handle_thread_call(
         &mut self,
         callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
+        destination: Local,
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
         bb_idx: &BasicBlock,
@@ -45,7 +109,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         ) {
             match kind {
                 ThreadControlKind::Spawn => {
-                    self.handle_spawn(callee_func_name, args, target, bb_end);
+                    self.handle_spawn(callee_func_name, args, destination, target, bb_end);
                     return true;
                 }
                 ThreadControlKind::AsyncSpawn => {
@@ -168,11 +232,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         &mut self,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
+        destination: Local,
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) {
-        if let Some(closure_start) = self.record_spawn_end_in_order(args) {
+        if let Some((closure_start, closure_end)) = self.resolve_closure_places(args) {
             self.net.add_output_arc(closure_start, bb_end, 1);
+            self.ordered_spawn_ends.push_back(closure_end);
+            self.spawn_handle_end.insert(destination, closure_end);
         }
 
         if let Some(transition) = self.net.get_transition_mut(bb_end) {
@@ -192,7 +259,42 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             transition.transition_type = TransitionType::Join(callee_func_name.to_string());
         }
 
-        if !self.connect_join_from_recorded_order(bb_end) {
+        let mut joined = false;
+        if let Some(handle_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local) {
+            if let Some(vec_local) = self.handle_vec_source.get(&handle_local).copied() {
+                let all_ends: Vec<_> = self
+                    .vec_spawn_ends
+                    .entry(vec_local)
+                    .or_default()
+                    .drain(..)
+                    .collect();
+                for spawn_end in all_ends {
+                    self.net.add_input_arc(spawn_end, bb_end, 1);
+                    joined = true;
+                }
+            } else if let Some(vec_local) = self.option_vec_source.get(&handle_local).copied() {
+                self.handle_vec_source.insert(handle_local, vec_local);
+                let all_ends: Vec<_> = self
+                    .vec_spawn_ends
+                    .entry(vec_local)
+                    .or_default()
+                    .drain(..)
+                    .collect();
+                for spawn_end in all_ends {
+                    self.net.add_input_arc(spawn_end, bb_end, 1);
+                    joined = true;
+                }
+            } else if let Some(spawn_end) = self.spawn_handle_end.get(&handle_local).copied() {
+                self.net.add_input_arc(spawn_end, bb_end, 1);
+                joined = true;
+            }
+        }
+
+        if !joined && self.connect_join_from_recorded_order(bb_end) {
+            joined = true;
+        }
+
+        if !joined {
             let join_id = AliasId::from_place(
                 self.instance_id,
                 args.first().unwrap().node.place().unwrap().as_ref(),

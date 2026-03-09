@@ -375,6 +375,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         };
 
         let callee_func_name = crate::util::format_name(callee_def_id);
+        self.track_joinhandle_container_call(&callee_func_name, args, destination.local);
 
         if self.handle_lock_call(destination, target, bb_end).is_some() {
             log::debug!("callee_func_name with lock: {:?}", callee_func_name);
@@ -448,6 +449,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             callee_def_id,
             &callee_func_name,
             args,
+            destination.local,
             target,
             bb_end,
             &bb_idx,
