@@ -51,7 +51,7 @@ impl PTACallbacks {
         };
 
         std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
-            eprintln!("Warning: Failed to create output directory: {}", e);
+             log::debug!("Warning: Failed to create output directory: {}", e);
         });
 
         Self {

@@ -318,11 +318,8 @@ impl Net {
 
         for (transition_id, transition) in self.transitions.iter_enumerated() {
             let node_id = format!("trans_{}", transition_id.index());
-            let label = format!(
-                "{}\\n{:?}",
-                escape_label(&transition.name),
-                transition.transition_type
-            );
+            let transition_ty = format!("{:?}", transition.transition_type);
+            let label = format!("{}\\n{}", escape_label(&transition.name), escape_label(&transition_ty));
             let _ = writeln!(
                 &mut dot,
                 "    {} [label=\"{}\", shape=box, style=filled, fillcolor=\"#ffe0b2\"];",

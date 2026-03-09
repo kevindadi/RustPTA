@@ -30,7 +30,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) {
-        eprintln!("[vec-track] ENTER track_joinhandle_container_call: callee={}", callee_func_name);
+        log::debug!(
+            "[vec-track] ENTER track_joinhandle_container_call: callee={}",
+            callee_func_name
+        );
         if callee_func_name.contains("::push") {
             let Some(vec_ref_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local)
             else {
@@ -42,7 +45,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 .copied()
                 .unwrap_or(vec_ref_local);
             let vec_root = self.resolve_vec_local(vec_local);
-            eprintln!(
+            log::debug!(
                 "[vec-track] push: callee={}, vec_ref={:?}, vec_local={:?}, vec_root={:?}, in_jh_set={}, jh_locals={:?}",
                 callee_func_name,
                 vec_ref_local,
@@ -66,12 +69,15 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     .push_back(spawn_end);
                 log::info!(
                     "[vec-track] push OK: handle={:?} -> vec_root={:?}, vec_spawn_ends={:?}",
-                    handle_local, vec_root, self.vec_spawn_ends
+                    handle_local,
+                    vec_root,
+                    self.vec_spawn_ends
                 );
             } else {
                 log::info!(
                     "[vec-track] push MISS: handle={:?} not in spawn_handle_end={:?}",
-                    handle_local, self.spawn_handle_end
+                    handle_local,
+                    self.spawn_handle_end
                 );
             }
             return;
@@ -88,7 +94,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.iter_vec_source.insert(destination, vec_local);
                 log::info!(
                     "[vec-track] into_iter: src={:?} -> vec={:?}, iter_vec_source[{:?}]={:?}",
-                    src_local, vec_local, destination, vec_local
+                    src_local,
+                    vec_local,
+                    destination,
+                    vec_local
                 );
             }
             return;
@@ -108,7 +117,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.option_vec_source.insert(destination, vec_local);
                 log::info!(
                     "[vec-track] next: iter_ref={:?} -> iter={:?} -> option_vec_source[{:?}]={:?}",
-                    iter_ref_local, iter_local, destination, vec_local
+                    iter_ref_local,
+                    iter_local,
+                    destination,
+                    vec_local
                 );
             }
         }
@@ -216,7 +228,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         if let Some((closure_start, closure_end)) = self.resolve_closure_places_at(args, 1) {
             self.net.add_output_arc(closure_start, bb_end, 1);
-            self.net.add_input_arc(closure_end, self.return_transition, 1);
+            self.net
+                .add_input_arc(closure_end, self.return_transition, 1);
         }
         self.connect_to_target(bb_end, target);
     }
@@ -264,9 +277,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_output_arc(closure_start, bb_end, 1);
             self.ordered_spawn_ends.push_back(closure_end);
             self.spawn_handle_end.insert(destination, closure_end);
-            eprintln!(
+            log::debug!(
                 "[vec-track] SPAWN: dest={:?}, closure_end={:?}, spawn_handle_end={:?}",
-                destination, closure_end, self.spawn_handle_end
+                destination,
+                closure_end,
+                self.spawn_handle_end
             );
         }
 
@@ -289,7 +304,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         let mut joined = false;
         if let Some(handle_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local) {
-            eprintln!(
+            log::debug!(
                 "[vec-track] JOIN: handle_local={:?}, handle_vec={:?}, option_vec={:?}, spawn_end_keys={:?}, vec_spawn_ends={:?}",
                 handle_local,
                 self.handle_vec_source,

@@ -267,11 +267,11 @@ impl Options {
             .try_get_matches_from(pn_args.iter())
             .unwrap_or_else(|e| match e.kind() {
                 ErrorKind::DisplayHelp | ErrorKind::UnknownArgument => {
-                    eprintln!("{e}");
+                    log::debug!("{e}");
                     e.exit();
                 }
                 _ => {
-                    eprintln!("{e}");
+                    log::debug!("{e}");
                     e.exit();
                 }
             });

@@ -375,7 +375,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         };
 
         let callee_func_name = crate::util::format_name(callee_def_id);
-        eprintln!("[CALLS] before track_joinhandle: {}", callee_func_name);
+         log::debug!("[CALLS] before track_joinhandle: {}", callee_func_name);
         self.track_joinhandle_container_call(&callee_func_name, args, destination.local);
 
         if self.handle_lock_call(destination, target, bb_end).is_some() {

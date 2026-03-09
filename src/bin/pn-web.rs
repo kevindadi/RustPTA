@@ -65,7 +65,7 @@ async fn main() {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    eprintln!(
+     log::debug!(
         "pn-web cases={} runs={} at http://{}",
         cases_root.display(),
         runs_root.display(),

@@ -69,7 +69,7 @@ fn main() {
             let mut cmd = Command::new(rustc_path);
             cmd.args(&args[2..]);
             let status = cmd.status().unwrap_or_else(|e| {
-                eprintln!("Failed to execute rustc: {}", e);
+                log::debug!("Failed to execute rustc: {}", e);
                 std::process::exit(1);
             });
             std::process::exit(status.code().unwrap_or(1));
