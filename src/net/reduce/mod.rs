@@ -29,6 +29,7 @@ pub struct ReductionResult {
     pub net: Net,
     pub trace: ReductionTrace,
     pub steps: Vec<ReductionStep>,
+    pub stage_nets: ReductionStageNets,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +56,13 @@ pub enum ReductionStep {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct ReductionStageNets {
+    pub after_loop: Net,
+    pub after_sequence: Net,
+    pub after_intermediate: Net,
+}
+
 #[derive(Debug, Error)]
 pub enum ReductionError {
     #[error("validator rejected reduced net: {0}")]
@@ -79,18 +87,21 @@ impl Reducer {
             steps.extend(loop_steps);
             self.validate(&graph)?;
         }
+        let after_loop = graph.materialize().net;
 
         let sequence_steps = graph.merge_linear_sequences();
         if !sequence_steps.is_empty() {
             steps.extend(sequence_steps);
             self.validate(&graph)?;
         }
+        let after_sequence = graph.materialize().net;
 
         let intermediate_steps = graph.eliminate_intermediate_places();
         if !intermediate_steps.is_empty() {
             steps.extend(intermediate_steps);
             self.validate(&graph)?;
         }
+        let after_intermediate = graph.materialize().net;
 
         let MaterializedNet {
             net: reduced_net,
@@ -102,6 +113,11 @@ impl Reducer {
             net: reduced_net,
             trace,
             steps,
+            stage_nets: ReductionStageNets {
+                after_loop,
+                after_sequence,
+                after_intermediate,
+            },
         })
     }
 

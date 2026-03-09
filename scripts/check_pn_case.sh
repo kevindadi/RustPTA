@@ -8,7 +8,7 @@ fi
 
 mode="$1"
 case_file="$2"
-out_root="${3:-./tmp/check_cases}"
+out_root="${3:-/Users/kevin/local-repos/RustPTA/tmp}"
 
 cargo run --bin pn -- \
   -f "$case_file" -m "$mode" \

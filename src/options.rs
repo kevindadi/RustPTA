@@ -5,6 +5,8 @@ use clap::error::ErrorKind;
 use crate::config::{AliasUnknownPolicy, PnConfig};
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
+
+const DEFAULT_ANALYSIS_DIR: &str = "/Users/kevin/local-repos/RustPTA/tmp";
 #[derive(Debug, Clone)]
 pub enum CrateNameList {
     White(Vec<String>),
@@ -56,8 +58,8 @@ fn make_options_parser() -> clap::Command {
             Arg::new("diagnostics_output")
                 .long("pn-analysis-dir")
                 .value_name("PATH")
-                .help("Directory for Petri net analysis outputs (default: ./tmp/<crate_name>)")
-                .default_value("./tmp"),
+                .help("Directory for Petri net analysis outputs")
+                .default_value(DEFAULT_ANALYSIS_DIR),
         )
         .arg(
             Arg::new("config_file")

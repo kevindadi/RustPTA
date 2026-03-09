@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -9,6 +9,8 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Component, Path as FsPath, PathBuf};
 use tokio::process::Command;
+
+const DEFAULT_OUTPUT_ROOT: &str = "/Users/kevin/local-repos/RustPTA/tmp";
 
 #[derive(Clone)]
 struct AppState {
@@ -51,7 +53,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/reduction", get(reduction_index))
         .route("/app.js", get(app_js))
+        .route("/reduction.js", get(reduction_js))
         .route("/api/runs", get(list_runs))
         .route("/api/cases", get(list_cases))
         .route("/api/generate", post(generate_run))
@@ -75,8 +79,8 @@ async fn main() {
 }
 
 fn parse_args() -> (PathBuf, PathBuf, u16) {
-    let mut runs_root = PathBuf::from("./tmp/web");
-    let mut cases_root = PathBuf::from("./benchmarks/cases");
+    let mut runs_root = PathBuf::from(DEFAULT_OUTPUT_ROOT);
+    let mut cases_root = PathBuf::from("./benchmarks");
     let mut port: u16 = 7878;
 
     let mut args = std::env::args().skip(1);
@@ -110,6 +114,10 @@ async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
 }
 
+async fn reduction_index() -> Html<&'static str> {
+    Html(REDUCTION_HTML)
+}
+
 async fn app_js() -> Response {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -117,6 +125,15 @@ async fn app_js() -> Response {
         HeaderValue::from_static("application/javascript; charset=utf-8"),
     );
     (headers, APP_JS).into_response()
+}
+
+async fn reduction_js() -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/javascript; charset=utf-8"),
+    );
+    (headers, REDUCTION_JS).into_response()
 }
 
 async fn health() -> &'static str {
@@ -137,7 +154,8 @@ async fn list_runs(State(state): State<AppState>) -> Result<Json<Vec<RunEntry>>,
             }
 
             let has_summary = path.join("summary.json").exists();
-            let has_artifacts = path.join("petrinet.dot").exists()
+            let has_artifacts = path.join("petrinet_raw.dot").exists()
+                || path.join("petrinet.dot").exists()
                 || path.join("stategraph.dot").exists()
                 || path.join("callgraph.dot").exists();
 
@@ -152,7 +170,7 @@ async fn list_runs(State(state): State<AppState>) -> Result<Json<Vec<RunEntry>>,
                     has_summary,
                 });
             }
-            if depth < 5 {
+            if depth < 6 {
                 stack.push((path, depth + 1));
             }
         }
@@ -174,7 +192,7 @@ async fn list_cases(State(state): State<AppState>) -> Result<Json<Vec<CaseEntry>
             let entry = entry.map_err(ApiError::io)?;
             let path = entry.path();
             if path.is_dir() {
-                if depth < 6 {
+                if depth < 8 {
                     stack.push((path, depth + 1));
                 }
                 continue;
@@ -205,20 +223,18 @@ async fn generate_run(
     };
 
     let case_file = case_file_path(&state.cases_root, &req.case_path)?;
-    fs::create_dir_all(&state.runs_root).map_err(ApiError::io)?;
+    let out_root = state.runs_root.clone();
 
-    let run_bucket = build_run_name(&req.case_path, &mode);
+    ensure_safe_output_root(&out_root)?;
+    clear_dir_contents(&out_root)?;
+
     let crate_stem = FsPath::new(&req.case_path)
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| ApiError::bad_request("invalid case file name"))?
         .to_string();
-    let bucket_dir = state.runs_root.join(&run_bucket);
-    if bucket_dir.exists() {
-        fs::remove_dir_all(&bucket_dir).map_err(ApiError::io)?;
-    }
-    let mut cmd = Command::new("cargo");
 
+    let mut cmd = Command::new("cargo");
     if mode == "atomic" {
         cmd.arg("run")
             .arg("--features")
@@ -235,7 +251,7 @@ async fn generate_run(
         .arg("-m")
         .arg(&mode)
         .arg("--pn-analysis-dir")
-        .arg(&bucket_dir)
+        .arg(&out_root)
         .arg("--viz-callgraph")
         .arg("--viz-petrinet")
         .arg("--viz-stategraph");
@@ -258,10 +274,9 @@ async fn generate_run(
         });
     }
 
-    let run_name = format!("{}/{}", run_bucket, crate_stem);
-    let out_dir = bucket_dir.join(crate_stem);
+    let out_dir = out_root.join(&crate_stem);
     Ok(Json(GenerateResponse {
-        run_name,
+        run_name: crate_stem,
         output_dir: out_dir.display().to_string(),
         logs,
     }))
@@ -304,6 +319,10 @@ async fn run_artifact(
     let rel = match kind.as_str() {
         "callgraph" => "callgraph.dot",
         "petrinet" => "petrinet.dot",
+        "petrinet_raw" => "petrinet_raw.dot",
+        "petrinet_reduce_1" => "petrinet_reduce_1_loop.dot",
+        "petrinet_reduce_2" => "petrinet_reduce_2_sequence.dot",
+        "petrinet_reduce_3" => "petrinet_reduce_3_intermediate.dot",
         "stategraph" => "stategraph.dot",
         "summary" => "summary.json",
         "deadlock" => "deadlock_report.txt.json",
@@ -327,6 +346,31 @@ async fn run_artifact(
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_str(mime).unwrap());
     Ok((headers, body).into_response())
+}
+
+fn clear_dir_contents(dir: &FsPath) -> Result<(), ApiError> {
+    fs::create_dir_all(dir).map_err(ApiError::io)?;
+    for entry in fs::read_dir(dir).map_err(ApiError::io)? {
+        let entry = entry.map_err(ApiError::io)?;
+        let path = entry.path();
+        if path.is_dir() {
+            fs::remove_dir_all(path).map_err(ApiError::io)?;
+        } else {
+            fs::remove_file(path).map_err(ApiError::io)?;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_safe_output_root(dir: &FsPath) -> Result<(), ApiError> {
+    let comp_cnt = dir.components().count();
+    if comp_cnt <= 1 {
+        return Err(ApiError::bad_request("pn_analysis_dir is too broad"));
+    }
+    if dir == FsPath::new("/") {
+        return Err(ApiError::bad_request("pn_analysis_dir cannot be root"));
+    }
+    Ok(())
 }
 
 fn run_dir(root: &FsPath, name: &str) -> Result<PathBuf, ApiError> {
@@ -363,21 +407,6 @@ fn case_file_path(root: &FsPath, case_path: &str) -> Result<PathBuf, ApiError> {
         return Err(ApiError::not_found("case file not found"));
     }
     Ok(p)
-}
-
-fn build_run_name(case_path: &str, mode: &str) -> String {
-    let mut base = case_path.trim_end_matches(".rs").replace(['/', '\\'], "_");
-    base = base
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    format!("{}_{}", mode, base)
 }
 
 fn count_state_nodes(path: &FsPath) -> Result<usize, ApiError> {
@@ -456,18 +485,21 @@ const INDEX_HTML: &str = r#"<!doctype html>
   <meta name='viewport' content='width=device-width, initial-scale=1'>
   <title>RustPTA Web Viewer</title>
   <style>
-    :root { --bg:#f8fafc; --fg:#0f172a; --card:#ffffff; --line:#e2e8f0; --accent:#0369a1; }
+    :root { --bg:#f7fafc; --fg:#0f172a; --card:#ffffff; --line:#dbe2ea; --accent:#0f766e; }
+    html, body { height:100%; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI; background:var(--bg); color:var(--fg); }
-    .top { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 14px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; }
-    select, button { padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:white; }
+    .top { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 14px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+    select, button, input { padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:white; }
+    input { min-width: 340px; }
     button.active { border-color:var(--accent); color:var(--accent); }
-    .grid { display:grid; grid-template-columns: 1.3fr 0.7fr; gap:10px; padding:10px; height: calc(100vh - 94px); box-sizing:border-box; }
-    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:auto; }
+    .grid { display:grid; grid-template-columns: 1.45fr 0.55fr; gap:10px; padding:10px; height: calc(100vh - 92px); box-sizing:border-box; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; min-height:0; }
     .card h3 { margin:0; font-size:14px; padding:8px 10px; border-bottom:1px solid var(--line); }
-    #graph { padding:10px; min-height:420px; }
+    .graph-wrap { height: calc(100% - 94px); }
+    #graph { height:100%; width:100%; overflow:hidden; }
     #summary, #report, #status { white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; padding:10px; }
-    #graph svg { width:100%; height:auto; }
-    #status { border-top:1px solid var(--line); max-height:110px; overflow:auto; }
+    #status { border-top:1px solid var(--line); max-height:94px; overflow:auto; }
+    #graph svg { width:100% !important; height:100% !important; }
   </style>
   <script src='https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js'></script>
   <script src='https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js'></script>
@@ -476,6 +508,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 <body>
   <div class='top'>
     <strong>RustPTA Viewer</strong>
+    <a href='/reduction'>约减流程页</a>
     <label>Case: <select id='caseSelect'></select></label>
     <label>Mode:
       <select id='modeSelect'>
@@ -486,8 +519,9 @@ const INDEX_HTML: &str = r#"<!doctype html>
     </label>
     <button id='generateBtn'>Generate</button>
     <label>Run: <select id='runSelect'></select></label>
-    <button data-kind='callgraph' class='active'>Call Graph</button>
-    <button data-kind='petrinet'>Petri Net</button>
+    <button data-kind='callgraph'>Call Graph</button>
+    <button data-kind='petrinet_raw' class='active'>Petri Net (Raw)</button>
+    <button data-kind='petrinet'>Petri Net (Final)</button>
     <button data-kind='stategraph'>State Graph</button>
     <button id='fitBtn'>Fit</button>
     <button id='reloadBtn'>Reload</button>
@@ -495,10 +529,12 @@ const INDEX_HTML: &str = r#"<!doctype html>
   <div class='grid'>
     <div class='card'>
       <h3 id='graphTitle'>Graph</h3>
-      <div id='graph'>Loading...</div>
+      <div class='graph-wrap'>
+        <div id='graph'>Loading...</div>
+      </div>
       <div id='status'></div>
     </div>
-    <div style='display:grid; grid-template-rows: 1fr 1fr; gap:10px;'>
+    <div style='display:grid; grid-template-rows: 0.7fr 1.3fr; gap:10px; min-height:0;'>
       <div class='card'>
         <h3>Summary</h3>
         <div id='summary'></div>
@@ -514,8 +550,48 @@ const INDEX_HTML: &str = r#"<!doctype html>
 </html>
 "#;
 
+const REDUCTION_HTML: &str = r#"<!doctype html>
+<html lang='zh'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>RustPTA Reduction Viewer</title>
+  <style>
+    :root { --bg:#f7fafc; --fg:#0f172a; --card:#ffffff; --line:#dbe2ea; }
+    html, body { height:100%; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI; background:var(--bg); color:var(--fg); }
+    .top { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 14px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+    select, button { padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:white; }
+    .grid { display:grid; grid-template-columns: 1fr; grid-template-rows: repeat(3, 1fr); gap:10px; padding:10px; height: calc(100vh - 72px); box-sizing:border-box; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; min-height:0; }
+    .card h3 { margin:0; font-size:14px; padding:8px 10px; border-bottom:1px solid var(--line); }
+    .graph { width:100%; height:calc(100% - 36px); overflow:hidden; }
+    .graph svg { width:100% !important; height:100% !important; }
+  </style>
+  <script src='https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js'></script>
+  <script src='https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js'></script>
+  <script src='https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js'></script>
+</head>
+<body>
+  <div class='top'>
+    <strong>Petri Net Reduction Stages</strong>
+    <a href='/'>返回首页</a>
+    <label>Run: <select id='runSelect'></select></label>
+    <button id='reloadBtn'>Reload</button>
+    <button id='fitBtn'>Fit All</button>
+  </div>
+  <div class='grid'>
+    <div class='card'><h3>Stage 1: Loop Removal</h3><div id='g1' class='graph'></div></div>
+    <div class='card'><h3>Stage 2: Sequence Merge</h3><div id='g2' class='graph'></div></div>
+    <div class='card'><h3>Stage 3: Intermediate Elimination</h3><div id='g3' class='graph'></div></div>
+  </div>
+  <script src='/reduction.js'></script>
+</body>
+</html>
+"#;
+
 const APP_JS: &str = r#"
-let currentKind = 'callgraph';
+let currentKind = 'petrinet_raw';
 let viz = new Viz();
 let pz = null;
 
@@ -552,6 +628,8 @@ async function loadRuns(prefer) {
     await loadRun(sel.value);
   } else {
     document.getElementById('graph').textContent = 'No runs found.';
+    document.getElementById('summary').textContent = '';
+    document.getElementById('report').textContent = '';
   }
 }
 
@@ -567,10 +645,11 @@ async function generate() {
     return;
   }
   setStatus(`Generating ${mode} for ${casePath} ...`);
+  const payload = { case_path: casePath, mode };
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ case_path: casePath, mode })
+    body: JSON.stringify(payload)
   });
   const text = await res.text();
   if (!res.ok) {
@@ -582,9 +661,25 @@ async function generate() {
   await loadRuns(data.run_name);
 }
 
+function formatSummary(j) {
+  const m = j.metrics || {};
+  return [
+    `crate: ${j.crate_name ?? '-'}`,
+    `mode: ${j.mode ?? '-'}`,
+    `reduced: ${j.reduced ?? '-'}`,
+    `callable_functions: ${m.callable_functions ?? '-'}`,
+    `petri_places: ${m.places ?? '-'}`,
+    `petri_transitions: ${m.transitions ?? '-'}`,
+    `state_classes: ${m.state_classes ?? '-'}`,
+    `state_edges: ${m.state_edges ?? '-'}`,
+    `deadlock_states: ${m.deadlock_states ?? '-'}`,
+    `truncated: ${m.truncated ?? '-'}`
+  ].join('\n');
+}
+
 async function loadSummary(name) {
   const data = await fetch(`/api/run/${encodeURIComponent(name)}/summary`).then(r => r.json());
-  document.getElementById('summary').textContent = JSON.stringify(data, null, 2);
+  document.getElementById('summary').textContent = formatSummary(data);
 }
 
 async function loadGraph(name, kind) {
@@ -592,13 +687,28 @@ async function loadGraph(name, kind) {
   title.textContent = kind;
   const graph = document.getElementById('graph');
   graph.textContent = 'Rendering...';
-  const dot = await fetch(`/api/run/${encodeURIComponent(name)}/artifact/${kind}`).then(r => r.text());
+
+  const res = await fetch(`/api/run/${encodeURIComponent(name)}/artifact/${kind}`);
+  if (!res.ok) {
+    graph.textContent = `Artifact not found: ${kind}`;
+    return;
+  }
+  const dot = await res.text();
+
   try {
     const svg = await viz.renderSVGElement(dot);
     graph.innerHTML = '';
     graph.appendChild(svg);
     if (pz) pz.destroy();
-    pz = svgPanZoom(svg, { zoomEnabled:true, controlIconsEnabled:true, fit:true, center:true, minZoom:0.05, maxZoom:50 });
+    pz = svgPanZoom(svg, {
+      zoomEnabled: true,
+      controlIconsEnabled: true,
+      fit: true,
+      center: true,
+      minZoom: 0.02,
+      maxZoom: 100,
+      contain: true
+    });
     await highlightDeadlocksInGraph(svg);
   } catch (e) {
     graph.textContent = 'Render failed. Showing DOT text.\n\n' + dot;
@@ -636,10 +746,6 @@ function buildReadableReport(kind, j) {
       s += `\n死锁状态(全局状态位置):\n`;
       for (const st of j.deadlock_states) {
         s += `- ${st.state_id}: ${st.description ?? ''}\n`;
-        if (Array.isArray(st.marking) && st.marking.length > 0) {
-          const m = st.marking.map(([p, t]) => `${p}:${t}`).join(', ');
-          s += `  marking: ${m}\n`;
-        }
       }
     }
     return s;
@@ -692,4 +798,75 @@ for (const btn of document.querySelectorAll('button[data-kind]')) {
   await loadCases();
   await loadRuns();
 })();
+"#;
+
+const REDUCTION_JS: &str = r#"
+let viz1 = new Viz();
+let viz2 = new Viz();
+let viz3 = new Viz();
+let pz1 = null;
+let pz2 = null;
+let pz3 = null;
+
+async function loadRuns(prefer) {
+  const runs = await fetch('/api/runs').then(r => r.json());
+  const sel = document.getElementById('runSelect');
+  const prev = prefer || sel.value;
+  sel.innerHTML = '';
+  for (const r of runs) {
+    const o = document.createElement('option');
+    o.value = r.name;
+    o.textContent = r.name;
+    sel.appendChild(o);
+  }
+  if (runs.length > 0) {
+    const hit = runs.find(x => x.name === prev);
+    sel.value = hit ? prev : runs[runs.length - 1].name;
+    await loadAll(sel.value);
+  }
+}
+
+async function renderInto(id, run, kind, viz, oldPz) {
+  const root = document.getElementById(id);
+  const res = await fetch(`/api/run/${encodeURIComponent(run)}/artifact/${kind}`);
+  if (!res.ok) {
+    root.textContent = `Missing artifact: ${kind}`;
+    return null;
+  }
+  const dot = await res.text();
+  try {
+    const svg = await viz.renderSVGElement(dot);
+    root.innerHTML = '';
+    root.appendChild(svg);
+    if (oldPz) oldPz.destroy();
+    return svgPanZoom(svg, {
+      zoomEnabled: true,
+      controlIconsEnabled: true,
+      fit: true,
+      center: true,
+      minZoom: 0.02,
+      maxZoom: 100,
+      contain: true
+    });
+  } catch {
+    root.textContent = 'Render failed.';
+    return null;
+  }
+}
+
+async function loadAll(run) {
+  pz1 = await renderInto('g1', run, 'petrinet_reduce_1', viz1, pz1);
+  pz2 = await renderInto('g2', run, 'petrinet_reduce_2', viz2, pz2);
+  pz3 = await renderInto('g3', run, 'petrinet_reduce_3', viz3, pz3);
+}
+
+document.getElementById('runSelect').addEventListener('change', (e) => loadAll(e.target.value));
+document.getElementById('reloadBtn').addEventListener('click', () => loadRuns());
+document.getElementById('fitBtn').addEventListener('click', () => {
+  if (pz1) { pz1.fit(); pz1.center(); }
+  if (pz2) { pz2.fit(); pz2.center(); }
+  if (pz3) { pz3.fit(); pz3.center(); }
+});
+
+(async () => { await loadRuns(); })();
 "#;

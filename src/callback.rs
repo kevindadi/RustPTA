@@ -45,7 +45,7 @@ impl PTACallbacks {
             path.push(&options.crate_name);
             path
         } else {
-            let mut path = PathBuf::from("/tmp");
+            let mut path = PathBuf::from("/Users/kevin/local-repos/RustPTA/tmp");
             path.push(&options.crate_name);
             path
         };
@@ -164,6 +164,15 @@ impl PTACallbacks {
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
 
+        let mut reduced_stage_written = false;
+        if self.options.dump_options.dump_petri_net {
+            if let Err(err) = pn.net.write_dot(self.output_directory.join("petrinet_raw.dot")) {
+                error!("failed to write raw Petri net dot file: {err}");
+            } else {
+                info!("raw petri net dot exported");
+            }
+        }
+
         if self.options.config.reduce_net {
             use crate::net::reduce::{reduce_in_place, ReductionOptions};
             match reduce_in_place(&mut pn.net, ReductionOptions::default()) {
@@ -172,9 +181,43 @@ impl PTACallbacks {
                         "Petri net reduced: {} steps (loops/sequences/intermediate)",
                         result.steps.len()
                     );
+                    if self.options.dump_options.dump_petri_net {
+                        if let Err(err) = result
+                            .stage_nets
+                            .after_loop
+                            .write_dot(self.output_directory.join("petrinet_reduce_1_loop.dot"))
+                        {
+                            error!("failed to write stage-1 reduced Petri net: {err}");
+                        }
+                        if let Err(err) = result
+                            .stage_nets
+                            .after_sequence
+                            .write_dot(self.output_directory.join("petrinet_reduce_2_sequence.dot"))
+                        {
+                            error!("failed to write stage-2 reduced Petri net: {err}");
+                        }
+                        if let Err(err) = result.stage_nets.after_intermediate.write_dot(
+                            self.output_directory
+                                .join("petrinet_reduce_3_intermediate.dot"),
+                        ) {
+                            error!("failed to write stage-3 reduced Petri net: {err}");
+                        }
+                        reduced_stage_written = true;
+                    }
                 }
                 Err(e) => {
                     log::warn!("Petri net reduction failed: {}, continuing without reduction", e);
+                }
+            }
+        }
+        if self.options.dump_options.dump_petri_net && !reduced_stage_written {
+            let raw = self.output_directory.join("petrinet_raw.dot");
+            let s1 = self.output_directory.join("petrinet_reduce_1_loop.dot");
+            let s2 = self.output_directory.join("petrinet_reduce_2_sequence.dot");
+            let s3 = self.output_directory.join("petrinet_reduce_3_intermediate.dot");
+            for path in [s1, s2, s3] {
+                if let Err(err) = std::fs::copy(&raw, &path) {
+                    error!("failed to initialize reduction stage file {:?}: {err}", path);
                 }
             }
         }
@@ -481,6 +524,10 @@ impl PTACallbacks {
         struct SummaryArtifacts {
             callgraph_dot: &'static str,
             petrinet_dot: &'static str,
+            petrinet_raw_dot: &'static str,
+            petrinet_reduce_1_loop_dot: &'static str,
+            petrinet_reduce_2_sequence_dot: &'static str,
+            petrinet_reduce_3_intermediate_dot: &'static str,
             stategraph_dot: &'static str,
             deadlock_report_json: &'static str,
             datarace_report_json: &'static str,
@@ -523,6 +570,10 @@ impl PTACallbacks {
             artifacts: SummaryArtifacts {
                 callgraph_dot: "callgraph.dot",
                 petrinet_dot: "petrinet.dot",
+                petrinet_raw_dot: "petrinet_raw.dot",
+                petrinet_reduce_1_loop_dot: "petrinet_reduce_1_loop.dot",
+                petrinet_reduce_2_sequence_dot: "petrinet_reduce_2_sequence.dot",
+                petrinet_reduce_3_intermediate_dot: "petrinet_reduce_3_intermediate.dot",
                 stategraph_dot: "stategraph.dot",
                 deadlock_report_json: "deadlock_report.txt.json",
                 datarace_report_json: "datarace_report.txt.json",

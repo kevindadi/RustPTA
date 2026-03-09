@@ -61,6 +61,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     iter_vec_source: HashMap<Local, Local>,
     option_vec_source: HashMap<Local, Local>,
     handle_vec_source: HashMap<Local, Local>,
+    joinhandle_vec_locals: HashSet<Local>,
     #[cfg(feature = "atomic-violation")]
     seg: SegState,
 }
@@ -108,6 +109,19 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         async_ctx: &'translate mut AsyncTranslateContext,
         alias_unknown_policy: crate::config::AliasUnknownPolicy,
     ) -> Self {
+        let joinhandle_vec_locals: HashSet<Local> = body
+            .local_decls
+            .iter_enumerated()
+            .filter_map(|(local, decl)| {
+                let ty_str = format!("{:?}", decl.ty);
+                if ty_str.contains("Vec") && ty_str.contains("JoinHandle") {
+                    Some(local)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         #[allow(unused_mut)]
         let mut s = Self {
             instance_id,
@@ -135,6 +149,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             iter_vec_source: HashMap::new(),
             option_vec_source: HashMap::new(),
             handle_vec_source: HashMap::new(),
+            joinhandle_vec_locals,
             #[cfg(feature = "atomic-violation")]
             seg: SegState::default(),
         };

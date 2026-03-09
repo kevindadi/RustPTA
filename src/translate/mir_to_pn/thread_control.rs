@@ -30,15 +30,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) {
-        if callee_func_name.contains("Vec<")
-            && callee_func_name.contains("JoinHandle")
-            && callee_func_name.contains("::push")
-        {
+        eprintln!("[vec-track] ENTER track_joinhandle_container_call: callee={}", callee_func_name);
+        if callee_func_name.contains("::push") {
             let Some(vec_ref_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local)
-            else {
-                return;
-            };
-            let Some(handle_local) = args.get(1).and_then(|a| a.node.place()).map(|p| p.local)
             else {
                 return;
             };
@@ -48,33 +42,59 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 .copied()
                 .unwrap_or(vec_ref_local);
             let vec_root = self.resolve_vec_local(vec_local);
+            eprintln!(
+                "[vec-track] push: callee={}, vec_ref={:?}, vec_local={:?}, vec_root={:?}, in_jh_set={}, jh_locals={:?}",
+                callee_func_name,
+                vec_ref_local,
+                vec_local,
+                vec_root,
+                self.joinhandle_vec_locals.contains(&vec_root),
+                self.joinhandle_vec_locals
+            );
+            if !self.joinhandle_vec_locals.contains(&vec_root) {
+                return;
+            }
+            let Some(handle_local) = args.get(1).and_then(|a| a.node.place()).map(|p| p.local)
+            else {
+                return;
+            };
             self.vec_alias_source.insert(vec_local, vec_root);
             if let Some(spawn_end) = self.spawn_handle_end.get(&handle_local).copied() {
                 self.vec_spawn_ends
                     .entry(vec_root)
                     .or_default()
                     .push_back(spawn_end);
+                log::info!(
+                    "[vec-track] push OK: handle={:?} -> vec_root={:?}, vec_spawn_ends={:?}",
+                    handle_local, vec_root, self.vec_spawn_ends
+                );
+            } else {
+                log::info!(
+                    "[vec-track] push MISS: handle={:?} not in spawn_handle_end={:?}",
+                    handle_local, self.spawn_handle_end
+                );
             }
             return;
         }
 
-        if callee_func_name.contains("IntoIterator>::into_iter")
-            && callee_func_name.contains("JoinHandle")
-        {
+        if callee_func_name.contains("into_iter") {
             let Some(src_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local) else {
                 return;
             };
             let vec_local = self.resolve_vec_local(src_local);
-            if self.vec_spawn_ends.contains_key(&vec_local) {
+            if self.joinhandle_vec_locals.contains(&vec_local)
+                || self.vec_spawn_ends.contains_key(&vec_local)
+            {
                 self.iter_vec_source.insert(destination, vec_local);
+                log::info!(
+                    "[vec-track] into_iter: src={:?} -> vec={:?}, iter_vec_source[{:?}]={:?}",
+                    src_local, vec_local, destination, vec_local
+                );
             }
             return;
         }
 
-        if callee_func_name.contains("IntoIter<")
-            && callee_func_name.contains("JoinHandle")
-            && callee_func_name.contains("Iterator>::next")
-        {
+        if callee_func_name.contains("::next") {
             let Some(iter_ref_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local)
             else {
                 return;
@@ -86,6 +106,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 .unwrap_or(iter_ref_local);
             if let Some(vec_local) = self.iter_vec_source.get(&iter_local).copied() {
                 self.option_vec_source.insert(destination, vec_local);
+                log::info!(
+                    "[vec-track] next: iter_ref={:?} -> iter={:?} -> option_vec_source[{:?}]={:?}",
+                    iter_ref_local, iter_local, destination, vec_local
+                );
             }
         }
     }
@@ -240,6 +264,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_output_arc(closure_start, bb_end, 1);
             self.ordered_spawn_ends.push_back(closure_end);
             self.spawn_handle_end.insert(destination, closure_end);
+            eprintln!(
+                "[vec-track] SPAWN: dest={:?}, closure_end={:?}, spawn_handle_end={:?}",
+                destination, closure_end, self.spawn_handle_end
+            );
         }
 
         if let Some(transition) = self.net.get_transition_mut(bb_end) {
@@ -261,6 +289,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         let mut joined = false;
         if let Some(handle_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local) {
+            eprintln!(
+                "[vec-track] JOIN: handle_local={:?}, handle_vec={:?}, option_vec={:?}, spawn_end_keys={:?}, vec_spawn_ends={:?}",
+                handle_local,
+                self.handle_vec_source,
+                self.option_vec_source,
+                self.spawn_handle_end.keys().collect::<Vec<_>>(),
+                self.vec_spawn_ends,
+            );
             if let Some(vec_local) = self.handle_vec_source.get(&handle_local).copied() {
                 let all_ends: Vec<_> = self
                     .vec_spawn_ends
