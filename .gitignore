@@ -11,3 +11,4 @@ example/rayon
 mir_dump/
 
 **/__pycache__
+**/results/**
