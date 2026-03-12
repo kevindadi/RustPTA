@@ -14,6 +14,7 @@ use rustc_span::source_map::Spanned;
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     pub(super) fn handle_lock_call(
         &mut self,
+        bb_idx: BasicBlock,
         destination: &rustc_middle::mir::Place<'tcx>,
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
@@ -38,7 +39,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             };
 
             self.update_lock_transition(bb_end, lock_node);
-            self.connect_to_target(bb_end, target);
+            self.connect_to_target(bb_idx, bb_end, target);
             Some(call_type)
         } else {
             None
@@ -74,8 +75,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_output_arc(callee_start, bb_end, 1);
             if let Some(return_block) = target {
                 self.net.add_input_arc(callee_end, bb_ret, 1);
-                self.net
-                    .add_output_arc(self.bb_graph.start(*return_block), bb_ret, 1);
+                if !self.is_back_edge(bb_idx, *return_block) {
+                    self.net
+                        .add_output_arc(self.bb_graph.start(*return_block), bb_ret, 1);
+                }
             }
             return;
         }
@@ -97,13 +100,15 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.net.add_output_arc(callee_start, bb_end, 1);
                 if let Some(return_block) = target {
                     self.net.add_input_arc(callee_end, bb_ret, 1);
-                    self.net
-                        .add_output_arc(self.bb_graph.start(*return_block), bb_ret, 1);
+                    if !self.is_back_edge(bb_idx, *return_block) {
+                        self.net
+                            .add_output_arc(self.bb_graph.start(*return_block), bb_ret, 1);
+                    }
                 }
                 return;
             }
         }
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(bb_idx, bb_end, target);
     }
 
     pub(super) fn handle_atomic_call(
@@ -118,13 +123,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if callee_func_name.contains("::load") {
             if !self.handle_atomic_load(args, bb_end, target, bb_idx, span) {
                 log::debug!("no alias found for atomic load in {:?}", span);
-                self.connect_to_target(bb_end, target);
+                self.connect_to_target(*bb_idx, bb_end, target);
             }
             return true;
         } else if callee_func_name.contains("::store") {
             if !self.handle_atomic_store(args, bb_end, target, bb_idx, span) {
                 log::debug!("no alias found for atomic store in {:?}", span);
-                self.connect_to_target(bb_end, target);
+                self.connect_to_target(*bb_idx, bb_end, target);
             }
             return true;
         } else if callee_func_name.contains("::compare_exchange") {
@@ -236,7 +241,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     break;
                 }
             }
-            self.connect_to_target(bb_end, target);
+            self.connect_to_target(*bb_idx, bb_end, target);
             true
         } else if has_pn_attribute(self.tcx, callee_def_id, "pn_condvar_wait")
             || self.key_api_regex.condvar_wait.is_match(callee_func_name)
@@ -278,7 +283,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_output_arc(*lock_node, bb_end, 1);
             self.net.add_input_arc(*lock_node, bb_ret, 1);
 
-            self.connect_to_target(bb_ret, target);
+            self.connect_to_target(*bb_idx, bb_ret, target);
             true
         } else {
             false
@@ -290,6 +295,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         callee_def_id: DefId,
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
+        bb_idx: BasicBlock,
         bb_end: TransitionId,
         target: &Option<BasicBlock>,
     ) -> bool {
@@ -311,7 +317,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
             if let Some(channel_node) = self.find_channel_place(channel_alias) {
                 self.net.add_output_arc(channel_node, bb_end, 1);
-                self.connect_to_target(bb_end, target);
+                self.connect_to_target(bb_idx, bb_end, target);
                 return true;
             }
         } else if has_pn_attribute(self.tcx, callee_def_id, "pn_channel_recv")
@@ -324,7 +330,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
             if let Some(channel_node) = self.find_channel_place(channel_alias) {
                 self.net.add_input_arc(channel_node, bb_end, 1);
-                self.connect_to_target(bb_end, target);
+                self.connect_to_target(bb_idx, bb_end, target);
                 return true;
             }
         }
@@ -363,7 +369,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let callee_def_id = match callee_ty.kind() {
             rustc_middle::ty::TyKind::FnPtr(..) => {
                 log::debug!("call fnptr: {:?}", callee_ty);
-                self.connect_to_target(bb_end, target);
+                self.connect_to_target(bb_idx, bb_end, target);
                 return;
             }
             rustc_middle::ty::TyKind::FnDef(id, _) | rustc_middle::ty::TyKind::Closure(id, _) => {
@@ -378,7 +384,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
          log::debug!("[CALLS] before track_joinhandle: {}", callee_func_name);
         self.track_joinhandle_container_call(&callee_func_name, args, destination.local);
 
-        if self.handle_lock_call(destination, target, bb_end).is_some() {
+        if self.handle_lock_call(bb_idx, destination, target, bb_end).is_some() {
             log::debug!("callee_func_name with lock: {:?}", callee_func_name);
             return;
         }
@@ -437,11 +443,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     }
                 }
             }
-            self.connect_to_target(bb_end, target);
+            self.connect_to_target(bb_idx, bb_end, target);
             return;
         }
 
-        if self.handle_channel_call(callee_def_id, &callee_func_name, args, bb_end, target) {
+        if self.handle_channel_call(callee_def_id, &callee_func_name, args, bb_idx, bb_end, target) {
             log::debug!("callee_func_name with channel: {:?}", callee_func_name);
             return;
         }

@@ -26,8 +26,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .add_input_arc(self.bb_graph.last(*bb_idx), bb_end, 1);
 
         if cfg!(feature = "atomic-violation") {
-            self.net
-                .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
+            if !self.is_back_edge(*bb_idx, *target) {
+                self.net
+                    .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
+            }
             return;
         }
 
@@ -57,8 +59,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
         }
 
-        self.net
-            .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
+        if !self.is_back_edge(*bb_idx, *target) {
+            self.net
+                .add_output_arc(self.bb_graph.start(*target), bb_end, 1);
+        }
     }
 
     pub(super) fn has_unsafe_alias(&self, place_id: AliasId) -> (bool, PlaceId, Option<AliasId>) {

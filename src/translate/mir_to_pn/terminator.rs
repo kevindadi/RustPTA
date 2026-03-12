@@ -38,6 +38,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     }
 
     pub(super) fn handle_assert(&mut self, bb_idx: BasicBlock, target: &BasicBlock, name: &str) {
+        if self.is_back_edge(bb_idx, *target) {
+            return;
+        }
         crate::add_fallthrough_transition!(
             self,
             bb_idx,
@@ -64,6 +67,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             );
             return;
         }
+        if self.is_back_edge(bb_idx, *target) {
+            return;
+        }
 
         crate::add_fallthrough_transition!(self, bb_idx, name, kind, TransitionType::Goto, target);
     }
@@ -83,6 +89,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.handle_panic(bb_idx, name);
             return;
         }
+        if self.is_back_edge(bb_idx, *target) {
+            return;
+        }
 
         crate::add_fallthrough_transition!(self, bb_idx, name, "goto", TransitionType::Goto, target);
     }
@@ -91,6 +100,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         let mut t_num = 1u8;
         for t in targets.all_targets() {
             if self.exclude_bb.contains(&t.index()) {
+                continue;
+            }
+            if self.is_back_edge(bb_idx, *t) {
                 continue;
             }
             let bb_term_name = crate::transition_name!(name, bb_idx, "switch", t_num.to_string());
@@ -142,8 +154,16 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_end
     }
 
-    pub(super) fn connect_to_target(&mut self, bb_end: TransitionId, target: &Option<BasicBlock>) {
+    pub(super) fn connect_to_target(
+        &mut self,
+        bb_idx: BasicBlock,
+        bb_end: TransitionId,
+        target: &Option<BasicBlock>,
+    ) {
         if let Some(target_bb) = target {
+            if self.is_back_edge(bb_idx, *target_bb) {
+                return;
+            }
             self.net
                 .add_output_arc(self.bb_graph.start(*target_bb), bb_end, 1);
         }

@@ -14,6 +14,9 @@ pub struct PnConfig {
     /// 是否在状态图构建前对 Petri 网做缩减.
     #[serde(default = "default_reduce_net")]
     pub reduce_net: bool,
+    /// 是否在 MIR 层面消除 CFG 环（断开回边）.
+    #[serde(default = "default_true")]
+    pub break_cfg_cycles: bool,
     /// 是否启用部分序约简 (POR), 对独立变迁减少等价交错探索. 进阶优化.
     #[serde(default)]
     pub por_enabled: bool,
@@ -62,6 +65,7 @@ impl Default for PnConfig {
             state_limit: default_state_limit(),
             entry_reachable: true,
             reduce_net: default_reduce_net(),
+            break_cfg_cycles: default_true(),
             por_enabled: false,
             translate_concurrent_roots: default_true(),
             thread_spawn: default_thread_spawn(),

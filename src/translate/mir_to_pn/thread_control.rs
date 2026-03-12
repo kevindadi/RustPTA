@@ -145,15 +145,15 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         ) {
             match kind {
                 ThreadControlKind::Spawn => {
-                    self.handle_spawn(callee_func_name, args, destination, target, bb_end);
+                    self.handle_spawn(callee_func_name, args, destination, target, *bb_idx, bb_end);
                     return true;
                 }
                 ThreadControlKind::AsyncSpawn => {
-                    self.handle_async_spawn(callee_func_name, args, target, bb_end);
+                    self.handle_async_spawn(callee_func_name, args, target, *bb_idx, bb_end);
                     return true;
                 }
                 ThreadControlKind::AsyncJoin => {
-                    self.handle_async_join(callee_func_name, args, target, bb_end);
+                    self.handle_async_join(callee_func_name, args, target, *bb_idx, bb_end);
                     return true;
                 }
                 ThreadControlKind::ScopeSpawn => {
@@ -161,11 +161,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     return true;
                 }
                 ThreadControlKind::Join => {
-                    self.handle_join(callee_func_name, args, target, bb_end);
+                    self.handle_join(callee_func_name, args, target, *bb_idx, bb_end);
                     return true;
                 }
                 ThreadControlKind::ScopeJoin => {
-                    self.handle_scope_join(callee_func_name, args, target, bb_end);
+                    self.handle_scope_join(callee_func_name, args, target, *bb_idx, bb_end);
                     return true;
                 }
                 ThreadControlKind::RayonJoin => {
@@ -182,6 +182,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
+        bb_idx: BasicBlock,
         bb_end: TransitionId,
     ) {
         let join_id = AliasId::from_place(
@@ -208,7 +209,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
         }
 
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(bb_idx, bb_end, target);
     }
 
     pub(super) fn handle_scope_spawn(
@@ -228,10 +229,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         if let Some((closure_start, closure_end)) = self.resolve_closure_places_at(args, 1) {
             self.net.add_output_arc(closure_start, bb_end, 1);
-            self.net
-                .add_input_arc(closure_end, self.return_transition, 1);
+        self.net
+            .add_input_arc(closure_end, self.return_transition, 1);
         }
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(*bb_idx, bb_end, target);
     }
 
     pub(super) fn handle_rayon_join(
@@ -255,7 +256,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             bb_end
         );
 
-        self.connect_to_target(bb_join, target);
+        self.connect_to_target(*bb_idx, bb_join, target);
 
         for (i, _) in args.iter().enumerate() {
             if let Some((closure_start, closure_end)) = self.resolve_closure_places_at(args, i) {
@@ -271,6 +272,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         args: &Box<[Spanned<Operand<'tcx>>]>,
         destination: Local,
         target: &Option<BasicBlock>,
+        bb_idx: BasicBlock,
         bb_end: TransitionId,
     ) {
         if let Some((closure_start, closure_end)) = self.resolve_closure_places(args) {
@@ -288,7 +290,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if let Some(transition) = self.net.get_transition_mut(bb_end) {
             transition.transition_type = TransitionType::Spawn(callee_func_name.to_string());
         }
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(bb_idx, bb_end, target);
     }
 
     pub(super) fn handle_join(
@@ -296,6 +298,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
+        bb_idx: BasicBlock,
         bb_end: TransitionId,
     ) {
         if let Some(transition) = self.net.get_transition_mut(bb_end) {
@@ -367,6 +370,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             }
         }
 
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(bb_idx, bb_end, target);
     }
 }

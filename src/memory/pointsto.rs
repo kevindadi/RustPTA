@@ -1013,7 +1013,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             ..
         } = aid2;
 
-        if local1 == local2 {
+        if id1 == id2 && local1 == local2 {
             if let (Some(i), Some(j)) = (idx1, idx2) {
                 return if i == j {
                     ApproximateAliasKind::Probably
@@ -1066,7 +1066,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             ..
         } = aid2;
 
-        if local1 == local2 {
+        if id1 == id2 && local1 == local2 {
             if let (Some(i), Some(j)) = (idx1, idx2) {
                 return if i == j {
                     ApproximateAliasKind::Probably
@@ -1604,6 +1604,11 @@ fn is_parameter(local: Local, body: &Body<'_>) -> bool {
     body.args_iter().any(|arg| arg == local)
 }
 
+#[inline]
+fn param_index(local: Local, body: &Body<'_>) -> Option<usize> {
+    body.args_iter().position(|arg| arg == local)
+}
+
 fn point_to_same_type_param<'tcx>(
     pts1: &FxHashSet<ConstraintNode<'tcx>>,
     pts2: &FxHashSet<ConstraintNode<'tcx>>,
@@ -1630,6 +1635,8 @@ fn point_to_same_type_param<'tcx>(
         parameter_places2.iter().any(|place2| {
             body1.local_decls[place1.local].ty == body2.local_decls[place2.local].ty
                 && place1.projection == place2.projection
+                && (body1.source.def_id() == body2.source.def_id()
+                    || param_index(place1.local, body1) == param_index(place2.local, body2))
         })
     })
 }

@@ -351,6 +351,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             key_api_regex,
             &mut self.async_ctx,
             self.options.config.alias_unknown_policy,
+            self.options.config.break_cfg_cycles,
         );
         func_body.translate();
     }

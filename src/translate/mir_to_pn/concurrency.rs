@@ -124,7 +124,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 op_name,
                 span
             );
-            self.connect_to_target(bb_end, target);
+            self.connect_to_target(*bb_idx, bb_end, target);
             return true;
         };
 
@@ -160,7 +160,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             self.net.add_output_arc(resource_place, bb_end, 1);
         }
         self.wire_segment_for_ordering(bb_end, tid, order);
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(*bb_idx, bb_end, target);
 
         log::debug!(
             "[atomic-violation] wired {} at {:?} with ord={:?}, tid={}, alias={:?}",

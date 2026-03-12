@@ -14,6 +14,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         _callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
+        bb_idx: BasicBlock,
         bb_end: TransitionId,
     ) {
         let closure_def_id = args
@@ -66,7 +67,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 task_id: task_id.index(),
             };
         }
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(bb_idx, bb_end, target);
     }
 
     pub(super) fn handle_async_join(
@@ -74,6 +75,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         _callee_func_name: &str,
         args: &Box<[Spanned<Operand<'tcx>>]>,
         target: &Option<BasicBlock>,
+        bb_idx: BasicBlock,
         bb_end: TransitionId,
     ) {
         let join_id = AliasId::from_place(
@@ -99,6 +101,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         if let Some(transition) = self.net.get_transition_mut(bb_end) {
             transition.transition_type = TransitionType::AsyncJoin { task_id };
         }
-        self.connect_to_target(bb_end, target);
+        self.connect_to_target(bb_idx, bb_end, target);
     }
 }

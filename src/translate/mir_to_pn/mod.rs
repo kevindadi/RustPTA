@@ -3,6 +3,7 @@
 mod async_control;
 mod bb_graph;
 mod calls;
+mod cfg_utils;
 mod closure;
 mod concurrency;
 mod drop_unsafe;
@@ -29,6 +30,7 @@ use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
+use rustc_hash::FxHashSet;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -48,6 +50,8 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     resources: &'translate ResourceRegistry,
     bb_graph: BasicBlockGraph,
     pub exclude_bb: HashSet<usize>,
+    back_edges: FxHashSet<(BasicBlock, BasicBlock)>,
+    break_cfg_cycles: bool,
     return_transition: TransitionId,
     entry_exit: (PlaceId, PlaceId),
     key_api_regex: &'translate KeyApiRegex,
@@ -69,6 +73,10 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn functions_map(&self) -> &HashMap<DefId, (PlaceId, PlaceId)> {
         self.functions.counter()
+    }
+
+    fn is_back_edge(&self, src: BasicBlock, target: BasicBlock) -> bool {
+        self.break_cfg_cycles && self.back_edges.contains(&(src, target))
     }
 
     /// 按 join_id 从 spawn_calls 中 alias 匹配，返回可能对应的 spawn callee DefIds.
@@ -108,6 +116,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         key_api_regex: &'translate KeyApiRegex,
         async_ctx: &'translate mut AsyncTranslateContext,
         alias_unknown_policy: crate::config::AliasUnknownPolicy,
+        break_cfg_cycles: bool,
     ) -> Self {
         let joinhandle_vec_locals: HashSet<Local> = body
             .local_decls
@@ -136,6 +145,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             resources,
             bb_graph: BasicBlockGraph::new(),
             exclude_bb: HashSet::new(),
+            back_edges: FxHashSet::default(),
+            break_cfg_cycles,
             return_transition: TransitionId::new(0),
             entry_exit,
             key_api_regex,
@@ -305,6 +316,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
         }
 
         self.init_basic_block(body, &fn_name);
+
+        if self.break_cfg_cycles {
+            self.back_edges = cfg_utils::compute_back_edges(body);
+        }
 
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
             if bb.is_cleanup || bb.is_empty_unreachable() {
