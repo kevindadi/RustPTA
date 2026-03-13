@@ -59,7 +59,8 @@ impl CallSiteLocation {
         match self {
             Self::ThreadControl {
                 destination: Some(destination),
-                kind: ThreadControlKind::Spawn
+                kind:
+                    ThreadControlKind::Spawn
                     | ThreadControlKind::ScopeSpawn
                     | ThreadControlKind::AsyncSpawn,
                 ..
@@ -193,7 +194,8 @@ impl<'tcx> CallGraph<'tcx> {
                 let callee_idx = self.insert_instance(CallGraphNode::WithoutBody(callee));
 
                 if let CallSiteLocation::ThreadControl {
-                    kind: ThreadControlKind::Spawn
+                    kind:
+                        ThreadControlKind::Spawn
                         | ThreadControlKind::ScopeSpawn
                         | ThreadControlKind::AsyncSpawn,
                     destination: Some(alias_id),
