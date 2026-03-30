@@ -19,7 +19,7 @@ use crate::report::{AtomicReport, DeadlockReport, RaceReport};
 use crate::translate::callgraph::CallGraph;
 use crate::translate::petri_net::PetriNet;
 use crate::util::mem_watcher::MemoryWatcher;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use rayon::join;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
@@ -314,7 +314,6 @@ impl PTACallbacks {
             } else {
                 info!("petri net dot exported");
             }
-            self.write_extracted_cir_yaml(&pn.net);
         }
         if dump.dump_unsafe_info {
             todo!()
@@ -328,25 +327,6 @@ impl PTACallbacks {
             } else {
                 info!("points-to report exported to {:?}", path);
             }
-        }
-    }
-
-    /// Writes `extracted_cir.yaml` when `--viz-petrinet` is enabled (same net as `petrinet.dot`).
-    fn write_extracted_cir_yaml(&self, net: &crate::net::core::Net) {
-        use crate::cir::extractor::CirExtractor;
-        match CirExtractor::new(net).extract() {
-            Ok(artifact) => {
-                let path = self.output_directory.join("extracted_cir.yaml");
-                match artifact.to_yaml_file(&path) {
-                    Ok(()) => info!("extracted CIR written to {:?}", path),
-                    Err(e) => error!("failed to write extracted_cir.yaml: {e}"),
-                }
-            }
-            Err(errs) => warn!(
-                "CIR extraction failed ({} error(s)): {:?}",
-                errs.len(),
-                errs
-            ),
         }
     }
 
