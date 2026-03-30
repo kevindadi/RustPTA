@@ -4,6 +4,7 @@
 
 pub mod analysis;
 pub mod callback;
+pub mod cir;
 pub mod concurrency;
 pub mod config;
 pub mod detect;
@@ -29,7 +30,8 @@ use log::debug;
 use options::Options;
 use rustc_session::{EarlyDiagCtxt, config::ErrorOutputType};
 
-fn main() {
+/// Entry point for the `pn` driver (invoked from `src/bin/pn.rs`).
+pub fn run() -> ! {
     let handler = EarlyDiagCtxt::new(ErrorOutputType::default());
 
     if std::env::var("RUSTC_LOG").is_ok() {
@@ -59,11 +61,9 @@ fn main() {
         .collect::<Vec<_>>();
     assert!(!args.is_empty());
 
-    // 如果 rustc 传递了 -vV 或 --version 等参数,直接传递给 rustc 处理
     if args.len() > 1 {
         let first_arg = &args[1];
         if first_arg == "-vV" || first_arg == "--version" || first_arg == "-V" {
-            // 这些是 rustc 的版本查询参数,直接调用 rustc
             use std::process::Command;
             let rustc_path = args[1].clone();
             let mut cmd = Command::new(rustc_path);
@@ -80,7 +80,6 @@ fn main() {
         }
     }
 
-    // Parse command line arguments for PN
     let args_slice = if args.len() > 1 { &args[1..] } else { &[] };
     let mut rustc_command_line_arguments = options.parse_from_args(args_slice);
 

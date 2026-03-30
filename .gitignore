@@ -10,6 +10,9 @@ example/rayon
 .cursor
 mir_dump/
 
+# 本地私有依赖，勿推送至公开仓库
+vendor/cir/
+
 **/__pycache__
 **/results/**
 
