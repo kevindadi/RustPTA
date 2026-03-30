@@ -4,6 +4,7 @@
 
 pub mod analysis;
 pub mod callback;
+pub mod cir;
 pub mod concurrency;
 pub mod config;
 pub mod detect;

@@ -13,7 +13,7 @@ use petgraph::visit::IntoNodeReferences;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -22,6 +22,10 @@ use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::AliasAnalysis;
 use crate::net::{Net, Place, PlaceId};
+use crate::cir::mir_emitter::CirMirEmitter;
+use crate::cir::resource_table::ResourceTable;
+use crate::cir::types::FunctionKind;
+use crate::translate::mir_to_cir::BodyToCir;
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
 fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
@@ -52,9 +56,26 @@ pub struct PetriNet<'analysis, 'tcx> {
     pub entry_exit: (PlaceId, PlaceId),
     /// 异步任务调度上下文 (tokio::spawn / JoinHandle.await)
     pub async_ctx: AsyncTranslateContext,
+    /// MIR→CIR 专用异步上下文（与 `async_ctx` 分离，避免与 Petri 网竞争 task id）
+    pub async_ctx_cir: AsyncTranslateContext,
+    pub cir_resource_table: ResourceTable,
+    pub cir_spawn_targets: BTreeSet<String>,
+    pub cir_functions: BTreeMap<String, crate::cir::types::CirFunction>,
 }
 
 impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
+    pub fn tcx(&self) -> rustc_middle::ty::TyCtxt<'tcx> {
+        self.tcx
+    }
+
+    pub fn options(&self) -> &crate::options::Options {
+        &self.options
+    }
+
+    pub fn callgraph(&self) -> &'analysis CallGraph<'tcx> {
+        self.callgraph
+    }
+
     fn create_resource_place(
         &mut self,
         name: String,
@@ -83,6 +104,10 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
             async_ctx: AsyncTranslateContext::new(1),
+            async_ctx_cir: AsyncTranslateContext::new(1),
+            cir_resource_table: ResourceTable::from_transitions(std::iter::empty()),
+            cir_spawn_targets: BTreeSet::new(),
+            cir_functions: BTreeMap::new(),
         }
     }
 
@@ -354,6 +379,40 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             self.options.config.break_cfg_cycles,
         );
         func_body.translate();
+
+        let fname = format_name(caller.instance().def_id());
+        let def_id = caller.instance().def_id();
+        let kind = if self.tcx.is_closure_like(def_id) {
+            FunctionKind::Closure
+        } else if body.coroutine_kind().is_some() {
+            FunctionKind::Async
+        } else {
+            FunctionKind::Normal
+        };
+        let mut emitter = CirMirEmitter::new(
+            &fname,
+            &mut self.cir_resource_table,
+            &mut self.cir_spawn_targets,
+        );
+        let mut cir_body = BodyToCir::new(
+            node,
+            caller.instance(),
+            body,
+            self.tcx,
+            self.callgraph,
+            &mut self.alias,
+            Arc::clone(&self.lock_info),
+            &self.functions,
+            &self.resources,
+            key_api_regex,
+            &mut self.async_ctx_cir,
+            self.options.config.alias_unknown_policy,
+            self.options.config.break_cfg_cycles,
+            &mut emitter,
+            &self.options,
+        );
+        cir_body.translate();
+        self.cir_functions.insert(fname, emitter.finish(kind));
     }
 
     pub fn construct_func(&mut self) {

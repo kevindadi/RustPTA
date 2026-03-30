@@ -129,6 +129,12 @@ fn make_options_parser() -> clap::Command {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("dump_cir")
+                .long("viz-cir")
+                .help("Write cir.yaml (concurrency intermediate representation)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("stop_after")
                 .long("stop-after")
                 .value_name("STAGE")
@@ -194,6 +200,8 @@ pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: Option<PathBuf>,
     pub crate_name: String,
+    /// Single-file analysis path (`-f`), used for CIR / filtering when set.
+    pub input_file: Option<PathBuf>,
     pub crate_filter: CrateNameList,
     pub dump_options: DumpOptions,
     pub stop_after: StopAfter,
@@ -206,6 +214,7 @@ impl Default for Options {
             detector_kind: DetectorKind::Deadlock,
             output: Option::default(),
             crate_name: String::new(),
+            input_file: None,
             crate_filter: CrateNameList::default(),
             dump_options: DumpOptions::default(),
             stop_after: StopAfter::None,
@@ -222,6 +231,8 @@ pub struct DumpOptions {
     pub dump_unsafe_info: bool,
     pub dump_points_to: bool,
     pub dump_mir: bool,
+    /// Emit `cir.yaml` (concurrency IR) alongside analysis outputs.
+    pub dump_cir: bool,
 }
 
 /// 流水线停止点,用于调试
@@ -244,6 +255,7 @@ impl Default for DumpOptions {
             dump_unsafe_info: false,
             dump_points_to: false,
             dump_mir: false,
+            dump_cir: false,
         }
     }
 }
@@ -292,6 +304,9 @@ impl Options {
             self.detector_kind = DetectorKind::Deadlock;
         }
 
+        self.input_file = matches
+            .get_one::<String>("input_file")
+            .map(|f| PathBuf::from(f));
         self.crate_name = matches
             .get_one::<String>("target_crate")
             .cloned()
@@ -317,6 +332,7 @@ impl Options {
             dump_unsafe_info: matches.get_flag("dump_unsafe"),
             dump_points_to: matches.get_flag("dump_points_to"),
             dump_mir: matches.get_flag("dump_mir"),
+            dump_cir: matches.get_flag("dump_cir"),
         };
 
         self.stop_after = match matches.get_one::<String>("stop_after") {

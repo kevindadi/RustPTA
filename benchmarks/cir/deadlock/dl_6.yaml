@@ -1,0 +1,318 @@
+resources:
+  m0:
+    kind: Mutex
+  m1:
+    kind: Mutex
+functions:
+  dl_6::helper_1:
+    kind: normal
+    body:
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::helper_2:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_1
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::helper_3:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_2
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::helper_4:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_3
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::helper_5:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_4
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::lock_ab:
+    kind: normal
+    body:
+    - sid: dl_1
+      op:
+        lock: m1
+      transfer:
+        next: dl_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:5:15: 5:32 (#0)'
+      bb_index: 2
+    - sid: dl_2
+      op:
+        lock: m0
+      transfer:
+        next: dl_3
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:7:15: 7:32 (#0)'
+      bb_index: 6
+    - sid: dl_3
+      op:
+        drop: m0
+      transfer:
+        next: dl_4
+      bb_index: 7
+    - sid: dl_4
+      op:
+        drop: m1
+      transfer:
+        next: ret
+      bb_index: 8
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::lock_ba:
+    kind: normal
+    body:
+    - sid: dl_1
+      op:
+        lock: m0
+      transfer:
+        next: dl_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:11:15: 11:32 (#0)'
+      bb_index: 2
+    - sid: dl_2
+      op:
+        lock: m1
+      transfer:
+        next: dl_3
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:13:15: 13:32 (#0)'
+      bb_index: 6
+    - sid: dl_3
+      op:
+        drop: m1
+      transfer:
+        next: dl_4
+      bb_index: 7
+    - sid: dl_4
+      op:
+        drop: m0
+      transfer:
+        next: ret
+      bb_index: 8
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main:
+    kind: normal
+    body:
+    - sid: dl_1
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:29:17: 29:57 (#0)'
+      bb_index: 7
+    - sid: dl_2
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_3
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:34:17: 34:57 (#0)'
+      bb_index: 11
+    - sid: dl_3
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_4
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:36:13: 36:60 (#0)'
+      bb_index: 13
+    - sid: dl_4
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_5
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:37:13: 37:60 (#0)'
+      bb_index: 15
+    - sid: dl_5
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_6
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:38:13: 38:60 (#0)'
+      bb_index: 17
+    - sid: dl_6
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_7
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:39:13: 39:60 (#0)'
+      bb_index: 19
+    - sid: dl_7
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_8
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:40:13: 40:60 (#0)'
+      bb_index: 21
+    - sid: dl_8
+      op:
+        join: std::thread::{impl#11}::join
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_6.rs:41:27: 41:35 (#0)'
+      bb_index: 28
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main::{closure#0}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_6::lock_ab
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_6::lock_ab
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main::{closure#1}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_6::lock_ba
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_6::lock_ba
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main::{closure#2}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_6::helper_1
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_1
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main::{closure#3}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_6::helper_2
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_2
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main::{closure#4}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_6::helper_3
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_3
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main::{closure#5}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_6::helper_4
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_4
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_6::main::{closure#6}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_6::helper_5
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_6::helper_5
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+goals:
+- id: G0
+  desc: std::thread::spawn completes
+  marking:
+    cp(std::thread::spawn, ret): 1
+entry: dl_6::main

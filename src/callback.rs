@@ -124,6 +124,35 @@ impl rustc_driver::Callbacks for PTACallbacks {
 }
 
 impl PTACallbacks {
+    fn write_cir_yaml(pn: &PetriNet<'_, '_>, dir: &PathBuf) {
+        let artifact = if !pn.cir_functions.is_empty() {
+            crate::cir::pipeline::build_cir_artifact_from_mir_emission(pn)
+        } else {
+            let mut a = match crate::cir::CirExtractor::new(&pn.net).extract() {
+                Ok(a) => a,
+                Err(errs) => {
+                    for e in errs {
+                        log::warn!("CIR extraction: {e}");
+                    }
+                    return;
+                }
+            };
+            crate::cir::pipeline::merge_calls_and_stubs(pn.tcx(), pn.options(), pn.callgraph(), &mut a);
+            a
+        };
+        let path = dir.join("cir.yaml");
+        match artifact.to_yaml() {
+            Ok(yaml) => {
+                if let Err(err) = std::fs::write(&path, yaml) {
+                    error!("failed to write CIR YAML to {:?}: {err}", path);
+                } else {
+                    info!("CIR YAML written to {:?}", path);
+                }
+            }
+            Err(err) => error!("failed to serialize CIR YAML: {err}"),
+        }
+    }
+
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         let mut mem_watcher = MemoryWatcher::new();
         mem_watcher.start();
@@ -163,6 +192,10 @@ impl PTACallbacks {
 
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
+
+        if self.options.dump_options.dump_cir {
+            Self::write_cir_yaml(&pn, &self.output_directory);
+        }
 
         let mut reduced_stage_written = false;
         if self.options.dump_options.dump_petri_net {
