@@ -1,32 +1,36 @@
-# Rust-PN Developer Guide: Known Limitations & Constraints
+# RustPTA: Known limitations (developer guide)
 
-本文档旨在为二次开发者和贡献者提供 Rust-PN 项目当前版本的架构局限性和设计约束说明。了解这些限制有助于更高效地进行扩展开发和结果解读。
+This document summarizes architectural and design constraints in the current RustPTA release for contributors and advanced users. Understanding these limits helps when extending the tool or interpreting results.
 
-## 1. 别名分析精度与完备性 (Aliasing Precision vs Soundness)
+## 1. Alias analysis precision vs soundness
 
-### 局限性：在处理资源竞争时，倾向于 "Under-approximation"（欠近似）。
-- **机制**: 当多个对象可能别名到同一个锁或通道时，工具目前仅选取**第一个**匹配的候选对象进行连接。
-- **约束**:
-  - **漏报风险**: 如果存在复杂的指针操作导致资源别名模糊，工具可能只分析了其中一条路径，从而遗漏其他路径上的死锁或竞争。
-  - **Join 语义**: 对于 `thread::join`，如果句柄可能指向多个线程，工具不会构建所有可能的 join 边。
+### Limitation: resource contention handling tends toward under-approximation
 
-### 建议扩展方向:
-- 修改图构建逻辑，对所有模糊的别名候选对象建立非确定性（Non-deterministic）连接，以保证验证的 Soundness。
+- **Mechanism**: When several objects may alias the same lock or channel, the tool currently connects only the **first** matching candidate.
+- **Implications**:
+  - **False negatives**: Complex pointer behavior can leave alias relations ambiguous; analyzing only one path may miss deadlocks or races on other paths.
+  - **Join semantics**: If a `thread::join` handle may refer to multiple threads, the tool does not build edges for every possibility.
 
-## 2. 内存模型与原子操作 (Memory Model & Atomics)
+### Possible extension
 
-### 局限性：对 C++11/Rust 内存模型的模拟是启发式的。
-- **机制**: 尝试通过 Petri 网的 Token 传递来模拟 `Acquire/Release` 语义。
-- **约束**:
-  - **复杂性**: 这种手动建模非常复杂且难以验证正确性。
-  - **Relaxed Ordering**: 对 `Relaxed` 序的处理可能过于简化，无法捕捉所有弱内存模型下的行为。
+Strengthen soundness by connecting all ambiguous alias candidates non-deterministically in the graph builder.
 
-## 3. 控制流限制 (Control Flow)
+## 2. Memory model and atomics
 
-### 局限性：Petri 网是静态且有限的。
-- **递归**: 不支持无限递归或深度不可预测的递归调用，因为这会导致 Petri 网结构无限增长（或需要更复杂的着色网/高阶网支持）。
-- **Panic**: 目前 panic 路径简单地连接到函数出口，未深入模拟 unwind 过程中的资源释放顺序（尽管有 `drop` 处理，但在复杂控制流下可能不精确）。
+### Limitation: C++11 / Rust memory order is modeled heuristically
 
-## 4. 跨语言边界 (Foreign Function Interface)
+- **Mechanism**: Acquire/Release style ordering is approximated via token flow in the Petri net.
+- **Implications**:
+  - The manual encoding is hard to validate end-to-end.
+  - **Relaxed** ordering may be modeled too simply to capture all weak-memory behaviors.
 
-- 目前完全**不支持**对 C/C++ 代码的深入分析。如果并发逻辑发生在 FFI 边界之外，工具将无法检测。
+## 3. Control flow
+
+### Limitation: the net is static and finite
+
+- **Recursion**: Unbounded or unpredictable-depth recursion is not supported (the net would grow without a richer formalism).
+- **Panic**: Panic paths are connected loosely to function exit; unwinding and drop ordering are not modeled in full detail under complex control flow.
+
+## 4. Foreign Function Interface (FFI)
+
+There is **no** deep analysis of C/C++ code. Concurrency logic outside Rust (across FFI) is invisible to the tool.

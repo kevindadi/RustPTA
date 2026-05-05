@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 设为 0 则使用 debug 构建（便于调试）；默认 release 更接近性能评测。
+# Set BENCHMARK_RELEASE=0 for a debug build (easier debugging); default is --release.
 release_flag=()
 if [ "${BENCHMARK_RELEASE:-1}" != "0" ]; then
   release_flag=(--release)
