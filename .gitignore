@@ -1,4 +1,5 @@
 **/target/
+Cargo.lock
 .vscode
 *.dot
 /toys
@@ -7,6 +8,7 @@ RustPetriNet.tar.gz
 example/rayon
 /example
 
+.DS_Store
 .cursor
 mir_dump/
 
