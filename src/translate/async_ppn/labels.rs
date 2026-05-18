@@ -1,10 +1,10 @@
-//! PPN 扩展: 变迁标签与操作类型.
+//! PPN extension: transition labels / op kinds.
 //!
-//! 用于区分 read/write/lock/unlock/spawn/join/await_ready/await_pending/wake/done/abort 等操作.
+//! Classifies read/write/lock/unlock/spawn/join/await_ready/await_pending/wake/done/abort, etc.
 
 use serde::{Deserialize, Serialize};
 
-/// 变迁操作类型标签,用于异步 PPN 与竞态过滤.
+/// High-level operation tag for async PPN / race filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OpKind {
     Read,
@@ -18,13 +18,13 @@ pub enum OpKind {
     Wake,
     Done,
     Abort,
-    /// 调度/轮询: ready -> running
+    /// Scheduler poll step: ready → running.
     Poll,
-    /// 普通控制流(非异步)
+    /// Ordinary control flow (non-async).
     Goto,
     Function,
     Return,
-    /// 其他/未分类
+    /// Fallback / uncategorized.
     Other,
 }
 

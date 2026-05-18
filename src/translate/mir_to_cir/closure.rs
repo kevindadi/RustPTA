@@ -1,4 +1,4 @@
-//! 闭包解析（与 `mir_to_pn/closure` 重复）
+//! Closure lowering (duplicates `mir_to_pn/closure`).
 
 use super::BodyToCir;
 use crate::net::PlaceId;
@@ -46,7 +46,7 @@ impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a>
             .and_then(|def_id| self.functions_map().get(&def_id).copied())
     }
 
-    #[allow(dead_code)] // 与 mir_to_pn/closure 对齐，供后续扩展
+    #[allow(dead_code)] // aligned with mir_to_pn/closure for future extensions
     pub(crate) fn resolve_closure_places_at(
         &self,
         args: &[Spanned<Operand<'tcx>>],

@@ -1,4 +1,4 @@
-//! 线程控制（与 `mir_to_pn/thread_control` 重复，不建网）
+//! Thread control (duplicates `mir_to_pn/thread_control`; no net wiring).
 
 use super::BodyToCir;
 use crate::{

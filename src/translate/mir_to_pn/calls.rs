@@ -1,4 +1,4 @@
-//! 调用处理：handle_call 主分发、handle_lock_call、handle_normal_call、handle_atomic_call、handle_condvar_call、handle_channel_call
+//! Calls: `handle_call` dispatch, `handle_lock_call`, `handle_normal_call`, `handle_atomic_call`, `handle_condvar_call`, `handle_channel_call`.
 
 use super::BodyToPetriNet;
 use crate::{

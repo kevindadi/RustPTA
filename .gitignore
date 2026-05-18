@@ -10,7 +10,7 @@ example/rayon
 .cursor
 mir_dump/
 
-# 本地私有依赖，勿推送至公开仓库
+# Local vendored dependency; do not push to public repos
 vendor/cir/
 
 **/__pycache__

@@ -1,4 +1,4 @@
-//! 原子与 channel 辅助（与 `mir_to_pn/concurrency` 重复，仅发射 CIR）
+//! Atomics and channel helpers (duplicates `mir_to_pn/concurrency`; CIR emission only).
 
 use super::BodyToCir;
 use crate::{

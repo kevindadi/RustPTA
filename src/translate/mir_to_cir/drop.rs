@@ -1,4 +1,4 @@
-//! `Drop` 终结符上的锁守卫释放（不处理 unsafe 块内的数据竞争）
+//! Lock-guard release on `Drop` terminators (does not model races inside `unsafe` blocks).
 
 use super::BodyToCir;
 use crate::{

@@ -1,4 +1,4 @@
-//! 线程控制：spawn/join/scope/rayon
+//! Thread control: spawn/join/scope/rayon.
 
 use super::BodyToPetriNet;
 use crate::{
@@ -11,7 +11,7 @@ use rustc_middle::mir::{BasicBlock, Local, Operand};
 use rustc_span::source_map::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    /// 优先按函数内 spawn/join 出现顺序建立 join 依赖.
+    /// Prefer joining in textual spawn/join order inside the function body.
     fn connect_join_from_recorded_order(&mut self, bb_end: TransitionId) -> bool {
         if let Some(spawn_end) = self.ordered_spawn_ends.pop_front() {
             self.net.add_input_arc(spawn_end, bb_end, 1);

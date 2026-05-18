@@ -1,4 +1,4 @@
-//! I/O 支持:JSON、RON 以及 PNML(可选)序列化接口.
+//! I/O: JSON, RON, and optional PNML serialization helpers.
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;

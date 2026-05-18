@@ -1,6 +1,6 @@
-//! 仅基于 **MIR 遍历** 发射 CIR（与 `mir_to_pn` 并列，逻辑有意重复，不修改 `mir_to_pn`）。
+//! Emit CIR from **MIR walks only** (sibling to `mir_to_pn`; duplicated logic on purpose—do not fold into `mir_to_pn`).
 //!
-//! 使用与 Petri 翻译相同的 `TransitionType` 标签语义，但**不**从 Petri 网拓扑读取 MIR 操作。
+//! Reuses the same `TransitionType` tagging as Petri translation but **does not** read MIR ops from net topology.
 
 mod async_control;
 mod calls;

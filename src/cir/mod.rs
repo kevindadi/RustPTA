@@ -1,7 +1,9 @@
 //! **CIR** (Concurrency Intermediate Representation): YAML artifact parallel to the Petri-net translation.
 //!
-//! - **MIR 路径**（推荐）: [`crate::translate::mir_to_cir::BodyToCir`] — 仅遍历 MIR、按 `TransitionType` 标签发射 CIR，**不**从 Petri 网拓扑推断顺序。
-//! - **网路径**: [`pipeline::build_cir_from_petri_net`] — 合并 [`net_extract::CirExtractor`] 与 MIR 调用边。
+//! CIR extraction entrypoints:
+//!
+//! - **MIR path** (recommended): [`crate::translate::mir_to_cir::BodyToCir`] — walk MIR only, emit CIR tagged by `TransitionType`; **does not** infer order from Petri-net topology.
+//! - **Net path**: [`pipeline::build_cir_from_petri_net`] — merge [`net_extract::CirExtractor`] with MIR call edges.
 //! - **Resource naming** matches pointer-analysis ids via [`resource_table::ResourceTable`] (Mutex/RwLock/CondVar/Atomic).
 //! - **Optional**: extract sync-only structure from a bare [`crate::net::Net`] with [`CirExtractor::extract`].
 

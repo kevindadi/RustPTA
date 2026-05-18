@@ -235,15 +235,15 @@ pub struct DumpOptions {
     pub dump_cir: bool,
 }
 
-/// 流水线停止点,用于调试
+/// Pipeline stop point for debugging.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopAfter {
     None,
-    AfterMir,        // 在 MIR 输出后停止
-    AfterCallGraph,  // 在调用图构建后停止
-    AfterPointsTo,   // 在指针分析后停止
-    AfterPetriNet,   // 在 Petri 网构建后停止
-    AfterStateGraph, // 在状态图构建后停止
+    AfterMir,        // Stop after MIR dump
+    AfterCallGraph,  // Stop after call graph construction
+    AfterPointsTo,   // Stop after pointer analysis
+    AfterPetriNet,   // Stop after Petri net construction
+    AfterStateGraph, // Stop after state graph construction
 }
 
 impl Default for DumpOptions {
@@ -300,7 +300,9 @@ impl Options {
         if matches!(self.detector_kind, DetectorKind::AtomicityViolation)
             && !cfg!(feature = "atomic-violation")
         {
-            log::warn!("未启用 atomic-violation feature, 自动回退至死锁检测.");
+            log::warn!(
+                "atomic-violation feature is disabled; falling back to deadlock detection."
+            );
             self.detector_kind = DetectorKind::Deadlock;
         }
 
@@ -389,19 +391,19 @@ impl Options {
         rustc_args.to_vec()
     }
 
-    /// 从 rustc 命令行参数中推断 crate 名（当 -p 和 -f 均未指定时）
+    /// Infer crate name from rustc arguments when neither `-p` nor `-f` is set.
     pub fn infer_crate_name_from_rustc_args(&mut self, rustc_args: &[String]) {
         if !self.crate_name.is_empty() && self.crate_name != "main" {
             return;
         }
-        // 查找 --crate-name 参数
+        // Look for `--crate-name`.
         if let Some(pos) = rustc_args.iter().position(|a| a == "--crate-name") {
             if let Some(name) = rustc_args.get(pos + 1) {
                 self.crate_name = name.clone();
                 return;
             }
         }
-        // 查找 .rs 输入文件
+        // Fall back to first `.rs` input path.
         for arg in rustc_args {
             if arg.ends_with(".rs") {
                 self.crate_name = std::path::Path::new(arg)

@@ -1,4 +1,4 @@
-//! 异步翻译上下文: 在 PetriNet 构造过程中维护任务生命周期状态.
+//! Async translation context: tracks task lifecycle while building the Petri net.
 
 use rustc_hir::def_id::DefId;
 use std::collections::HashMap;
@@ -7,7 +7,7 @@ use crate::net::PlaceId;
 use crate::translate::async_ppn::{add_task_lifecycle_places, add_worker_place, TaskId};
 use crate::translate::async_ppn::TaskLifecyclePlaces;
 
-/// 异步翻译上下文,在构造 PetriNet 时维护.
+/// Stateful helper used during Petri-net construction for async tasks.
 #[derive(Default)]
 pub struct AsyncTranslateContext {
     pub worker_place: Option<PlaceId>,
@@ -51,7 +51,7 @@ impl AsyncTranslateContext {
         p
     }
 
-    /// 为任务添加生命周期库所 (无 await 点的简单任务).
+    /// Register lifecycle places for a task without await sites.
     pub fn add_task_simple(
         &mut self,
         net: &mut crate::net::Net,

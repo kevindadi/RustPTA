@@ -29,9 +29,9 @@ pub enum ThreadControlKind {
     ScopeSpawn,
     ScopeJoin,
     RayonJoin,
-    /// tokio::spawn - 协作式任务,非 OS 线程
+    /// `tokio::spawn` — cooperative task, not an OS thread.
     AsyncSpawn,
-    /// JoinHandle.await - 等待任务完成
+    /// `JoinHandle.await` — wait for task completion.
     AsyncJoin,
 }
 
@@ -138,8 +138,8 @@ impl<'tcx> CallGraph<'tcx> {
         self.spawn_calls.get(&def_id)
     }
 
-    /// 从入口函数出发,沿调用边 BFS 得到可达的 InstanceId 集合.
-    /// 用于入口导向翻译,仅分析从 main 可达的函数.
+    /// BFS along call edges from the entry function; collects reachable `InstanceId`s.
+    /// Used for entry-directed translation (main-reachable only).
     pub fn reachable_from_entry(
         &self,
         tcx: TyCtxt<'tcx>,
@@ -152,8 +152,8 @@ impl<'tcx> CallGraph<'tcx> {
         self.reachable_from_roots(std::iter::once(entry_idx))
     }
 
-    /// 从多个根节点出发,沿调用边 BFS 得到可达的 InstanceId 集合的并集.
-    /// 用于将使用锁/原子变量/条件变量的函数及其被调用者纳入翻译范围.
+    /// BFS from multiple roots; union of reachable `InstanceId`s.
+    /// Pulls in functions that touch locks/atomics/condvars and their callees.
     pub fn reachable_from_roots<I>(&self, roots: I) -> FxHashSet<InstanceId>
     where
         I: IntoIterator<Item = InstanceId>,
@@ -509,7 +509,7 @@ pub fn classify_thread_control(
         return Some(ThreadControlKind::ScopeJoin);
     }
 
-    // tokio async 优先于 std::thread
+    // Prefer tokio async edges over std::thread when both match.
     if fn_path.contains("tokio::task::spawn") || fn_path.contains("tokio::runtime::Runtime::spawn")
     {
         return Some(ThreadControlKind::AsyncSpawn);

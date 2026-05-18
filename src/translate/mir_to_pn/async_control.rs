@@ -1,4 +1,4 @@
-//! 异步控制：handle_async_spawn、handle_async_join
+//! Async control: `handle_async_spawn`, `handle_async_join`.
 
 use super::BodyToPetriNet;
 use crate::{

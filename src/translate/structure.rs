@@ -11,7 +11,7 @@ use crate::{memory::pointsto::AliasId, net::PlaceId};
 pub struct ResourceRegistry {
     locks: HashMap<AliasId, PlaceId>,
     condvars: HashMap<AliasId, PlaceId>,
-    /// 每个 alias 可映射到多个 place（消除 first match 后，一个指针可能别名多个原子变量）
+    /// Each alias may map to multiple places (after dropping first-match, one pointer may alias several atomics).
     atomic_places: HashMap<AliasId, Vec<PlaceId>>,
     atomic_orders: HashMap<AliasId, AtomicOrdering>,
     unsafe_places: HashMap<AliasId, PlaceId>,

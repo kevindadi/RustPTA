@@ -1,9 +1,9 @@
-//! Petri网有界性分析
+//! Petri net boundness analysis.
 //!
-//! 提供多种方法检查Petri网的有界性:
-//! 1. 基于P-不变量的有界性检查
-//! 2. 覆盖树构建与有界性分析
-//! 3. 可达图有界性检查
+//! Provides several ways to check whether a net is bounded:
+//! 1. P-invariant-based boundness
+//! 2. Coverability tree construction
+//! 3. (Reachability-graph variants reserved)
 
 use crate::net::Net;
 use crate::net::ids::{PlaceId, TransitionId};
@@ -15,53 +15,53 @@ use num::bigint::BigInt;
 use std::collections::VecDeque;
 use std::fmt;
 
-/// 有界性检查结果
+/// Result of a boundness check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundnessResult {
-    /// 网是有界的
+    /// The net is bounded.
     Bounded,
-    /// 网是无界的,包含无界库所的信息
+    /// The net is unbounded; carries witness places / firing sequence when known.
     Unbounded {
-        /// 无界库所的ID列表
+        /// Places that became ω (unbounded).
         unbounded_places: Vec<PlaceId>,
-        /// 导致无界的变迁序列(如果可找到)
+        /// Witness firing sequence if reconstructed.
         witness_sequence: Option<Vec<TransitionId>>,
     },
-    /// 无法确定有界性(例如由于状态空间爆炸)
+    /// Boundness could not be determined (e.g. state explosion).
     Unknown { reason: String },
 }
 
 impl fmt::Display for BoundnessResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BoundnessResult::Bounded => write!(f, "Petri网是有界的"),
+            BoundnessResult::Bounded => write!(f, "Petri net is bounded"),
             BoundnessResult::Unbounded {
                 unbounded_places,
                 witness_sequence,
             } => {
-                write!(f, "Petri网是无界的,无界库所: {:?}", unbounded_places)?;
+                write!(f, "Petri net is unbounded; unbounded places: {:?}", unbounded_places)?;
                 if let Some(seq) = witness_sequence {
-                    write!(f, ",见证序列: {:?}", seq)?;
+                    write!(f, "; witness sequence: {:?}", seq)?;
                 }
                 Ok(())
             }
             BoundnessResult::Unknown { reason } => {
-                write!(f, "无法确定有界性: {}", reason)
+                write!(f, "Could not determine boundness: {}", reason)
             }
         }
     }
 }
 
-/// 覆盖树节点
+/// Node in the coverability tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CoverTreeNode {
-    /// 节点标记(可能包含ω值)
+    /// Marking at this node (None slot denotes ω).
     marking: Vec<Option<u64>>,
-    /// 父节点索引
+    /// Parent index in the tree.
     parent: Option<usize>,
-    /// 从父节点到该节点的变迁
+    /// Transition fired from the parent.
     transition_from_parent: Option<TransitionId>,
-    /// 子节点索引
+    /// Child indices.
     children: Vec<usize>,
 }
 
@@ -90,7 +90,7 @@ impl CoverTreeNode {
     }
 }
 
-/// 覆盖树
+/// Coverability tree structure.
 #[derive(Debug, Clone)]
 struct CoverTree {
     nodes: Vec<CoverTreeNode>,
@@ -144,15 +144,15 @@ impl CoverTree {
         None
     }
 
-    /// 检查marking1是否覆盖marking2(marking1的每个分量都大于等于marking2的对应分量)
+    /// True if marking1 covers marking2 componentwise (ω covers anything).
     fn covers(&self, marking1: &[Option<u64>], marking2: &[Option<u64>]) -> bool {
         marking1.iter().zip(marking2.iter()).all(|(m1, m2)| {
             match (m1, m2) {
-                // ω覆盖任何值
+                // ω covers any value.
                 (None, _) => true,
-                // 具体值覆盖相同或更小的具体值
+                // Concrete covers equal or smaller concrete.
                 (Some(v1), Some(v2)) => v1 >= v2,
-                // 具体值不能覆盖ω
+                // Concrete cannot cover ω.
                 (Some(_), None) => false,
             }
         })
@@ -181,12 +181,13 @@ impl BoundnessAnalyzer {
         self
     }
 
-    /// 使用P-不变量方法检查有界性
-    pub fn check_by_p_invariants(&self, _: &Net) -> BoundnessResult {
+    /// Boundness via P-invariants (fast when `invariants` feature is enabled).
+    pub fn check_by_p_invariants(&self, net: &Net) -> BoundnessResult {
         #[cfg(not(feature = "invariants"))]
         {
+            let _ = net;
             return BoundnessResult::Unknown {
-                reason: "需要启用invariants特性以使用P-不变量方法".to_string(),
+                reason: "Enable the `invariants` feature for P-invariant boundness".to_string(),
             };
         }
 
@@ -196,11 +197,10 @@ impl BoundnessAnalyzer {
 
             if invariants.is_empty() {
                 return BoundnessResult::Unknown {
-                    reason: "没有找到P-不变量".to_string(),
+                    reason: "No P-invariants found".to_string(),
                 };
             }
 
-            // 检查是否存在正的P-不变量
             let mut positive_invariants = Vec::new();
             for invariant in &invariants {
                 if invariant.iter().all(|coeff| coeff >= &BigInt::from(0)) {
@@ -209,22 +209,21 @@ impl BoundnessAnalyzer {
             }
 
             if !positive_invariants.is_empty() {
-                // 存在正的P-不变量,网是有界的
                 return BoundnessResult::Bounded;
             }
 
             BoundnessResult::Unknown {
-                reason: "没有找到正的P-不变量,需要进一步分析".to_string(),
+                reason: "No positive P-invariant found; further analysis needed".to_string(),
             }
         }
     }
 
-    /// 使用覆盖树方法检查有界性
+    /// Boundness via coverability tree (may print debug traces).
     pub fn check_by_coverability_tree(&self, net: &Net) -> BoundnessResult {
         let initial_marking = net.initial_marking();
         let mut tree = CoverTree::new(&initial_marking);
         let mut queue = VecDeque::new();
-        queue.push_back(0); // 根节点
+        queue.push_back(0); // root
 
         let mut visited_count = 0;
         let mut iteration = 0;
@@ -236,27 +235,24 @@ impl BoundnessAnalyzer {
             if let Some(limit) = self.state_limit {
                 if visited_count > limit {
                     return BoundnessResult::Unknown {
-                        reason: format!("超过状态限制 {}", limit),
+                        reason: format!("Exceeded state limit {}", limit),
                     };
                 }
             }
 
             let node = tree.node(node_index).clone();
 
-            // 如果节点包含ω,则网是无界的
             if node.has_omega() {
                 let mut unbounded_places = Vec::new();
                 let mut witness_sequence = Vec::new();
                 let mut current = node_index;
 
-                // 收集无界库所
                 for (place_idx, tokens) in node.marking.iter().enumerate() {
                     if tokens.is_none() {
                         unbounded_places.push(PlaceId::from_usize(place_idx));
                     }
                 }
 
-                // 回溯构建见证序列
                 while let Some(parent) = tree.node(current).parent {
                     if let Some(trans) = tree.node(current).transition_from_parent {
                         witness_sequence.push(trans);
@@ -266,7 +262,7 @@ impl BoundnessAnalyzer {
                 witness_sequence.reverse();
 
                 println!(
-                    "迭代 {}: 发现ω标记在节点{},无界库所: {:?}",
+                    "Iteration {}: ω marking at node {}, unbounded places: {:?}",
                     iteration, node_index, unbounded_places
                 );
                 return BoundnessResult::Unbounded {
@@ -282,7 +278,7 @@ impl BoundnessAnalyzer {
                 .collect();
 
             println!(
-                "迭代 {}: 处理节点{},标记: {:?}",
+                "Iteration {}: node {}, marking: {:?}",
                 iteration, node_index, current_marking_vec
             );
 
@@ -290,7 +286,7 @@ impl BoundnessAnalyzer {
             let temp_marking = Marking::new(IndexVec::from(current_marking_vec));
 
             let enabled_transitions = net.enabled_transitions(&temp_marking);
-            println!("  可发生变迁: {:?}", enabled_transitions);
+            println!("  Enabled transitions: {:?}", enabled_transitions);
 
             for transition_id in enabled_transitions {
                 match net.fire_transition(&temp_marking, transition_id) {
@@ -301,16 +297,13 @@ impl BoundnessAnalyzer {
                             .collect();
 
                         println!(
-                            "  变迁{}发生成功,新标记: {:?}",
+                            "  Transition {} fired, new marking: {:?}",
                             transition_id.0, next_marking_vec
                         );
 
-                        // 检查是否被已有节点覆盖
                         if let Some(covered_by) = tree.is_covered(&next_marking_vec) {
-                            println!("    新标记被节点{}覆盖", covered_by);
+                            println!("    New marking covered by node {}", covered_by);
 
-                            // 被覆盖,检查是否需要创建ω节点
-                            // 找到从当前节点到覆盖节点的路径
                             let path = self.find_path_to_node(&tree, node_index, covered_by);
 
                             if let Some(path_nodes) = path {
@@ -330,40 +323,39 @@ impl BoundnessAnalyzer {
                                         &next_marking_vec,
                                     );
 
-                                    println!("    创建ω节点,标记: {:?}", omega_marking);
+                                    println!("    Creating ω node, marking: {:?}", omega_marking);
                                     let child_idx =
                                         tree.add_child(node_index, omega_marking, transition_id);
                                     queue.push_back(child_idx);
                                 } else {
-                                    // 不需要ω标记,终止这个分支
-                                    println!("    分支终止,不需要ω标记");
+                                    println!("    Branch ends; no ω acceleration needed");
                                 }
                             } else {
-                                // 没有找到路径,添加普通节点
-                                println!("    未找到路径,创建普通节点");
+                                println!("    No path found; adding ordinary node");
                                 let child_idx =
                                     tree.add_child(node_index, next_marking_vec, transition_id);
                                 queue.push_back(child_idx);
                             }
                         } else {
-                            // 没有被覆盖,添加普通节点
-                            println!("    新标记未被覆盖,创建普通节点");
+                            println!("    New marking not covered; adding ordinary node");
                             let child_idx =
                                 tree.add_child(node_index, next_marking_vec, transition_id);
                             queue.push_back(child_idx);
                         }
                     }
                     Err(e) => {
-                        println!("  变迁{}发生失败: {:?}", transition_id.0, e);
+                        println!("  Transition {} failed to fire: {:?}", transition_id.0, e);
                         continue;
                     }
                 }
             }
         }
 
-        println!("覆盖树构建完成,共处理{}个节点,未发现ω标记", visited_count);
+        println!(
+            "Coverability tree complete: {} nodes processed, no ω markings",
+            visited_count
+        );
 
-        // 如果完成覆盖树构建而没有发现ω,则网是有界的
         BoundnessResult::Bounded
     }
 
@@ -384,19 +376,16 @@ impl BoundnessAnalyzer {
             }
         }
 
-        // from == to 的情况
+        // from == to
         Some(vec![from])
     }
 
-    /// 检查marking1是否严格小于marking2(所有分量都小于)
+    /// Strict componentwise `<` with ω semantics as in the coverability construction.
     fn is_strictly_smaller(&self, marking1: &[Option<u64>], marking2: &[Option<u64>]) -> bool {
         marking1.iter().zip(marking2.iter()).all(|(m1, m2)| {
             match (m1, m2) {
-                // ω不小于任何具体值
                 (None, Some(_)) => false,
-                // 具体值小于具体值
                 (Some(v1), Some(v2)) => v1 < v2,
-                // 其他情况:具体值不小于ω,ω不小于ω
                 _ => false,
             }
         }) && marking1
@@ -408,7 +397,6 @@ impl BoundnessAnalyzer {
             })
     }
 
-    /// 创建ω标记
     fn create_omega_marking(
         &self,
         tree: &CoverTree,
@@ -417,18 +405,14 @@ impl BoundnessAnalyzer {
     ) -> Vec<Option<u64>> {
         let mut omega_marking = new_marking.to_vec();
 
-        // 对于路径上的每个节点,如果其标记小于新标记,则对应位置设为ω
         for &node_idx in path_nodes {
             let node_marking = &tree.node(node_idx).marking;
             for (i, (old_val, new_val)) in node_marking.iter().zip(new_marking.iter()).enumerate() {
                 match (old_val, new_val) {
                     (Some(old), Some(new)) if old < new => {
-                        // 严格增长,设为ω
                         omega_marking[i] = None;
                     }
-                    _ => {
-                        // 保持原值
-                    }
+                    _ => {}
                 }
             }
         }
@@ -436,35 +420,31 @@ impl BoundnessAnalyzer {
         omega_marking
     }
 
-    /// 综合检查有界性(尝试多种方法)
+    /// Try P-invariants first, then coverability tree.
     pub fn check(&self, net: &Net) -> BoundnessResult {
-        // 首先尝试P-不变量方法(最快)
         let p_invariant_result = self.check_by_p_invariants(net);
         if matches!(p_invariant_result, BoundnessResult::Bounded) {
             return p_invariant_result;
         }
 
-        // 然后尝试覆盖树方法
         let coverability_result = self.check_by_coverability_tree(net);
         match coverability_result {
-            BoundnessResult::Unbounded { .. } => return coverability_result,
-            BoundnessResult::Bounded => return coverability_result,
-            BoundnessResult::Unknown { .. } => {
-                return BoundnessResult::Unknown {
-                    reason: String::from("Unknown"),
-                };
-            }
+            BoundnessResult::Unbounded { .. } => coverability_result,
+            BoundnessResult::Bounded => coverability_result,
+            BoundnessResult::Unknown { .. } => BoundnessResult::Unknown {
+                reason: String::from("Unknown"),
+            },
         }
     }
 }
 
-/// 检查Petri网是否有界的便捷函数
+/// Convenience: check whether `net` is bounded.
 pub fn check_boundness(net: &Net) -> BoundnessResult {
     let analyzer = BoundnessAnalyzer::new();
     analyzer.check(net)
 }
 
-/// 检查特定库所是否有界
+/// Check boundness information restricted to a single place.
 pub fn check_place_boundness(net: &Net, place: PlaceId) -> BoundnessResult {
     let analyzer = BoundnessAnalyzer::new();
     let result = analyzer.check(net);
@@ -493,7 +473,6 @@ mod tests {
     use super::*;
     use crate::net::structure::{Place, PlaceType, Transition};
 
-    /// 构建一个有界的Petri网(简单循环)
     fn build_bounded_net() -> Net {
         let mut net = Net::empty();
 
@@ -525,7 +504,6 @@ mod tests {
         net
     }
 
-    /// 构建一个无界的Petri网(token生成器)
     fn build_unbounded_net() -> Net {
         let mut net = Net::empty();
 
@@ -546,16 +524,15 @@ mod tests {
 
         let t0 = net.add_transition(Transition::new("t0"));
 
-        // p0 -> t0 -> p0 + p1 (生成新token)
+        // p0 -> t0 -> p0 + p1 (token generator)
         net.set_input_weight(p0, t0, 1);
         net.set_output_weight(p0, t0, 1);
         net.set_output_weight(p1, t0, 1);
 
-        // 添加调试信息
-        println!("构建无界网:");
-        println!("  库所 p0: 初始token=1, 容量=无限制");
-        println!("  库所 p1: 初始token=0, 容量=无限制");
-        println!("  变迁 t0: 输入p0(1) -> 输出p0(1)+p1(1)");
+        println!("Built unbounded net:");
+        println!("  Place p0: initial tokens=1, unlimited capacity");
+        println!("  Place p1: initial tokens=0, unlimited capacity");
+        println!("  Transition t0: input p0(1) -> output p0(1)+p1(1)");
 
         net
     }
@@ -574,8 +551,10 @@ mod tests {
         let analyzer = BoundnessAnalyzer::new();
         let result = analyzer.check_by_p_invariants(&net);
 
-        // 有界网应该有正的P-不变量
+        #[cfg(feature = "invariants")]
         assert!(matches!(result, BoundnessResult::Bounded));
+        #[cfg(not(feature = "invariants"))]
+        assert!(matches!(result, BoundnessResult::Unknown { .. }));
     }
 
     #[test]
@@ -587,7 +566,6 @@ mod tests {
         let _result_p0 = check_place_boundness(&net, p0);
         let result_p1 = check_place_boundness(&net, p1);
 
-        // 在无界网中,p1应该是无界的
         match result_p1 {
             BoundnessResult::Unbounded {
                 unbounded_places, ..
@@ -595,8 +573,7 @@ mod tests {
                 assert_eq!(unbounded_places, vec![p1]);
             }
             _ => {
-                // 在某些情况下可能无法检测
-                println!("无法确定库所p1的有界性");
+                println!("Could not determine boundness of place p1");
             }
         }
     }

@@ -57,7 +57,7 @@ impl TokenChange {
     }
 }
 
-/// 弧类型,区分普通输入/输出及特殊弧.
+/// Arc role: ordinary input/output vs special arcs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArcKind {
     Input,
@@ -104,7 +104,7 @@ impl TransitionSummary {
     }
 }
 
-/// marking 保留完整标识,places 仅用于可视化.
+/// Full marking stored on the node; `places` is a visualization slice only.
 #[derive(Debug, Clone)]
 pub struct StateNode {
     pub index: usize,
@@ -201,7 +201,7 @@ impl StateEdge {
     }
 }
 
-/// 构建可达图时记录的失败信息.
+/// Failure recorded while expanding the reachability graph.
 #[derive(Debug, Clone)]
 pub struct TransitionFailure {
     pub source: NodeIndex,
@@ -220,11 +220,11 @@ pub struct StateGraphStats {
 
 #[derive(Debug, Clone)]
 pub struct StateGraphConfig {
-    /// 最多探索的状态数量.None表示不设上限.
+    /// Maximum number of states to explore (`None` = unbounded).
     pub state_limit: Option<usize>,
-    /// 是否在节点快照中保留 token 为 0 的库所.
+    /// Include zero-token places in per-state snapshots.
     pub include_zero_tokens: bool,
-    /// 是否启用部分序约简 (POR), 对独立变迁减少等价交错.
+    /// Enable partial-order reduction (POR) to skip redundant interleavings.
     pub use_por: bool,
 }
 
@@ -238,8 +238,8 @@ impl Default for StateGraphConfig {
     }
 }
 
-/// 判断两个变迁是否独立 (不共享任何库所).
-/// 独立变迁可交换发生顺序, 用于 POR 减少等价交错.
+/// Return true if two transitions are independent (share no places).
+/// Independent firings commute; used by POR to prune redundant interleavings.
 fn transitions_are_independent(net: &Net, t1: TransitionId, t2: TransitionId) -> bool {
     if t1 == t2 {
         return false;
@@ -412,7 +412,7 @@ impl StateGraph {
         }
     }
 
-    /// 使用部分序约简 (POR) 的 sleep set 方法减少等价交错探索.
+    /// Build the state graph using sleep-set partial-order reduction.
     fn with_config_por(net: &Net, config: StateGraphConfig) -> Self {
         let mut graph = StableGraph::new();
         let mut markings: FxHashMap<Marking, NodeIndex> = FxHashMap::default();
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn por_produces_same_reachable_states() {
-        // POR 应保持可达状态集不变, 仅减少探索的边数.
+        // POR preserves the reachable state set; it only drops redundant edges.
         let net = build_simple_net();
         let config_std = StateGraphConfig {
             state_limit: None,

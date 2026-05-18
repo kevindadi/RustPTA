@@ -1,4 +1,4 @@
-//! 调用处理（与 `mir_to_pn/calls` 平行，不建网，仅发射 CIR）
+//! Call handling (parallel to `mir_to_pn/calls`; CIR only, no net).
 
 use super::BodyToCir;
 use crate::{

@@ -1,6 +1,6 @@
-//! Async-PPN 翻译算法.
+//! Async-PPN translation.
 //!
-//! 将 tokio::spawn + JoinHandle.await 与 .await 挂起点翻译为 Async-PPN 子网.
+//! Lowers `tokio::spawn` + `JoinHandle.await` and `.await` suspend points into Async-PPN subnets.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Body;
@@ -11,7 +11,7 @@ use crate::net::{Net, PlaceId, TransitionId};
 
 use super::async_ppn::{AsyncPoint, EventId, SourceLoc, TaskId, add_worker_place};
 
-/// 从 MIR Body 中检测 async 挂起点 (Yield 终止符).
+/// Collect async suspend points from MIR (`Yield` terminators).
 pub fn collect_async_points_from_mir<'tcx>(
     body: &Body<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -38,16 +38,16 @@ pub fn collect_async_points_from_mir<'tcx>(
     points
 }
 
-/// 为 async 任务构建生命周期子网并连接到已有 CFG.
+/// Wire async task lifecycle subnets onto an existing net / CFG fragment.
 ///
-/// 在已有 net 上:
-/// 1. 添加 p_worker (若尚未添加)
-/// 2. 为 task_id 添加生命周期库所
-/// 3. 添加 t_spawn: [from_place] -> [to_place] + p_ready[task]
-/// 4. 添加 t_poll: p_ready + p_worker -> p_running
-/// 5. 为每个 await 点添加 await_ready / await_pending
-/// 6. 添加 t_done: p_running -> p_completed + p_worker
-/// 7. 添加 t_wake: p_blocked -> p_ready
+/// On an existing net:
+/// 1. Ensure `p_worker` exists.
+/// 2. Add per-task lifecycle places.
+/// 3. Add `t_spawn`: `[from_place] -> [to_place] + p_ready[task]`.
+/// 4. Add `t_poll`: `p_ready + p_worker -> p_running`.
+/// 5. For each await site add `await_ready` / `await_pending`.
+/// 6. Add `t_done`: `p_running -> p_completed + p_worker`.
+/// 7. Add `t_wake`: `p_blocked -> p_ready`.
 pub struct AsyncNetBuilder<'a> {
     pub net: &'a mut Net,
     pub worker_place: PlaceId,
@@ -68,7 +68,7 @@ impl<'a> AsyncNetBuilder<'a> {
         }
     }
 
-    /// 若 net 已有 worker place (通过其他方式添加), 使用此构造函数.
+    /// Use when the net already has a worker place wired elsewhere.
     pub fn with_existing_worker(
         net: &'a mut Net,
         worker_place: PlaceId,
@@ -95,7 +95,7 @@ impl<'a> AsyncNetBuilder<'a> {
         id
     }
 
-    /// 添加 t_spawn: from_place -> to_place, 并产生 1 token 到 p_ready[task].
+    /// Add `t_spawn`: `from_place -> to_place`, plus one token on `p_ready[task]`.
     pub fn add_spawn_transition(
         &mut self,
         task_id: TaskId,
@@ -118,7 +118,7 @@ impl<'a> AsyncNetBuilder<'a> {
         t
     }
 
-    /// 添加 t_poll: p_ready + p_worker -> p_running.
+    /// Add `t_poll`: `p_ready + p_worker -> p_running`.
     pub fn add_poll_transition(
         &mut self,
         task_id: TaskId,
@@ -139,7 +139,7 @@ impl<'a> AsyncNetBuilder<'a> {
         t
     }
 
-    /// 添加 t_await_ready: p_running + seg_from -> p_running + seg_to (不释放 worker).
+    /// Add `t_await_ready`: `p_running + seg_from -> p_running + seg_to` (worker retained).
     pub fn add_await_ready_transition(
         &mut self,
         task_id: TaskId,
@@ -164,7 +164,7 @@ impl<'a> AsyncNetBuilder<'a> {
         t
     }
 
-    /// 添加 t_await_pending: p_running + seg_from -> p_blocked + p_worker (释放 worker).
+    /// Add `t_await_pending`: `p_running + seg_from -> p_blocked + p_worker` (releases worker).
     pub fn add_await_pending_transition(
         &mut self,
         task_id: TaskId,
@@ -191,7 +191,7 @@ impl<'a> AsyncNetBuilder<'a> {
         t
     }
 
-    /// 添加 t_wake: p_blocked -> p_ready.
+    /// Add `t_wake`: `p_blocked -> p_ready`.
     pub fn add_wake_transition(
         &mut self,
         task_id: TaskId,
@@ -213,7 +213,7 @@ impl<'a> AsyncNetBuilder<'a> {
         t
     }
 
-    /// 添加 t_done: p_running + seg_from -> p_completed + p_worker.
+    /// Add `t_done`: `p_running + seg_from -> p_completed + p_worker`.
     pub fn add_done_transition(
         &mut self,
         task_id: TaskId,
@@ -236,7 +236,7 @@ impl<'a> AsyncNetBuilder<'a> {
         t
     }
 
-    /// 添加 t_join: from_place + p_completed -> to_place (消费 completed token).
+    /// Add `t_join`: `from_place + p_completed -> to_place` (consumes completed token).
     pub fn add_join_transition(
         &mut self,
         task_id: TaskId,
@@ -266,7 +266,7 @@ mod tests {
     use crate::net::Net;
     use crate::net::structure::{Place, PlaceType};
 
-    /// 构建简单的 tokio::spawn + JoinHandle.await 网,验证生命周期库所与变迁存在.
+    /// Minimal `tokio::spawn` + `JoinHandle.await` net to sanity-check lifecycle places/transitions.
     #[test]
     fn async_spawn_join_basic() {
         let mut net = Net::empty();
@@ -331,29 +331,29 @@ mod tests {
         let place_names: Vec<_> = net.places.iter().map(|p| p.name.as_str()).collect();
         assert!(
             place_names.iter().any(|n| *n == "task_0_ready"),
-            "应有 task_0_ready 库所"
+            "expected place task_0_ready"
         );
         assert!(
             place_names.iter().any(|n| *n == "task_0_running"),
-            "应有 task_0_running 库所"
+            "expected place task_0_running"
         );
         assert!(
             place_names.iter().any(|n| *n == "task_0_completed"),
-            "应有 task_0_completed 库所"
+            "expected place task_0_completed"
         );
         assert!(
             place_names.iter().any(|n| *n == "async_worker"),
-            "应有 async_worker 库所"
+            "expected place async_worker"
         );
 
         let trans_names: Vec<_> = net.transitions.iter().map(|t| t.name.as_str()).collect();
         assert!(
             trans_names.iter().any(|n| *n == "poll_0"),
-            "应有 poll_0 变迁"
+            "expected transition poll_0"
         );
         assert!(
             trans_names.iter().any(|n| n.starts_with("done_")),
-            "应有 done 变迁"
+            "expected a done_* transition"
         );
     }
 }

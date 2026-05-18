@@ -1,4 +1,4 @@
-//! CFG 回边检测（与 `mir_to_pn/cfg_utils` 重复，避免依赖 `mir_to_pn` 内部模块）。
+//! CFG back-edge detection (duplicates `mir_to_pn/cfg_utils`; avoids depending on `mir_to_pn` internals).
 
 use rustc_hash::FxHashSet;
 use rustc_middle::mir::{BasicBlock, Body, TerminatorKind};

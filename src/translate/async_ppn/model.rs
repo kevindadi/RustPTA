@@ -1,16 +1,16 @@
-//! Async-PPN 子网模型: 任务生命周期库所与变迁.
+//! Async-PPN subnet model: task lifecycle places and transitions.
 //!
-//! 对每个任务 i 创建:
-//! - p_ready[i], p_running[i], p_blocked[i,e], p_completed[i], p_cancelled[i]
-//! 对 executor 创建:
-//! - p_worker (k 个 token, k 可配置)
+//! Per task `i`:
+//! - `p_ready[i]`, `p_running[i]`, `p_blocked[i,e]`, `p_completed[i]`, `p_cancelled[i]`
+//! Executor:
+//! - `p_worker` (`k` tokens, configurable)
 
 use crate::net::structure::{Place, PlaceType};
 use crate::net::{Net, PlaceId};
 
 use super::ids::{EventId, TaskId};
 
-/// 任务生命周期库所集合.
+/// Lifecycle places for one async task.
 #[derive(Debug, Clone)]
 pub struct TaskLifecyclePlaces {
     pub task_id: TaskId,
@@ -22,7 +22,7 @@ pub struct TaskLifecyclePlaces {
     pub cancelled: Option<PlaceId>,
 }
 
-/// 异步调度器相关库所与变迁.
+/// Scheduler-side places/state for async lowering.
 #[derive(Debug, Clone, Default)]
 pub struct AsyncSchedulerState {
     pub worker_place: Option<PlaceId>,
@@ -39,7 +39,7 @@ impl AsyncSchedulerState {
         }
     }
 
-    /// 获取任务 i 的 p_blocked 库所(按 event 查找).
+    /// Lookup `p_blocked` for `(task_id, event)`.
     pub fn blocked_place(&self, task_id: TaskId, event: EventId) -> Option<PlaceId> {
         self.task_places
             .get(task_id.index())
@@ -51,23 +51,23 @@ impl AsyncSchedulerState {
             })
     }
 
-    /// 获取任务 i 的 p_ready 库所.
+    /// `p_ready` for `task_id`.
     pub fn ready_place(&self, task_id: TaskId) -> Option<PlaceId> {
         self.task_places.get(task_id.index()).map(|tp| tp.ready)
     }
 
-    /// 获取任务 i 的 p_running 库所.
+    /// `p_running` for `task_id`.
     pub fn running_place(&self, task_id: TaskId) -> Option<PlaceId> {
         self.task_places.get(task_id.index()).map(|tp| tp.running)
     }
 
-    /// 获取任务 i 的 p_completed 库所.
+    /// `p_completed` for `task_id`.
     pub fn completed_place(&self, task_id: TaskId) -> Option<PlaceId> {
         self.task_places.get(task_id.index()).map(|tp| tp.completed)
     }
 }
 
-/// 在 Net 上添加 executor 的 p_worker 库所.
+/// Add executor `p_worker` place(s) to `net`.
 pub fn add_worker_place(net: &mut Net, worker_count: u64) -> PlaceId {
     let place = Place::new(
         "async_worker",
@@ -79,7 +79,7 @@ pub fn add_worker_place(net: &mut Net, worker_count: u64) -> PlaceId {
     net.add_place(place)
 }
 
-/// 为任务 i 添加生命周期库所.
+/// Create lifecycle places for task `i`.
 pub fn add_task_lifecycle_places(
     net: &mut Net,
     task_id: TaskId,

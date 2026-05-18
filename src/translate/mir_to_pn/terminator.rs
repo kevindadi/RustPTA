@@ -1,4 +1,4 @@
-//! 控制流终止符处理：init_basic_block、handle_start_block、handle_goto、handle_switch、handle_return 等
+//! Terminators: `init_basic_block`, `handle_start_block`, `handle_goto`, `handle_switch`, `handle_return`, …
 
 use super::BodyToPetriNet;
 use crate::net::{Transition, TransitionId, TransitionType};

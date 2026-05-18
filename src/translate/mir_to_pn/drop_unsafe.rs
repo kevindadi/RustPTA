@@ -1,4 +1,4 @@
-//! Drop 与 unsafe 读写处理：handle_drop、process_rvalue_reads、process_place_writes
+//! `Drop` and unsafe read/write helpers: `handle_drop`, `process_rvalue_reads`, `process_place_writes`.
 
 use super::BodyToPetriNet;
 use crate::{

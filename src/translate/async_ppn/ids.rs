@@ -1,10 +1,10 @@
-//! 异步 PPN 标识符: TaskId, EventId.
+//! Async PPN identifiers: `TaskId`, `EventId`.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// 任务标识符,对应 tokio::spawn 产生的每个异步任务.
+/// Logical async task id (`tokio::spawn`, etc.).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskId(pub usize);
 
@@ -24,7 +24,7 @@ impl fmt::Display for TaskId {
     }
 }
 
-/// 事件标识符,对应 await 等待的事件(如 Mutex 锁、Channel 等).
+/// Identifier for an awaited event (mutex, channel, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EventId(pub usize);
 

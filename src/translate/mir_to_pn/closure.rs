@@ -1,4 +1,4 @@
-//! 闭包解析公共逻辑：从 Operand 解析 closure/fn 的 DefId 与 places
+//! Shared closure lowering: resolve closure/fn `DefId` and places from `Operand`.
 
 use super::BodyToPetriNet;
 use crate::net::PlaceId;
@@ -7,7 +7,7 @@ use rustc_middle::mir::{Const, Operand};
 use rustc_span::source_map::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    /// 从 Operand 解析 closure/fn 的 DefId
+    /// Parse closure/fn `DefId` from an `Operand`.
     pub(super) fn resolve_closure_def_id(&self, arg: &Operand<'tcx>) -> Option<DefId> {
         match arg {
             Operand::Move(place) | Operand::Copy(place) => {
@@ -39,7 +39,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
     }
 
-    /// 从 args 中解析首个 closure，返回 (closure_start, closure_end)
+    /// Parse the first closure in `args`; returns `(closure_start, closure_end)`.
     pub(super) fn resolve_closure_places(
         &self,
         args: &[Spanned<Operand<'tcx>>],
@@ -49,7 +49,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .and_then(|def_id| self.functions_map().get(&def_id).copied())
     }
 
-    /// 从 args 中解析指定索引的 closure，返回 (closure_start, closure_end)
+    /// Parse the closure at `args[idx]`; returns `(closure_start, closure_end)`.
     pub(super) fn resolve_closure_places_at(
         &self,
         args: &[Spanned<Operand<'tcx>>],

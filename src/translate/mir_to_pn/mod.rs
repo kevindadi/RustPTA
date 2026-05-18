@@ -1,4 +1,4 @@
-//! MIR 到 Petri 网转换主模块
+//! MIR → Petri net translation (main module).
 
 mod async_control;
 mod bb_graph;
@@ -79,7 +79,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         self.break_cfg_cycles && self.back_edges.contains(&(src, target))
     }
 
-    /// 按 join_id 从 spawn_calls 中 alias 匹配，返回可能对应的 spawn callee DefIds.
+    /// Match `join_id` against `spawn_calls` via alias analysis; returns plausible spawn callee `DefId`s.
     fn get_matching_spawn_callees(&mut self, join_id: AliasId) -> Vec<DefId> {
         self.callgraph
             .get_spawn_calls(self.instance.def_id())

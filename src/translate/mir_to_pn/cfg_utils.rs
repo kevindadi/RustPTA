@@ -1,9 +1,9 @@
-//! CFG 工具：回边检测，用于 MIR 层面消除控制流环
+//! CFG helpers: back-edge detection for MIR-level cycle breaking.
 
 use rustc_hash::FxHashSet;
 use rustc_middle::mir::{BasicBlock, Body, TerminatorKind};
 
-/// 从 terminator 提取后继基本块；target 为 cleanup/unreachable 时排除
+/// Successor basic blocks from a terminator (skips cleanup/unreachable targets).
 fn terminator_successors(body: &Body<'_>, bb: &rustc_middle::mir::BasicBlockData<'_>) -> Vec<BasicBlock> {
     let Some(term) = &bb.terminator else {
         return vec![];
@@ -70,7 +70,7 @@ fn terminator_successors(body: &Body<'_>, bb: &rustc_middle::mir::BasicBlockData
     succs
 }
 
-/// 从 bb0 出发 DFS 遍历 CFG，识别回边 (u, v)：v 是 u 的 DFS 祖先
+/// DFS from `bb0` to classify back edges `(u, v)` where `v` is an ancestor of `u`.
 pub fn compute_back_edges(body: &Body<'_>) -> FxHashSet<(BasicBlock, BasicBlock)> {
     let mut back_edges = FxHashSet::default();
     let mut in_stack = FxHashSet::default();

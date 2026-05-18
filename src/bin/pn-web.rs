@@ -508,7 +508,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 <body>
   <div class='top'>
     <strong>RustPTA Viewer</strong>
-    <a href='/reduction'>约减流程页</a>
+    <a href='/reduction'>Reduction stages</a>
     <label>Case: <select id='caseSelect'></select></label>
     <label>Mode:
       <select id='modeSelect'>
@@ -575,7 +575,7 @@ const REDUCTION_HTML: &str = r#"<!doctype html>
 <body>
   <div class='top'>
     <strong>Petri Net Reduction Stages</strong>
-    <a href='/'>返回首页</a>
+    <a href='/'>Home</a>
     <label>Run: <select id='runSelect'></select></label>
     <button id='reloadBtn'>Reload</button>
     <button id='fitBtn'>Fit All</button>
@@ -736,22 +736,22 @@ async function loadReport(name) {
 function buildReadableReport(kind, j) {
   if (kind === 'deadlock') {
     let s = '';
-    s += `类型: 死锁检测\n`;
-    s += `是否有死锁: ${j.has_deadlock ? '是' : '否'}\n`;
-    s += `死锁数量: ${j.deadlock_count ?? 0}\n`;
+    s += `Type: deadlock detection\n`;
+    s += `Deadlock: ${j.has_deadlock ? 'yes' : 'no'}\n`;
+    s += `Deadlock count: ${j.deadlock_count ?? 0}\n`;
     if (j.state_space_info) {
-      s += `状态空间: states=${j.state_space_info.total_states}, transitions=${j.state_space_info.total_transitions}, reachable=${j.state_space_info.reachable_states}\n`;
+      s += `State space: states=${j.state_space_info.total_states}, transitions=${j.state_space_info.total_transitions}, reachable=${j.state_space_info.reachable_states}\n`;
     }
     if (Array.isArray(j.deadlock_states) && j.deadlock_states.length > 0) {
-      s += `\n死锁状态(全局状态位置):\n`;
+      s += `\nDeadlock states (global positions):\n`;
       for (const st of j.deadlock_states) {
         s += `- ${st.state_id}: ${st.description ?? ''}\n`;
       }
     }
     return s;
   }
-  if (kind === 'datarace') return `类型: 数据竞争\n是否有竞争: ${j.has_race ? '是' : '否'}\n竞争数量: ${j.race_count ?? 0}`;
-  if (kind === 'atomic') return `类型: 原子性违背\n是否有违背: ${j.has_violation ? '是' : '否'}\n违背数量: ${j.violation_count ?? 0}`;
+  if (kind === 'datarace') return `Type: data race\nRace: ${j.has_race ? 'yes' : 'no'}\nRace count: ${j.race_count ?? 0}`;
+  if (kind === 'atomic') return `Type: atomicity violation\nViolation: ${j.has_violation ? 'yes' : 'no'}\nViolation count: ${j.violation_count ?? 0}`;
   return JSON.stringify(j, null, 2);
 }
 

@@ -5,16 +5,16 @@ use super::ReductionStep;
 use super::graph::{GraphTransition, ReductionGraph};
 
 impl ReductionGraph {
-    /// # 约简规则:线性序列合并(Sequence Merge)
+    /// # Reduction rule: linear sequence merge
     ///
-    /// - 给定 Petri 网约简图 G = (P, T, F),令 p_0 为候选链首库所.
-    /// - 递归扩展得到交替序列 p_0, t_0, p_1, t_1, …, t_{k-1}, p_k,满足:
-    ///   - 对于所有 0 ≤ i ≤ k,p_i ∈ P 未被移除、类型不是 Resources,且 p_0 仅有唯一输出,p_k 仅有唯一输入,
-    ///     对于 0 < i < k 同时满足 |•p_i| = |p_i•| = 1.
-    ///   - 对于所有 0 ≤ i < k,t_i ∈ T 未被移除,且 |•t_i| = |t_i•| = 1.
-    ///   - 对所有 0 ≤ i < k,弧权满足 w(•t_i) = w(t_i•),且沿链所有权值相等.
-    /// - 若 k ≥ 2,构造新变迁 t_new,其输入输出分别连接 p_0 与 p_k,
-    ///   并继承原始变迁集合的并集以及统一的变迁类型(不一致时退化为 Normal).
+    /// - Given reduction graph G = (P, T, F), let p_0 be the head candidate place.
+    /// - Recursively extend an alternating chain p_0, t_0, p_1, t_1, …, t_{k-1}, p_k such that:
+    ///   - For all 0 ≤ i ≤ k, p_i ∈ P is not removed, not Resources, p_0 has a single outgoing arc, p_k has a single incoming arc,
+    ///     and for 0 < i < k we have |•p_i| = |p_i•| = 1.
+    ///   - For all 0 ≤ i < k, t_i ∈ T is not removed and |•t_i| = |t_i•| = 1.
+    ///   - Arc weights satisfy w(•t_i) = w(t_i•) and are uniform along the chain.
+    /// - If k ≥ 2, introduce a new transition t_new wiring p_0 to p_k directly,
+    ///   inheriting the union of origin transitions and a unified transition type (falls back to Normal if inconsistent).
     pub(crate) fn merge_linear_sequences(&mut self) -> Vec<ReductionStep> {
         let mut steps = Vec::new();
         let mut changed = true;

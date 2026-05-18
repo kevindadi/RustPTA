@@ -1,19 +1,19 @@
-//! # Petri 网核心定义(Place/Transition Net)
+//! # Petri net core (Place/Transition Net)
 //!
-//! 设离散库所集合  P  与变迁集合  T ,基数分别为  |P|  与  |T| .
-//! 定义输入/输出映射  Pre, Post ∈ ℕ^{|P|×|T|} ,以及变迁效应矩阵
-//!  C = Post - Pre 对任意标识  M ∈ ℕ^{|P|} :
+//! Let `P` be the finite set of places and `T` the finite set of transitions, with cardinalities `|P|` and `|T|`.
+//! Define input/output incidence matrices `Pre, Post ∈ ℕ^{|P|×|T|}` and effect matrix `C = Post - Pre`.
+//! For any marking `M ∈ ℕ^{|P|}`:
 //!
-//! * 变迁  t ∈ T  可发生当且仅当满足:
-//!   1.  ∀p ∈ P: M[p] ≥ Pre[p, t];
-//!   2. 若启用抑制弧( feature = "inhibitor" ),则对所有抑制弧  (p, t)  有
-//!       M[p] < θ[p, t] ,其中  θ[p, t]  由  Pre[p, t]  给出;
-//! * 变迁发生后标识满足  M' = M + C[:, t]  并遵循复位弧规则:若存在  (p, t)
-//!   为复位弧( feature = "reset" ),则发生后强制  M'[p] = 0 .
+//! * A transition `t ∈ T` is **enabled** iff:
+//!   1. ∀p ∈ P: M[p] ≥ Pre[p, t];
+//!   2. If inhibitor arcs are enabled (`feature = "inhibitor"`), then for every inhibitor arc `(p, t)` we require
+//!      M[p] < θ[p, t], where θ[p, t] is given by Pre[p, t];
+//! * After firing, marking satisfies `M' = M + C[:, t]` subject to reset arcs: if `(p, t)` is a reset arc (`feature = "reset"`),
+//!   then after firing we force `M'[p] = 0`.
 //!
-//! ## 示例
+//! ## Example
 //!
-//!    rust
+//! ```
 //! use RustPTA::net::*;
 //!
 //! let mut net = Net::empty();
@@ -29,7 +29,8 @@
 //! let next = net.fire_transition(&marking, t0).unwrap();
 //! assert_eq!(next.tokens(p0), 0);
 //! assert_eq!(next.tokens(p1), 1);
-//!    
+//! ```
+//!
 
 pub mod core;
 pub mod ids;

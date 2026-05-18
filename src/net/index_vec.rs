@@ -1,4 +1,4 @@
-//! 强类型索引向量实现,确保以标识符安全访问顺序容器.
+//! Strongly typed index vector for safe indexed access over sequential containers.
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};

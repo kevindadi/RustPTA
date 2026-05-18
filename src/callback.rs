@@ -106,15 +106,15 @@ impl rustc_driver::Callbacks for PTACallbacks {
             return Compilation::Continue;
         }
 
-        // 检查是否在 MIR 后停止(在分析之前)
+        // Stop after MIR dump (before analysis).
         if self.options.stop_after == StopAfter::AfterMir {
-            log::info!("停止分析:在 MIR 输出后停止");
+            log::info!("Stopping analysis after MIR output");
             return Compilation::Stop;
         }
 
         self.analyze_with_pta(compiler, tcx);
 
-        // 如果设置了停止点,在分析后停止编译
+        // When a stop point is set, stop compilation after analysis.
         if self.options.stop_after != StopAfter::None || self.test_run {
             Compilation::Stop
         } else {
@@ -179,14 +179,14 @@ impl PTACallbacks {
         let key_api_regex = crate::translate::structure::KeyApiRegex::new(&self.options.config);
         callgraph.analyze(instances.clone(), tcx, &key_api_regex);
 
-        // 输出 MIR dot(如果启用)
+        // Emit MIR dot when requested.
         if self.options.dump_options.dump_mir {
             self.dump_mir_dots(tcx, &instances);
         }
 
-        // 检查是否在调用图后停止
+        // Stop after call graph construction.
         if self.options.stop_after == StopAfter::AfterCallGraph {
-            log::info!("停止分析:在调用图构建后停止");
+            log::info!("Stopping analysis after call graph construction");
             return;
         }
 
@@ -255,10 +255,10 @@ impl PTACallbacks {
             }
         }
 
-        // 在构建状态图之前执行连通性诊断
+        // Run connectivity diagnostics before building the state graph.
         pn.net.log_diagnostics();
 
-        // 如果启用了诊断输出,保存诊断报告到文件
+        // Optionally persist diagnostics when exporting the Petri net.
         if self.options.dump_options.dump_petri_net {
             let report = pn.net.diagnose_connectivity();
             if report.has_issues() {
@@ -269,11 +269,11 @@ impl PTACallbacks {
             }
         }
 
-        // 检查是否在指针分析后停止
+        // Stop after pointer analysis (or points-to-only mode).
         if self.options.stop_after == StopAfter::AfterPointsTo
             || matches!(self.options.detector_kind, DetectorKind::PointsTo)
         {
-            log::info!("停止分析:在指针分析后停止");
+            log::info!("Stopping analysis after pointer analysis");
             let sg_config = StateGraphConfig {
                 state_limit: self.options.config.state_limit,
                 include_zero_tokens: false,
@@ -293,14 +293,14 @@ impl PTACallbacks {
         let state_graph = StateGraph::with_config(&pn.net, sg_config);
         if state_graph.truncated {
             log::warn!(
-                "状态空间已截断 (limit={:?}), 分析结果可能不完整",
+                "State space truncated (limit={:?}); results may be incomplete",
                 self.options.config.state_limit
             );
         }
 
-        // 检查是否在状态图后停止
+        // Stop after state graph construction.
         if self.options.stop_after == StopAfter::AfterStateGraph {
-            log::info!("停止分析:在状态图构建后停止");
+            log::info!("Stopping analysis after state graph construction");
             self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
             self.write_summary(&callgraph, &pn, &state_graph);
             return;
@@ -418,7 +418,7 @@ impl PTACallbacks {
                 #[cfg(not(feature = "atomic-violation"))]
                 {
                     log::warn!(
-                        "请求执行原子性违背检测,但未启用 atomic-violation feature,分析被跳过."
+                        "Atomicity violation analysis requested but the atomic-violation feature is disabled; skipping analysis."
                     );
                 }
             }
@@ -426,7 +426,7 @@ impl PTACallbacks {
                 #[cfg(feature = "atomic-violation")]
                 {
                     log::info!(
-                        "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
+                        "Data-race and atomicity analyses are mutually exclusive; `--mode all` runs data-race analysis by default. Use `--mode atomic` with the feature enabled for atomicity analysis."
                     );
                 }
                 join(
@@ -454,7 +454,7 @@ impl PTACallbacks {
             }
             DetectorKind::All => {
                 info!(
-                    "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
+                    "Data-race and atomicity analyses are mutually exclusive; `--mode all` runs data-race analysis by default. Use `--mode atomic` with the feature enabled for atomicity analysis."
                 );
                 join(
                     || self.run_deadlock_detector(state_graph),

@@ -764,7 +764,7 @@ impl PartialOrd for ApproximateAliasKind {
 }
 
 impl ApproximateAliasKind {
-    /// 在给定 Unknown 策略下，该别名结果是否应添加弧（视为可能别名）
+    /// Whether this alias should add arcs under the configured Unknown policy (treat as possible alias).
     pub fn may_alias(self, policy: crate::config::AliasUnknownPolicy) -> bool {
         use crate::config::AliasUnknownPolicy;
         match self {
@@ -779,7 +779,7 @@ impl ApproximateAliasKind {
 pub struct AliasId {
     pub instance_id: InstanceId,
     pub local: Local,
-    /// 常量索引时区分 arr[0] vs arr[1]；动态索引或非数组时为 None（合并）
+    /// Constant index distinguishes `arr[0]` vs `arr[1]`; dynamic index or non-array ⇒ `None` (merged).
     pub array_index: Option<u64>,
 }
 
@@ -792,7 +792,7 @@ impl AliasId {
         }
     }
 
-    /// 从 Place 构造，提取常量索引以区分 arr[0] vs arr[1]
+    /// Build from `Place`, extracting constant indices to distinguish `arr[0]` vs `arr[1]`.
     pub fn from_place<'tcx>(instance_id: InstanceId, place: PlaceRef<'tcx>) -> Self {
         let array_index = if place.projection.iter().any(|e| matches!(e, PlaceElem::Index(_))) {
             None
@@ -866,7 +866,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         println!("{}", self.format_points_to_report());
     }
 
-    /// 确保所有给定实例的 pts 已计算（用于单独 dump 时预填充）
+    /// Ensure points-to sets are computed for all listed instances (pre-fill before standalone dumps).
     pub fn ensure_pts_for_instances(&mut self, instances: &[Instance<'tcx>]) {
         for instance in instances {
             if self.tcx.is_mir_available(instance.def_id()) {

@@ -1,4 +1,4 @@
-//! 并发原语：lock、condvar、channel、atomic 相关辅助
+//! Concurrency primitives: locks, condvars, channels, atomics.
 
 use super::BodyToPetriNet;
 use crate::{
@@ -11,7 +11,7 @@ use crate::net::{structure::PlaceType, Place};
 use rustc_middle::mir::BasicBlock;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    /// 返回所有匹配的 (alias_id, place_id)，消除 first match
+    /// All matching `(alias_id, place_id)` pairs (no longer first-match only).
     pub(super) fn find_atomic_matches(&mut self, current_id: &AliasId) -> Vec<(AliasId, PlaceId)> {
         let mut matches = Vec::new();
         for (alias_id, place_ids) in self.resources.atomic_places().iter() {

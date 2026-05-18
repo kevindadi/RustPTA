@@ -1,4 +1,4 @@
-//! Petri 网缩减算法 :循环剔除、序列合并与中介库所消除.
+//! Petri net reduction: loop removal, sequence merge, and intermediate-place elimination.
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -18,9 +18,9 @@ pub type ReductionValidator = dyn Fn(&Net) -> Result<(), ReductionError> + Send 
 
 #[derive(Default, Clone)]
 pub struct ReductionOptions {
-    /// 在每步缩减后执行的不变量校验
+    /// Run invariant checks after each reduction step.
     pub invariant_checker: Option<Arc<ReductionValidator>>,
-    /// todo: 添加属性检查器 死锁那些玩意
+    /// todo: add property checkers (deadlock-related).
     pub property_checker: Option<Arc<ReductionValidator>>,
 }
 

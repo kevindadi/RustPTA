@@ -1,4 +1,4 @@
-//! 异步 spawn/join（与 `mir_to_pn/async_control` 重复，不建网）
+//! Async spawn/join (duplicates `mir_to_pn/async_control`; no net).
 
 use super::BodyToCir;
 use crate::{memory::pointsto::AliasId, net::structure::TransitionType};

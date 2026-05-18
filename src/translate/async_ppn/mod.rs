@@ -1,8 +1,8 @@
-//! Async-PPN 扩展: 建模 Rust async/await (Tokio-like) 协作式任务调度.
+//! Async-PPN extension: Tokio-like cooperative async/await scheduling.
 //!
-//! 目标:
-//! 1. 将语义交错限制在 `.await` 挂起点
-//! 2. 支持异步相关 bug 检测
+//! Goals:
+//! 1. Restrict semantic interleavings to `.await` suspension points.
+//! 2. Enable async-specific bug checks.
 
 pub mod async_point;
 pub mod ids;

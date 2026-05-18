@@ -159,8 +159,8 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
     }
 
     fn check_unsafe_fn(&self) -> bool {
-        // TODO: 需要找到新的方法来检查函数是否为 unsafe
-        // 暂时返回 false,因为 hir() 方法在当前版本中不可用
+        // TODO: Need a new way to test whether a function is `unsafe`.
+        // Conservatively return false because `hir()` is unavailable on this toolchain snapshot.
         false
     }
 
@@ -297,8 +297,7 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafeCollector<'a, 'tcx> {
                 if let TyKind::FnDef(def_id, _) = func_ty.kind() {
                     if self.tcx.is_mir_available(*def_id) {
                         if def_id.is_local() {
-                            // TODO: 需要找到新的方法来检查函数是否为 unsafe
-                            // 暂时跳过检查,因为 hir() 方法在当前版本中不可用
+                            // TODO: Need a new way to detect `unsafe` fn bodies; skip until API lands.
                             // let hir_id = self.tcx.local_def_id_to_hir_id(def_id.expect_local());
                             // if matches!(
                             //     self.tcx
@@ -351,7 +350,7 @@ impl<'a, 'tcx> UnsafeAnalyzer<'a, 'tcx> {
                     && format_name(def_id).starts_with(&self.crate_name)
                     && self.tcx.is_mir_available(def_id)
                 {
-                    // 使用 instance_mir 确保与指针分析和 Petri 网转换使用相同的 MIR
+                    // Use instance_mir so pointer analysis and Petri lowering agree on MIR bodies.
                     let body = self.tcx.instance_mir(instance.def);
                     let instance_id = self.callgraph.instance_to_index(instance);
                     let unsafe_collector =

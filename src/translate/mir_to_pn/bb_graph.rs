@@ -1,4 +1,4 @@
-//! BasicBlockGraph 与 SegState：基本块图结构与原子序分段状态
+//! `BasicBlockGraph` and `SegState`: CFG shape and atomic-order segment state.
 
 use crate::net::PlaceId;
 use rustc_middle::mir::BasicBlock;

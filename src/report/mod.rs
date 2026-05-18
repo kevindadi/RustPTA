@@ -23,7 +23,7 @@ fn write_section(f: &mut fmt::Formatter<'_>, title: &str) -> fmt::Result {
 }
 
 fn bool_text(value: bool) -> &'static str {
-    if value { "是" } else { "否" }
+    if value { "yes" } else { "no" }
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -68,29 +68,29 @@ pub struct StateSpaceInfo {
 
 impl fmt::Display for DeadlockReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_banner(f, "死锁分析报告")?;
-        writeln!(f, "{:<16}: {}", "分析工具", self.tool_name)?;
+        write_banner(f, "Deadlock analysis report")?;
+        writeln!(f, "{:<16}: {}", "Tool", self.tool_name)?;
         writeln!(
             f,
             "{:<16}: {}",
-            "分析耗时",
+            "Analysis time",
             format_duration(self.analysis_time)
         )?;
         writeln!(
             f,
             "{:<16}: {}",
-            "是否存在死锁",
+            "Deadlock present",
             bool_text(self.has_deadlock)
         )?;
 
         if self.has_deadlock {
-            write_section(f, "死锁详情")?;
-            writeln!(f, "共发现 {} 个死锁状态.", self.deadlock_count)?;
+            write_section(f, "Deadlock details")?;
+            writeln!(f, "Found {} deadlock marking(s).", self.deadlock_count)?;
             for (i, state) in self.deadlock_states.iter().enumerate() {
-                writeln!(f, "\n  [{}] 状态ID   : {}", i + 1, state.state_id)?;
-                writeln!(f, "      描述     : {}", state.description)?;
+                writeln!(f, "\n  [{}] State id : {}", i + 1, state.state_id)?;
+                writeln!(f, "      Description : {}", state.description)?;
                 if !state.marking.is_empty() {
-                    writeln!(f, "      标识快照 :")?;
+                    writeln!(f, "      Marking snapshot :")?;
                     for (place, tokens) in &state.marking {
                         writeln!(f, "        - {:<24} {}", place, tokens)?;
                     }
@@ -99,14 +99,14 @@ impl fmt::Display for DeadlockReport {
         }
 
         if let Some(space_info) = &self.state_space_info {
-            write_section(f, "状态空间")?;
-            writeln!(f, "{:<16}: {}", "总状态数", space_info.total_states)?;
-            writeln!(f, "{:<16}: {}", "总转换数", space_info.total_transitions)?;
-            writeln!(f, "{:<16}: {}", "可达状态数", space_info.reachable_states)?;
+            write_section(f, "State space")?;
+            writeln!(f, "{:<16}: {}", "Total states", space_info.total_states)?;
+            writeln!(f, "{:<16}: {}", "Total transitions", space_info.total_transitions)?;
+            writeln!(f, "{:<16}: {}", "Reachable states", space_info.reachable_states)?;
         }
 
         if let Some(error) = &self.error {
-            write_section(f, "错误信息")?;
+            write_section(f, "Errors")?;
             writeln!(f, "{}", error)?;
         }
 
@@ -177,34 +177,38 @@ pub struct AtomicReport {
 
 impl fmt::Display for AtomicReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_banner(f, "原子性违背分析报告")?;
-        writeln!(f, "{:<16}: {}", "分析工具", self.tool_name)?;
+        write_banner(f, "Atomicity violation report")?;
+        writeln!(f, "{:<16}: {}", "Tool", self.tool_name)?;
         writeln!(
             f,
             "{:<16}: {}",
-            "分析耗时",
+            "Analysis time",
             format_duration(self.analysis_time)
         )?;
         writeln!(
             f,
             "{:<16}: {}",
-            "是否存在违背",
+            "Violation present",
             bool_text(self.has_violation)
         )?;
 
         if self.has_violation {
-            write_section(f, "违背详情")?;
-            writeln!(f, "共发现 {} 个原子性违背模式.", self.violation_count)?;
+            write_section(f, "Violation details")?;
+            writeln!(
+                f,
+                "Found {} atomicity violation pattern(s).",
+                self.violation_count
+            )?;
             for (i, pattern) in self.violations.iter().enumerate() {
                 writeln!(
                     f,
-                    "\n  [{}] Load 操作  : {} @ {} ({})",
+                    "\n  [{}] Load op    : {} @ {} ({})",
                     i + 1,
                     pattern.load_op.variable,
                     pattern.load_op.location,
                     pattern.load_op.ordering
                 )?;
-                writeln!(f, "      Store 冲突 :")?;
+                writeln!(f, "      Conflicting stores :")?;
                 for (j, store) in pattern.store_ops.iter().enumerate() {
                     writeln!(
                         f,
@@ -219,7 +223,7 @@ impl fmt::Display for AtomicReport {
         }
 
         if let Some(error) = &self.error {
-            write_section(f, "错误信息")?;
+            write_section(f, "Errors")?;
             writeln!(f, "{}", error)?;
         }
 
@@ -290,35 +294,35 @@ pub struct RaceReport {
 
 impl fmt::Display for RaceReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_banner(f, "数据竞争分析报告")?;
-        writeln!(f, "{:<16}: {}", "分析工具", self.tool_name)?;
+        write_banner(f, "Data race report")?;
+        writeln!(f, "{:<16}: {}", "Tool", self.tool_name)?;
         writeln!(
             f,
             "{:<16}: {}",
-            "分析耗时",
+            "Analysis time",
             format_duration(self.analysis_time)
         )?;
-        writeln!(f, "{:<16}: {}", "是否存在竞争", bool_text(self.has_race))?;
+        writeln!(f, "{:<16}: {}", "Race present", bool_text(self.has_race))?;
 
         if self.has_race {
-            write_section(f, "竞争详情")?;
-            writeln!(f, "共发现 {} 个数据竞争.", self.race_count)?;
+            write_section(f, "Race details")?;
+            writeln!(f, "Found {} data race(s).", self.race_count)?;
             for (i, race) in self.race_conditions.iter().enumerate() {
-                writeln!(f, "\n  [{}] 变量信息 : {}", i + 1, race.variable_info)?;
-                writeln!(f, "      相关操作 :")?;
+                writeln!(f, "\n  [{}] Variable : {}", i + 1, race.variable_info)?;
+                writeln!(f, "      Operations :")?;
                 for op in &race.operations {
                     writeln!(f, "        - {:<6} @ {}", op.operation_type, op.location)?;
                     if let Some(bb) = op.basic_block {
-                        writeln!(f, "            基本块 : {}", bb)?;
+                        writeln!(f, "            Basic block : {}", bb)?;
                     }
                 }
 
-                writeln!(f, "      竞争状态 : {:?}", race.state)?;
+                writeln!(f, "      Race marking : {:?}", race.state)?;
             }
         }
 
         if let Some(error) = &self.error {
-            write_section(f, "错误信息")?;
+            write_section(f, "Errors")?;
             writeln!(f, "{}", error)?;
         }
 

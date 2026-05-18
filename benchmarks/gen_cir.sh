@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 为 benchmarks/cases 下各示例生成对应的 cir.yaml，写入 benchmarks/cir/<detector>/<case>.yaml
-# 依赖：在仓库根目录执行；需已能 `cargo run --bin pn`。
+# Generate cir.yaml for each example under benchmarks/cases into benchmarks/cir/<detector>/<case>.yaml
+# Run from repo root; requires `cargo run --bin pn` to work.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$root/.." && pwd)"
 out_root="$root/cir"
-# 每次用例单独 mktemp，成功写出 yaml 后立即删掉，避免 tmp 下堆积 dot/json 等中间文件
+# Per-case mktemp; remove work dir after yaml is written to avoid dot/json clutter under tmp
 tmp_base="$repo_root/tmp/bench_cir_generated"
 mkdir -p "$out_root/deadlock" "$out_root/datarace" "$out_root/atomic"
 mkdir -p "$tmp_base"
@@ -66,7 +66,7 @@ for f in "$root/cases/atomic"/*.rs; do
   run_one atomic atomic "$f"
 done
 
-# 若目录已空则删掉，避免残留空文件夹
+# Remove tmp dir if empty so no stray empty folders remain
 rmdir "$tmp_base" 2>/dev/null || true
 
 echo "done: CIR YAML under $out_root"

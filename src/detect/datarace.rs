@@ -70,7 +70,10 @@ impl<'a> DataRaceDetector<'a> {
 
                     race_infos.push(RaceCondition {
                         operations,
-                        variable_info: format!("变量 {} 上的潜在数据竞争", access_a.location_id),
+                        variable_info: format!(
+                            "Potential data race on variable {}",
+                            access_a.location_id
+                        ),
                         state: state_marks.clone(),
                     });
                 }

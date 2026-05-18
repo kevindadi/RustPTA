@@ -20,7 +20,7 @@ pub fn write_mir_dot<'tcx, P: AsRef<Path>>(
     Ok(())
 }
 
-/// 生成 MIR 的 DOT 格式表示
+/// Emit a Graphviz DOT representation of MIR.
 fn generate_mir_dot<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
@@ -34,7 +34,7 @@ fn generate_mir_dot<'tcx>(
     let _ = writeln!(&mut dot, "    node [fontname=\"Helvetica\", fontsize=10];");
     let _ = writeln!(&mut dot, "    edge [fontname=\"Helvetica\", fontsize=9];");
     
-    // 输出基本块节点
+    // Emit basic-block nodes.
     for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
         if bb.is_cleanup || bb.is_empty_unreachable() {
             continue;

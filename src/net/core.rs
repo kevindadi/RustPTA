@@ -1,4 +1,4 @@
-//! 运行时: 可发生集、发生语义与冲突检测定义.
+//! Runtime: enabled sets, firing semantics, and conflict checks.
 use std::fmt::{self, Write as FmtWrite};
 use std::fs;
 use std::path::Path;
@@ -44,44 +44,44 @@ pub enum FireError {
     NonSequentialStep(usize),
 }
 
-/// Petri 网连通性诊断报告
+/// Petri net connectivity diagnostic report.
 #[derive(Debug, Clone, Default)]
 pub struct DiagnosticReport {
-    /// 孤立库所(无任何连接的弧)
+    /// Places with no incident arcs.
     pub isolated_places: Vec<(PlaceId, String)>,
-    /// 孤立变迁(无任何连接的弧)
+    /// Transitions with no incident arcs.
     pub isolated_transitions: Vec<(TransitionId, String)>,
-    /// 警告信息
+    /// Warning messages.
     pub warnings: Vec<String>,
-    /// 总库所数
+    /// Total place count.
     pub total_places: usize,
-    /// 总变迁数
+    /// Total transition count.
     pub total_transitions: usize,
 }
 
 impl DiagnosticReport {
-    /// 是否存在问题
+    /// Whether any issue was found.
     pub fn has_issues(&self) -> bool {
         !self.isolated_places.is_empty()
             || !self.isolated_transitions.is_empty()
             || !self.warnings.is_empty()
     }
 
-    /// 保存诊断报告到文件
+    /// Write this report to a text file.
     pub fn save_to_file(&self, path: &str) -> std::io::Result<()> {
         use std::io::Write;
         let mut file = fs::File::create(path)?;
 
-        writeln!(file, "=== Petri 网连通性诊断报告 ===")?;
+        writeln!(file, "=== Petri net connectivity diagnostics ===")?;
         writeln!(
             file,
-            "总计: {} 个库所, {} 个变迁",
+            "Totals: {} places, {} transitions",
             self.total_places, self.total_transitions
         )?;
         writeln!(file)?;
 
         if !self.isolated_places.is_empty() {
-            writeln!(file, "孤立库所 ({}):", self.isolated_places.len())?;
+            writeln!(file, "Isolated places ({}):", self.isolated_places.len())?;
             for (id, name) in &self.isolated_places {
                 writeln!(file, "  [{}] {}", id.index(), name)?;
             }
@@ -89,7 +89,11 @@ impl DiagnosticReport {
         }
 
         if !self.isolated_transitions.is_empty() {
-            writeln!(file, "孤立变迁 ({}):", self.isolated_transitions.len())?;
+            writeln!(
+                file,
+                "Isolated transitions ({}):",
+                self.isolated_transitions.len()
+            )?;
             for (id, name) in &self.isolated_transitions {
                 writeln!(file, "  [{}] {}", id.index(), name)?;
             }
@@ -97,7 +101,7 @@ impl DiagnosticReport {
         }
 
         if !self.warnings.is_empty() {
-            writeln!(file, "警告 ({}):", self.warnings.len())?;
+            writeln!(file, "Warnings ({}):", self.warnings.len())?;
             for warning in &self.warnings {
                 writeln!(file, "  - {}", warning)?;
             }
@@ -212,7 +216,7 @@ impl Net {
         self.post.set(place, transition, weight);
     }
 
-    /// 输入弧: place -> transition   weight: 1    
+    /// Input arc: place → transition, weight typically 1.
     pub fn add_input_arc(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         if weight == 0 {
             return;
@@ -221,7 +225,7 @@ impl Net {
         *entry += weight;
     }
 
-    /// 输出弧: transition -> place   weight: 1    
+    /// Output arc: transition → place, weight typically 1.
     pub fn add_output_arc(&mut self, place: PlaceId, transition: TransitionId, weight: Weight) {
         if weight == 0 {
             return;
@@ -376,14 +380,14 @@ impl Net {
         fs::write(path, self.to_dot())
     }
 
-    /// 诊断信息:检测 Petri 网中的孤立节点和连通性问题
-    /// 返回 (孤立库所列表, 孤立变迁列表, 警告信息列表)
+    /// Connectivity diagnostics: find isolated nodes and suspicious wiring.
+    /// Returns isolated places, isolated transitions, and warning strings.
     pub fn diagnose_connectivity(&self) -> DiagnosticReport {
         let mut isolated_places = Vec::new();
         let mut isolated_transitions = Vec::new();
         let mut warnings = Vec::new();
 
-        // 检查每个库所是否有连接
+        // Check arc incidence for each place.
         for (place_id, place) in self.places.iter_enumerated() {
             let has_input = self.pre.rows()[place_id].iter().any(|w| *w > 0);
             let has_output = self.post.rows()[place_id].iter().any(|w| *w > 0);
@@ -391,17 +395,17 @@ impl Net {
             if !has_input && !has_output {
                 isolated_places.push((place_id, place.name.clone()));
             } else if !has_input && place.tokens == 0 {
-                // 没有输入弧且初始标记为 0 的库所永远不会被激活
+                // No preset and zero tokens: place can never gain tokens.
                 warnings.push(format!(
-                    "库所 '{}' (id={}) 无输入弧且初始标记为 0,永远不会被激活",
+                    "Place '{}' (id={}) has no input arcs and initial marking 0 (never activated)",
                     place.name,
                     place_id.index()
                 ));
             } else if !has_output {
-                // 没有输出弧的库所是汇点(可能是正常的函数结束点)
+                // Sink place (may be normal function exit).
                 if !place.name.contains("_end") {
                     warnings.push(format!(
-                        "库所 '{}' (id={}) 无输出弧(汇点),检查是否为预期行为",
+                        "Place '{}' (id={}) has no output arcs (sink); verify this is intended",
                         place.name,
                         place_id.index()
                     ));
@@ -409,7 +413,7 @@ impl Net {
             }
         }
 
-        // 检查每个变迁是否有连接
+        // Check arc incidence for each transition.
         for (trans_id, trans) in self.transitions.iter_enumerated() {
             let has_preset = self
                 .pre
@@ -426,13 +430,13 @@ impl Net {
                 isolated_transitions.push((trans_id, trans.name.clone()));
             } else if !has_preset {
                 warnings.push(format!(
-                    "变迁 '{}' (id={}) 无前置库所,永远无法触发",
+                    "Transition '{}' (id={}) has no preset places (never fireable)",
                     trans.name,
                     trans_id.index()
                 ));
             } else if !has_postset {
                 warnings.push(format!(
-                    "变迁 '{}' (id={}) 无后置库所,检查是否为预期行为",
+                    "Transition '{}' (id={}) has no postset places; verify this is intended",
                     trans.name,
                     trans_id.index()
                 ));
@@ -448,41 +452,44 @@ impl Net {
         }
     }
 
-    /// 打印诊断报告到日志
+    /// Print diagnostics to the log.
     pub fn log_diagnostics(&self) {
         let report = self.diagnose_connectivity();
 
         if report.has_issues() {
-            log::warn!("=== Petri 网连通性诊断报告 ===");
+            log::warn!("=== Petri net connectivity diagnostics ===");
             log::warn!(
-                "总计: {} 个库所, {} 个变迁",
+                "Totals: {} places, {} transitions",
                 report.total_places,
                 report.total_transitions
             );
 
             if !report.isolated_places.is_empty() {
-                log::warn!("发现 {} 个孤立库所:", report.isolated_places.len());
+                log::warn!("Found {} isolated places:", report.isolated_places.len());
                 for (id, name) in &report.isolated_places {
                     log::warn!("  - [{}] {}", id.index(), name);
                 }
             }
 
             if !report.isolated_transitions.is_empty() {
-                log::warn!("发现 {} 个孤立变迁:", report.isolated_transitions.len());
+                log::warn!(
+                    "Found {} isolated transitions:",
+                    report.isolated_transitions.len()
+                );
                 for (id, name) in &report.isolated_transitions {
                     log::warn!("  - [{}] {}", id.index(), name);
                 }
             }
 
             if !report.warnings.is_empty() {
-                log::warn!("其他警告 ({}):", report.warnings.len());
+                log::warn!("Other warnings ({}):", report.warnings.len());
                 for warning in &report.warnings {
                     log::warn!("  - {}", warning);
                 }
             }
-            log::warn!("=== 诊断报告结束 ===");
+            log::warn!("=== End diagnostics ===");
         } else {
-            log::info!("Petri 网连通性检查通过,无孤立节点");
+            log::info!("Petri net connectivity OK (no isolated nodes)");
         }
     }
 
