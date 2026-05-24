@@ -8,7 +8,7 @@ use crate::{
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local, Operand};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a> {
     fn connect_join_from_recorded_order(&mut self) -> bool {
@@ -105,13 +105,23 @@ impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a>
                 }
                 ThreadControlKind::AsyncSpawn => {
                     super::async_control::handle_async_spawn(
-                        self, callee_func_name, args, target, *bb_idx, span,
+                        self,
+                        callee_func_name,
+                        args,
+                        target,
+                        *bb_idx,
+                        span,
                     );
                     return true;
                 }
                 ThreadControlKind::AsyncJoin => {
                     super::async_control::handle_async_join(
-                        self, callee_func_name, args, target, *bb_idx, span,
+                        self,
+                        callee_func_name,
+                        args,
+                        target,
+                        *bb_idx,
+                        span,
                     );
                     return true;
                 }

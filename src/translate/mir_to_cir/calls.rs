@@ -10,7 +10,7 @@ use crate::{
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Operand};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a> {
     fn lock_transition_type(
@@ -261,11 +261,7 @@ impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a>
             if self.lockguards.get(&lockguard_id).is_some() {
                 let lock_alias = lockguard_id.get_alias_id();
                 let lock_node = self.resources.locks().get(&lock_alias).unwrap();
-                self.emit_tt(
-                    &TransitionType::Unlock(lock_node.index()),
-                    bb_idx,
-                    span,
-                );
+                self.emit_tt(&TransitionType::Unlock(lock_node.index()), bb_idx, span);
             }
             return;
         }

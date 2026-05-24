@@ -4,7 +4,7 @@ use super::BodyToPetriNet;
 use crate::net::PlaceId;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Const, Operand};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     /// Parse closure/fn `DefId` from an `Operand`.
