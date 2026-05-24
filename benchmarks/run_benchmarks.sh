@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Set BENCHMARK_RELEASE=0 for a debug build (easier debugging); default is --release.
+release_flag=()
+if [ "${BENCHMARK_RELEASE:-1}" != "0" ]; then
+  release_flag=(--release)
+fi
+
 root="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$root/.." && pwd)"
 out_csv="$root/results/benchmark_metrics.csv"
@@ -46,14 +52,14 @@ run_case() {
   local raw_dir="$repo_root/tmp/bench_suite/${detector}_raw"
 
   if [ "$detector" = "atomic" ]; then
-    cargo run --features atomic-violation --bin pn -- -f "$file" -m "$mode" \
+    cargo run "${release_flag[@]}" --features atomic-violation --bin pn -- -f "$file" -m "$mode" \
       --pn-analysis-dir "$red_dir" --viz-callgraph --viz-petrinet --viz-stategraph -- "$file"   >/dev/null
-    cargo run --features atomic-violation --bin pn -- -f "$file" -m "$mode" \
+    cargo run "${release_flag[@]}" --features atomic-violation --bin pn -- -f "$file" -m "$mode" \
       --pn-analysis-dir "$raw_dir" --viz-callgraph --viz-petrinet --viz-stategraph --no-reduce -- "$file"   >/dev/null
   else
-    cargo run --bin pn -- -f "$file" -m "$mode" \
+    cargo run "${release_flag[@]}" --bin pn -- -f "$file" -m "$mode" \
       --pn-analysis-dir "$red_dir" --viz-callgraph --viz-petrinet --viz-stategraph -- "$file"   >/dev/null
-    cargo run --bin pn -- -f "$file" -m "$mode" \
+    cargo run "${release_flag[@]}" --bin pn -- -f "$file" -m "$mode" \
       --pn-analysis-dir "$raw_dir" --viz-callgraph --viz-petrinet --viz-stategraph --no-reduce -- "$file"   >/dev/null
   fi
 
