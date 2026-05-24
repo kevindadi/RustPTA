@@ -1,5 +1,5 @@
 [package]
-name = "RustPTA"
+name = "rust_petri_net_analysis"
 version = "0.1.0"
 edition = "2024"
 
@@ -13,7 +13,7 @@ path = "src/bin/pn.rs"
 
 [[bin]]
 name = "cargo-pn"
-path = "src/bin/cargo-check-lock.rs"
+path = "src/bin/cargo-pn.rs"
 
 [[bin]]
 name = "pn-web"
@@ -60,7 +60,6 @@ criterion = { version = "0.8.2", optional = true }
 num = { version = "0.4", optional = true }
 num-rational = { version = "0.4", optional = true }
 num-bigint = { version = "0.4", optional = true }
-ceir = { git = "https://github.com/kevindadi/cir" }
 
 [features]
 default = []
