@@ -1,5 +1,4 @@
 **/target/
-.vscode
 *.dot
 /toys
 **/tmp
@@ -7,11 +6,10 @@ RustPetriNet.tar.gz
 example/rayon
 /example
 
+.vscode
 .cursor
+.claude
 mir_dump/
-
-# Local vendored dependency; do not push to public repos
-vendor/cir/
 
 **/__pycache__
 **/results/**

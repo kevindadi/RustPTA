@@ -27,7 +27,7 @@ use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
-use rustc_hash::FxHashSet;
+use rustc_data_structures::FxHashSet;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},

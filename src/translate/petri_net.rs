@@ -10,7 +10,7 @@ use crate::util::format_name;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -19,12 +19,12 @@ use std::time::Instant;
 
 use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
-use crate::memory::pointsto::AliasAnalysis;
-use crate::net::{Net, Place, PlaceId};
 use crate::cir::mir_emitter::CirMirEmitter;
 use crate::cir::resource_table::ResourceTable;
 use crate::cir::types::FunctionKind;
+use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
+use crate::memory::pointsto::AliasAnalysis;
+use crate::net::{Net, Place, PlaceId};
 use crate::translate::mir_to_cir::BodyToCir;
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
@@ -206,11 +206,14 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                     alias_id.instance_id.index(),
                     alias_id.local.index()
                 );
-                let pid =
-                    self.create_resource_place(place_name, 1, 1, atomic_info.span.clone());
+                let pid = self.create_resource_place(place_name, 1, 1, atomic_info.span.clone());
                 vec![pid]
             } else {
-                place_ids.into_iter().collect::<HashSet<_>>().into_iter().collect()
+                place_ids
+                    .into_iter()
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect()
             };
 
             self.resources
@@ -264,7 +267,12 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             let policy = self.options.config.alias_unknown_policy;
             for j in i + 1..places_data.len() {
                 let (local_j, info_j) = &places_data[j];
-                if self.alias.borrow_mut().alias(*local_i, *local_j).may_alias(policy) {
+                if self
+                    .alias
+                    .borrow_mut()
+                    .alias(*local_i, *local_j)
+                    .may_alias(policy)
+                {
                     current_group.push((local_j.clone(), info_j.clone()));
                 }
             }
@@ -497,20 +505,14 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             }
         }
 
-        let mut atomic = AtomicCollector::new(
-            self.tcx,
-            self.callgraph,
-            self.options.crate_name.clone(),
-        );
+        let mut atomic =
+            AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
         for info in atomic.analyze().into_values() {
             roots.insert(info.instance_id);
         }
 
-        let mut channel = ChannelCollector::new(
-            self.tcx,
-            self.callgraph,
-            self.options.crate_name.clone(),
-        );
+        let mut channel =
+            ChannelCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
         channel.analyze();
         for (channel_id, _) in channel.channels {
             roots.insert(channel_id.instance_id);
@@ -528,8 +530,9 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
         if self.options.config.translate_concurrent_roots {
             let concurrent_roots = self.concurrent_root_instance_ids();
-            let reachable_from_concurrent =
-                self.callgraph.reachable_from_roots(concurrent_roots.into_iter());
+            let reachable_from_concurrent = self
+                .callgraph
+                .reachable_from_roots(concurrent_roots.into_iter());
             reachable.extend(reachable_from_concurrent);
         }
 

@@ -1,6 +1,6 @@
 //! CFG back-edge detection (duplicates `mir_to_pn/cfg_utils`; avoids depending on `mir_to_pn` internals).
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::FxHashSet;
 use rustc_middle::mir::{BasicBlock, Body, TerminatorKind};
 
 fn terminator_successors(body: &Body<'_>, bb: &rustc_middle::mir::BasicBlockData<'_>) -> Vec<BasicBlock> {

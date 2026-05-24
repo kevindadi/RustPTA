@@ -5,7 +5,7 @@ use crate::net::structure::TransitionType;
 use crate::report::{DeadlockReport, DeadlockState, DeadlockTrace};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 

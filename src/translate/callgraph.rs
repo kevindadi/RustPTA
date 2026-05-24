@@ -11,14 +11,14 @@ use std::path::Path;
 
 use crate::memory::pointsto::AliasId;
 use crate::translate::structure::KeyApiRegex;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
     Body, Local, LocalDecl, LocalKind, Location, Operand, Place, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{self, GenericArgsRef, Instance, TyCtxt, TyKind, TypingEnv};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 pub type InstanceId = NodeIndex;
 
@@ -323,6 +323,9 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
         let closure_ty = match operand {
             Operand::Move(place) | Operand::Copy(place) => place.ty(self.body, self.tcx).ty,
             Operand::Constant(constant) => constant.ty(),
+            Operand::RuntimeChecks(_) => {
+                todo!("Handle RuntimeChecks operand in call graph analysis");
+            }
         };
 
         match *closure_ty.kind() {

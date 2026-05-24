@@ -1,9 +1,9 @@
-extern crate rustc_hash;
+extern crate rustc_data_structures;
 extern crate rustc_middle;
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::{self, EarlyBinder, Instance, TyCtxt, TyKind, TypingEnv};

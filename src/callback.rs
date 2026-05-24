@@ -23,7 +23,7 @@ use log::{debug, error, info};
 use rayon::join;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
-use rustc_middle::mir::mono::MonoItem;
+use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
 use serde::Serialize;
 use std::fmt::{Debug, Formatter, Result};
@@ -51,7 +51,7 @@ impl PTACallbacks {
         };
 
         std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
-             log::debug!("Warning: Failed to create output directory: {}", e);
+            log::debug!("Warning: Failed to create output directory: {}", e);
         });
 
         Self {
@@ -79,13 +79,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
         config.opts.optimize = rustc_session::config::OptLevel::No;
         config.opts.debuginfo = rustc_session::config::DebugInfo::None;
 
-        let file_name = config
-            .input
-            .source_name()
-            .prefer_remapped_unconditionally()
-            .to_string();
-
-        debug!("Processing input file: {}", file_name);
         if config.opts.test {
             debug!("in test only mode");
         }
@@ -137,7 +130,12 @@ impl PTACallbacks {
                     return;
                 }
             };
-            crate::cir::pipeline::merge_calls_and_stubs(pn.tcx(), pn.options(), pn.callgraph(), &mut a);
+            crate::cir::pipeline::merge_calls_and_stubs(
+                pn.tcx(),
+                pn.options(),
+                pn.callgraph(),
+                &mut a,
+            );
             a
         };
         let path = dir.join("cir.yaml");
@@ -199,7 +197,10 @@ impl PTACallbacks {
 
         let mut reduced_stage_written = false;
         if self.options.dump_options.dump_petri_net {
-            if let Err(err) = pn.net.write_dot(self.output_directory.join("petrinet_raw.dot")) {
+            if let Err(err) = pn
+                .net
+                .write_dot(self.output_directory.join("petrinet_raw.dot"))
+            {
                 error!("failed to write raw Petri net dot file: {err}");
             } else {
                 info!("raw petri net dot exported");
@@ -207,7 +208,7 @@ impl PTACallbacks {
         }
 
         if self.options.config.reduce_net {
-            use crate::net::reduce::{reduce_in_place, ReductionOptions};
+            use crate::net::reduce::{ReductionOptions, reduce_in_place};
             match reduce_in_place(&mut pn.net, ReductionOptions::default()) {
                 Ok(result) => {
                     log::info!(
@@ -239,7 +240,10 @@ impl PTACallbacks {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Petri net reduction failed: {}, continuing without reduction", e);
+                    log::warn!(
+                        "Petri net reduction failed: {}, continuing without reduction",
+                        e
+                    );
                 }
             }
         }
@@ -247,10 +251,15 @@ impl PTACallbacks {
             let raw = self.output_directory.join("petrinet_raw.dot");
             let s1 = self.output_directory.join("petrinet_reduce_1_loop.dot");
             let s2 = self.output_directory.join("petrinet_reduce_2_sequence.dot");
-            let s3 = self.output_directory.join("petrinet_reduce_3_intermediate.dot");
+            let s3 = self
+                .output_directory
+                .join("petrinet_reduce_3_intermediate.dot");
             for path in [s1, s2, s3] {
                 if let Err(err) = std::fs::copy(&raw, &path) {
-                    error!("failed to initialize reduction stage file {:?}: {err}", path);
+                    error!(
+                        "failed to initialize reduction stage file {:?}: {err}",
+                        path
+                    );
                 }
             }
         }

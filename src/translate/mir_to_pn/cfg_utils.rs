@@ -1,10 +1,13 @@
 //! CFG helpers: back-edge detection for MIR-level cycle breaking.
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::FxHashSet;
 use rustc_middle::mir::{BasicBlock, Body, TerminatorKind};
 
 /// Successor basic blocks from a terminator (skips cleanup/unreachable targets).
-fn terminator_successors(body: &Body<'_>, bb: &rustc_middle::mir::BasicBlockData<'_>) -> Vec<BasicBlock> {
+fn terminator_successors(
+    body: &Body<'_>,
+    bb: &rustc_middle::mir::BasicBlockData<'_>,
+) -> Vec<BasicBlock> {
     let Some(term) = &bb.terminator else {
         return vec![];
     };

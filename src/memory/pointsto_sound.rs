@@ -21,16 +21,14 @@ extern crate rustc_middle;
 
 use std::fmt;
 
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::mir::{Body, Local, Place};
 use rustc_middle::ty::TyCtxt;
 
 use crate::memory::pointsto::{Andersen, ConstraintNode, PointsToMap};
 
 // Re-export core types so downstream can use them without importing pointsto directly.
-pub use crate::memory::pointsto::{
-    AliasAnalysis, AliasId, ApproximateAliasKind,
-};
+pub use crate::memory::pointsto::{AliasAnalysis, AliasId, ApproximateAliasKind};
 
 /// A human-readable description of a points-to target.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -164,7 +162,10 @@ impl<'tcx> PointsToResult<'tcx> {
                 continue;
             }
             let node_str = format!("{}", node);
-            let mut targets: Vec<String> = pointees.iter().map(|p| Self::node_to_target(p).to_string()).collect();
+            let mut targets: Vec<String> = pointees
+                .iter()
+                .map(|p| Self::node_to_target(p).to_string())
+                .collect();
             targets.sort();
             out.push_str(&format!("  {} -> {{ {} }}\n", node_str, targets.join(", ")));
         }
@@ -177,7 +178,6 @@ impl<'tcx> PointsToResult<'tcx> {
         out.push_str("=== End Report ===\n");
         out
     }
-
 
     fn node_to_target(node: &ConstraintNode<'tcx>) -> PointsToTarget {
         match node {

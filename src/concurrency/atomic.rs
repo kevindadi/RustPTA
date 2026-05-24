@@ -1,11 +1,11 @@
-extern crate rustc_hash;
+extern crate rustc_data_structures;
 extern crate rustc_hir;
 extern crate rustc_middle;
 
 use once_cell::sync::Lazy;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use regex::Regex;
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::StatementKind;
 use rustc_middle::mir::{
@@ -19,20 +19,20 @@ use crate::translate::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use rustc_middle::mir::PlaceRef;
 
 fn extract_array_index(place: PlaceRef<'_>) -> Option<u64> {
-    if place.projection.iter().any(|e| matches!(e, PlaceElem::Index(_))) {
-        return None;
-    }
-    place
+    if place
         .projection
         .iter()
-        .rev()
-        .find_map(|elem| {
-            if let PlaceElem::ConstantIndex { offset, .. } = elem {
-                Some(*offset)
-            } else {
-                None
-            }
-        })
+        .any(|e| matches!(e, PlaceElem::Index(_)))
+    {
+        return None;
+    }
+    place.projection.iter().rev().find_map(|elem| {
+        if let PlaceElem::ConstantIndex { offset, .. } = elem {
+            Some(*offset)
+        } else {
+            None
+        }
+    })
 }
 use crate::util::format_name;
 
@@ -258,7 +258,9 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
                                 "{}_{}_{}",
                                 self.tcx.def_path_str(self.instance.def_id()),
                                 first_place.local.index(),
-                                array_index.map(|i| i.to_string()).unwrap_or_else(|| "n".to_string())
+                                array_index
+                                    .map(|i| i.to_string())
+                                    .unwrap_or_else(|| "n".to_string())
                             );
                             let first_place_ty = &self.body.local_decls[first_place.local].ty;
 

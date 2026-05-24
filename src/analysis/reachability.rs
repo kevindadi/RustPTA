@@ -4,9 +4,9 @@ use crate::net::structure::{Marking, Place, PlaceType, Transition, TransitionTyp
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::hash_map::Entry;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 use std::fs;
 use std::path::Path;
 
@@ -434,8 +434,10 @@ impl StateGraph {
 
         while let Some((state_index, sleep)) = queue.pop_front() {
             let current_marking = graph[state_index].marking.clone();
-            let enabled: FxHashSet<TransitionId> =
-                net.enabled_transitions(&current_marking).into_iter().collect();
+            let enabled: FxHashSet<TransitionId> = net
+                .enabled_transitions(&current_marking)
+                .into_iter()
+                .collect();
             graph[state_index].update_enabled(net, &enabled.iter().copied().collect::<Vec<_>>());
 
             if enabled.is_empty() {
@@ -448,13 +450,12 @@ impl StateGraph {
             for transition_id in to_fire {
                 match net.fire_transition(&current_marking, transition_id) {
                     Ok(next_marking) => {
-                        let enabled_next: FxHashSet<TransitionId> = net
-                            .enabled_transitions(&next_marking)
-                            .into_iter()
-                            .collect();
+                        let enabled_next: FxHashSet<TransitionId> =
+                            net.enabled_transitions(&next_marking).into_iter().collect();
                         let mut new_sleep = sleep.clone();
                         for &t in &enabled {
-                            if t != transition_id && transitions_are_independent(net, transition_id, t)
+                            if t != transition_id
+                                && transitions_are_independent(net, transition_id, t)
                             {
                                 new_sleep.insert(t);
                             }
@@ -464,7 +465,8 @@ impl StateGraph {
                         let target_index = match markings.entry(next_marking) {
                             Entry::Occupied(entry) => {
                                 let old_ni = *entry.get();
-                                let old_sleep = sleep_sets.get(&old_ni).cloned().unwrap_or_default();
+                                let old_sleep =
+                                    sleep_sets.get(&old_ni).cloned().unwrap_or_default();
                                 let merged_sleep: FxHashSet<TransitionId> =
                                     old_sleep.intersection(&new_sleep).copied().collect();
                                 if merged_sleep != old_sleep {

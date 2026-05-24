@@ -12,25 +12,25 @@ mod thread_control;
 
 use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, InstanceId};
-use bb_graph::BasicBlockGraph;
-#[cfg(feature = "atomic-violation")]
-use bb_graph::SegState;
 use crate::{
     concurrency::blocking::LockGuardMap,
     memory::pointsto::{AliasAnalysis, AliasId},
     net::{Net, PlaceId, TransitionId},
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
 };
+use bb_graph::BasicBlockGraph;
+#[cfg(feature = "atomic-violation")]
+use bb_graph::SegState;
+use rustc_data_structures::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
-    BasicBlock, BasicBlockData, Local, Operand, Rvalue, Statement, StatementKind,
-    TerminatorKind, visit::Visitor,
+    BasicBlock, BasicBlockData, Local, Operand, Rvalue, Statement, StatementKind, TerminatorKind,
+    visit::Visitor,
 };
 use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
-use rustc_hash::FxHashSet;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -87,8 +87,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 spawn_calls
                     .iter()
                     .filter_map(|(spawn_dest_id, callees)| {
-                        let alias_kind =
-                            self.alias.borrow_mut().alias(join_id, *spawn_dest_id);
+                        let alias_kind = self.alias.borrow_mut().alias(join_id, *spawn_dest_id);
                         if alias_kind.may_alias(self.alias_unknown_policy) {
                             Some(callees.iter().copied())
                         } else {

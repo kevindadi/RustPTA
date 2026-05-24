@@ -3,7 +3,7 @@ use crate::translate::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::util::format_name;
 use petgraph::csr::IndexType;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
