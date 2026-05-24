@@ -4,7 +4,7 @@ use super::BodyToCir;
 use crate::net::PlaceId;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Const, Operand};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a> {
     pub(crate) fn resolve_closure_def_id(&self, arg: &Operand<'tcx>) -> Option<DefId> {

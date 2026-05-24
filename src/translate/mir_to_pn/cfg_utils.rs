@@ -1,6 +1,6 @@
 //! CFG helpers: back-edge detection for MIR-level cycle breaking.
 
-use rustc_data_structures::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::mir::{BasicBlock, Body, TerminatorKind};
 
 /// Successor basic blocks from a terminator (skips cleanup/unreachable targets).

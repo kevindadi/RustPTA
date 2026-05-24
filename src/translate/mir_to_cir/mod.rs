@@ -18,16 +18,15 @@ use crate::memory::pointsto::{AliasAnalysis, AliasId};
 use crate::net::structure::TransitionType;
 use crate::options::Options;
 use crate::translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry};
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
-    BasicBlock, BasicBlockData, Local, Operand, StatementKind,
-    TerminatorKind, visit::Visitor,
+    BasicBlock, BasicBlockData, Local, Operand, StatementKind, TerminatorKind, visit::Visitor,
 };
 use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
-use rustc_data_structures::FxHashSet;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -78,8 +77,7 @@ impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a>
                 spawn_calls
                     .iter()
                     .filter_map(|(spawn_dest_id, callees)| {
-                        let alias_kind =
-                            self.alias.borrow_mut().alias(join_id, *spawn_dest_id);
+                        let alias_kind = self.alias.borrow_mut().alias(join_id, *spawn_dest_id);
                         if alias_kind.may_alias(self.alias_unknown_policy) {
                             Some(callees.iter().copied())
                         } else {
@@ -208,7 +206,11 @@ impl<'translate, 'analysis, 'tcx, 'a> BodyToCir<'translate, 'analysis, 'tcx, 'a>
         }
     }
 
-    fn visit_statement_body(&mut self, statement: &rustc_middle::mir::Statement<'tcx>, _bb_idx: BasicBlock) {
+    fn visit_statement_body(
+        &mut self,
+        statement: &rustc_middle::mir::Statement<'tcx>,
+        _bb_idx: BasicBlock,
+    ) {
         if let StatementKind::Assign(box (dest, rvalue)) = &statement.kind {
             self.track_joinhandle_dataflow(dest.local, rvalue);
         }

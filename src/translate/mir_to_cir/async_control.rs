@@ -3,7 +3,7 @@
 use super::BodyToCir;
 use crate::{memory::pointsto::AliasId, net::structure::TransitionType};
 use rustc_middle::mir::{BasicBlock, Operand};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 pub(super) fn handle_async_spawn<'translate, 'analysis, 'tcx, 'a>(
     b: &mut BodyToCir<'translate, 'analysis, 'tcx, 'a>,
@@ -49,9 +49,5 @@ pub(super) fn handle_async_join<'translate, 'analysis, 'tcx, 'a>(
         .and_then(|d| b.async_ctx.get_task_for_spawn(*d))
         .map(|t| t.index())
         .unwrap_or(0);
-    b.emit_tt(
-        &TransitionType::AsyncJoin { task_id },
-        bb_idx,
-        span,
-    );
+    b.emit_tt(&TransitionType::AsyncJoin { task_id }, bb_idx, span);
 }

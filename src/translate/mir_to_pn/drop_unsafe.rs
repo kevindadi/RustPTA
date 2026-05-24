@@ -90,6 +90,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             Rvalue::Use(operand) => match operand {
                 Operand::Move(place) | Operand::Copy(place) => vec![place],
                 Operand::Constant(_) => vec![],
+                Operand::RuntimeChecks(_) => {
+                    todo!("Handle RuntimeChecks operand if needed");
+                }
             },
             Rvalue::BinaryOp(_, box (op1, op2)) => {
                 let mut places = Vec::new();

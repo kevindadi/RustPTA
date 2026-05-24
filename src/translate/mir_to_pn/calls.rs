@@ -9,7 +9,7 @@ use crate::{
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Operand};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     pub(super) fn handle_lock_call(
@@ -83,7 +83,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        let name = self.tcx.def_path_str(callee_id);
+        let name = self.tcx.def_path_str(*callee_id);
         for i in 0..args.len() {
             if let Some((callee_start, callee_end)) = self.resolve_closure_places_at(args, i) {
                 let (_bb_wait, bb_ret) = crate::add_wait_ret_subnet!(
@@ -381,10 +381,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         };
 
         let callee_func_name = crate::util::format_name(callee_def_id);
-         log::debug!("[CALLS] before track_joinhandle: {}", callee_func_name);
+        log::debug!("[CALLS] before track_joinhandle: {}", callee_func_name);
         self.track_joinhandle_container_call(&callee_func_name, args, destination.local);
 
-        if self.handle_lock_call(bb_idx, destination, target, bb_end).is_some() {
+        if self
+            .handle_lock_call(bb_idx, destination, target, bb_end)
+            .is_some()
+        {
             log::debug!("callee_func_name with lock: {:?}", callee_func_name);
             return;
         }
@@ -419,8 +422,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         self.net.add_output_arc(*lock_node, bb_end, 1);
 
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
-                            transition.transition_type =
-                                TransitionType::Unlock(lock_node.index());
+                            transition.transition_type = TransitionType::Unlock(lock_node.index());
                         }
                     }
 
@@ -430,15 +432,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         self.net.add_output_arc(*lock_node, bb_end, 1);
 
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
-                            transition.transition_type =
-                                TransitionType::Unlock(lock_node.index());
+                            transition.transition_type = TransitionType::Unlock(lock_node.index());
                         }
                     }
                     _ => {
                         self.net.add_output_arc(*lock_node, bb_end, 10);
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
-                            transition.transition_type =
-                                TransitionType::Unlock(lock_node.index());
+                            transition.transition_type = TransitionType::Unlock(lock_node.index());
                         }
                     }
                 }
@@ -447,7 +447,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        if self.handle_channel_call(callee_def_id, &callee_func_name, args, bb_idx, bb_end, target) {
+        if self.handle_channel_call(
+            callee_def_id,
+            &callee_func_name,
+            args,
+            bb_idx,
+            bb_end,
+            target,
+        ) {
             log::debug!("callee_func_name with channel: {:?}", callee_func_name);
             return;
         }

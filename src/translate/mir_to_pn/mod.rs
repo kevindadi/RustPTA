@@ -21,7 +21,7 @@ use crate::{
 use bb_graph::BasicBlockGraph;
 #[cfg(feature = "atomic-violation")]
 use bb_graph::SegState;
-use rustc_data_structures::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
     BasicBlock, BasicBlockData, Local, Operand, Rvalue, Statement, StatementKind, TerminatorKind,

@@ -6,7 +6,7 @@ use crate::{
     net::{Transition, TransitionId, TransitionType},
 };
 use rustc_middle::mir::{BasicBlock, Operand};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     pub(super) fn handle_async_spawn(
