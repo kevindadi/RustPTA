@@ -1,12 +1,12 @@
-//! PPN 扩展: 变迁元数据.
+//! PPN extension: transition metadata.
 //!
-//! 每个变迁携带 {file, line, fn, bb, task_id, optional awaited_event_id} 等信息.
+//! Each transition may carry `{file, line, fn, bb, task_id, optional awaited_event_id}`.
 
 use serde::{Deserialize, Serialize};
 
 use super::ids::{EventId, TaskId};
 
-/// 变迁元数据,用于溯源与异步调度.
+/// Metadata attached to transitions for provenance / async scheduling.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TransitionMeta {
     pub file: Option<String>,

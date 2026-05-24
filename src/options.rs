@@ -129,6 +129,12 @@ fn make_options_parser() -> clap::Command {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("dump_cir")
+                .long("viz-cir")
+                .help("Write cir.yaml (concurrency intermediate representation)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("stop_after")
                 .long("stop-after")
                 .value_name("STAGE")
@@ -194,6 +200,8 @@ pub struct Options {
     pub detector_kind: DetectorKind,
     pub output: Option<PathBuf>,
     pub crate_name: String,
+    /// Single-file analysis path (`-f`), used for CIR / filtering when set.
+    pub input_file: Option<PathBuf>,
     pub crate_filter: CrateNameList,
     pub dump_options: DumpOptions,
     pub stop_after: StopAfter,
@@ -206,6 +214,7 @@ impl Default for Options {
             detector_kind: DetectorKind::Deadlock,
             output: Option::default(),
             crate_name: String::new(),
+            input_file: None,
             crate_filter: CrateNameList::default(),
             dump_options: DumpOptions::default(),
             stop_after: StopAfter::None,
@@ -222,17 +231,19 @@ pub struct DumpOptions {
     pub dump_unsafe_info: bool,
     pub dump_points_to: bool,
     pub dump_mir: bool,
+    /// Emit `cir.yaml` (concurrency IR) alongside analysis outputs.
+    pub dump_cir: bool,
 }
 
-/// 流水线停止点,用于调试
+/// Pipeline stop point for debugging.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopAfter {
     None,
-    AfterMir,        // 在 MIR 输出后停止
-    AfterCallGraph,  // 在调用图构建后停止
-    AfterPointsTo,   // 在指针分析后停止
-    AfterPetriNet,   // 在 Petri 网构建后停止
-    AfterStateGraph, // 在状态图构建后停止
+    AfterMir,        // Stop after MIR dump
+    AfterCallGraph,  // Stop after call graph construction
+    AfterPointsTo,   // Stop after pointer analysis
+    AfterPetriNet,   // Stop after Petri net construction
+    AfterStateGraph, // Stop after state graph construction
 }
 
 impl Default for DumpOptions {
@@ -244,6 +255,7 @@ impl Default for DumpOptions {
             dump_unsafe_info: false,
             dump_points_to: false,
             dump_mir: false,
+            dump_cir: false,
         }
     }
 }
@@ -288,10 +300,15 @@ impl Options {
         if matches!(self.detector_kind, DetectorKind::AtomicityViolation)
             && !cfg!(feature = "atomic-violation")
         {
-            log::warn!("未启用 atomic-violation feature, 自动回退至死锁检测.");
+            log::warn!(
+                "atomic-violation feature is disabled; falling back to deadlock detection."
+            );
             self.detector_kind = DetectorKind::Deadlock;
         }
 
+        self.input_file = matches
+            .get_one::<String>("input_file")
+            .map(|f| PathBuf::from(f));
         self.crate_name = matches
             .get_one::<String>("target_crate")
             .cloned()
@@ -317,6 +334,7 @@ impl Options {
             dump_unsafe_info: matches.get_flag("dump_unsafe"),
             dump_points_to: matches.get_flag("dump_points_to"),
             dump_mir: matches.get_flag("dump_mir"),
+            dump_cir: matches.get_flag("dump_cir"),
         };
 
         self.stop_after = match matches.get_one::<String>("stop_after") {
@@ -373,19 +391,19 @@ impl Options {
         rustc_args.to_vec()
     }
 
-    /// 从 rustc 命令行参数中推断 crate 名（当 -p 和 -f 均未指定时）
+    /// Infer crate name from rustc arguments when neither `-p` nor `-f` is set.
     pub fn infer_crate_name_from_rustc_args(&mut self, rustc_args: &[String]) {
         if !self.crate_name.is_empty() && self.crate_name != "main" {
             return;
         }
-        // 查找 --crate-name 参数
+        // Look for `--crate-name`.
         if let Some(pos) = rustc_args.iter().position(|a| a == "--crate-name") {
             if let Some(name) = rustc_args.get(pos + 1) {
                 self.crate_name = name.clone();
                 return;
             }
         }
-        // 查找 .rs 输入文件
+        // Fall back to first `.rs` input path.
         for arg in rustc_args {
             if arg.ends_with(".rs") {
                 self.crate_name = std::path::Path::new(arg)

@@ -11,14 +11,14 @@ use std::path::Path;
 
 use crate::memory::pointsto::AliasId;
 use crate::translate::structure::KeyApiRegex;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
     Body, Local, LocalDecl, LocalKind, Location, Operand, Place, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{self, GenericArgsRef, Instance, TyCtxt, TyKind, TypingEnv};
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 pub type InstanceId = NodeIndex;
 
@@ -29,9 +29,9 @@ pub enum ThreadControlKind {
     ScopeSpawn,
     ScopeJoin,
     RayonJoin,
-    /// tokio::spawn - 协作式任务,非 OS 线程
+    /// `tokio::spawn` — cooperative task, not an OS thread.
     AsyncSpawn,
-    /// JoinHandle.await - 等待任务完成
+    /// `JoinHandle.await` — wait for task completion.
     AsyncJoin,
 }
 
@@ -59,7 +59,8 @@ impl CallSiteLocation {
         match self {
             Self::ThreadControl {
                 destination: Some(destination),
-                kind: ThreadControlKind::Spawn
+                kind:
+                    ThreadControlKind::Spawn
                     | ThreadControlKind::ScopeSpawn
                     | ThreadControlKind::AsyncSpawn,
                 ..
@@ -137,8 +138,8 @@ impl<'tcx> CallGraph<'tcx> {
         self.spawn_calls.get(&def_id)
     }
 
-    /// 从入口函数出发,沿调用边 BFS 得到可达的 InstanceId 集合.
-    /// 用于入口导向翻译,仅分析从 main 可达的函数.
+    /// BFS along call edges from the entry function; collects reachable `InstanceId`s.
+    /// Used for entry-directed translation (main-reachable only).
     pub fn reachable_from_entry(
         &self,
         tcx: TyCtxt<'tcx>,
@@ -151,8 +152,8 @@ impl<'tcx> CallGraph<'tcx> {
         self.reachable_from_roots(std::iter::once(entry_idx))
     }
 
-    /// 从多个根节点出发,沿调用边 BFS 得到可达的 InstanceId 集合的并集.
-    /// 用于将使用锁/原子变量/条件变量的函数及其被调用者纳入翻译范围.
+    /// BFS from multiple roots; union of reachable `InstanceId`s.
+    /// Pulls in functions that touch locks/atomics/condvars and their callees.
     pub fn reachable_from_roots<I>(&self, roots: I) -> FxHashSet<InstanceId>
     where
         I: IntoIterator<Item = InstanceId>,
@@ -193,7 +194,8 @@ impl<'tcx> CallGraph<'tcx> {
                 let callee_idx = self.insert_instance(CallGraphNode::WithoutBody(callee));
 
                 if let CallSiteLocation::ThreadControl {
-                    kind: ThreadControlKind::Spawn
+                    kind:
+                        ThreadControlKind::Spawn
                         | ThreadControlKind::ScopeSpawn
                         | ThreadControlKind::AsyncSpawn,
                     destination: Some(alias_id),
@@ -321,6 +323,9 @@ impl<'a, 'tcx> CallSiteCollector<'a, 'tcx> {
         let closure_ty = match operand {
             Operand::Move(place) | Operand::Copy(place) => place.ty(self.body, self.tcx).ty,
             Operand::Constant(constant) => constant.ty(),
+            Operand::RuntimeChecks(_) => {
+                todo!("Handle RuntimeChecks operand in call graph analysis");
+            }
         };
 
         match *closure_ty.kind() {
@@ -507,7 +512,7 @@ pub fn classify_thread_control(
         return Some(ThreadControlKind::ScopeJoin);
     }
 
-    // tokio async 优先于 std::thread
+    // Prefer tokio async edges over std::thread when both match.
     if fn_path.contains("tokio::task::spawn") || fn_path.contains("tokio::runtime::Runtime::spawn")
     {
         return Some(ThreadControlKind::AsyncSpawn);

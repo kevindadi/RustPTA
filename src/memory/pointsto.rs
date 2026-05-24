@@ -4,14 +4,14 @@ extern crate rustc_index;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::{HashSet, VecDeque};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
     AggregateKind, Body, ConstOperand, Local, Location, Operand, Place, PlaceElem, PlaceRef,
     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 use rustc_middle::mir::Const;
 use rustc_middle::ty::{Instance, TyCtxt, TyKind};
@@ -515,6 +515,9 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
                 user_ty: _,
                 const_,
             }) => Some(AccessPattern::Constant(*const_)),
+            Operand::RuntimeChecks(_) => {
+                todo!("Handle RuntimeChecks operand in points-to analysis");
+            }
         }
     }
 
@@ -523,8 +526,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             Rvalue::Use(operand)
             | Rvalue::Repeat(operand, _)
             | Rvalue::Cast(_, operand, _)
-            | Rvalue::UnaryOp(_, operand)
-            | Rvalue::ShallowInitBox(operand, _) => {
+            | Rvalue::UnaryOp(_, operand) => {
                 vec![Self::process_operand(operand)]
             }
 
@@ -558,9 +560,6 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
             },
 
             Rvalue::ThreadLocalRef(_) => vec![],
-
-            Rvalue::NullaryOp(_, _) => vec![],
-
             _ => vec![],
         }
     }
@@ -574,11 +573,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
         self.graph.add_alias_copy(dest, arg);
     }
 
-    fn process_generic_call(
-        &mut self,
-        args: &[Spanned<Operand<'tcx>>],
-        destination: &Place<'tcx>,
-    ) {
+    fn process_generic_call(&mut self, args: &[Spanned<Operand<'tcx>>], destination: &Place<'tcx>) {
         for arg in args {
             if let Operand::Move(place) | Operand::Copy(place) = arg.node {
                 self.graph.add_copy(destination.as_ref(), place.as_ref());
@@ -764,7 +759,7 @@ impl PartialOrd for ApproximateAliasKind {
 }
 
 impl ApproximateAliasKind {
-    /// 在给定 Unknown 策略下，该别名结果是否应添加弧（视为可能别名）
+    /// Whether this alias should add arcs under the configured Unknown policy (treat as possible alias).
     pub fn may_alias(self, policy: crate::config::AliasUnknownPolicy) -> bool {
         use crate::config::AliasUnknownPolicy;
         match self {
@@ -779,7 +774,7 @@ impl ApproximateAliasKind {
 pub struct AliasId {
     pub instance_id: InstanceId,
     pub local: Local,
-    /// 常量索引时区分 arr[0] vs arr[1]；动态索引或非数组时为 None（合并）
+    /// Constant index distinguishes `arr[0]` vs `arr[1]`; dynamic index or non-array ⇒ `None` (merged).
     pub array_index: Option<u64>,
 }
 
@@ -792,22 +787,22 @@ impl AliasId {
         }
     }
 
-    /// 从 Place 构造，提取常量索引以区分 arr[0] vs arr[1]
+    /// Build from `Place`, extracting constant indices to distinguish `arr[0]` vs `arr[1]`.
     pub fn from_place<'tcx>(instance_id: InstanceId, place: PlaceRef<'tcx>) -> Self {
-        let array_index = if place.projection.iter().any(|e| matches!(e, PlaceElem::Index(_))) {
+        let array_index = if place
+            .projection
+            .iter()
+            .any(|e| matches!(e, PlaceElem::Index(_)))
+        {
             None
         } else {
-            place
-                .projection
-                .iter()
-                .rev()
-                .find_map(|elem| {
-                    if let PlaceElem::ConstantIndex { offset, .. } = elem {
-                        Some(*offset)
-                    } else {
-                        None
-                    }
-                })
+            place.projection.iter().rev().find_map(|elem| {
+                if let PlaceElem::ConstantIndex { offset, .. } = elem {
+                    Some(*offset)
+                } else {
+                    None
+                }
+            })
         };
         Self {
             instance_id,
@@ -866,7 +861,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         println!("{}", self.format_points_to_report());
     }
 
-    /// 确保所有给定实例的 pts 已计算（用于单独 dump 时预填充）
+    /// Ensure points-to sets are computed for all listed instances (pre-fill before standalone dumps).
     pub fn ensure_pts_for_instances(&mut self, instances: &[Instance<'tcx>]) {
         for instance in instances {
             if self.tcx.is_mir_available(instance.def_id()) {
@@ -1013,7 +1008,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             ..
         } = aid2;
 
-        if local1 == local2 {
+        if id1 == id2 && local1 == local2 {
             if let (Some(i), Some(j)) = (idx1, idx2) {
                 return if i == j {
                     ApproximateAliasKind::Probably
@@ -1066,7 +1061,7 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
             ..
         } = aid2;
 
-        if local1 == local2 {
+        if id1 == id2 && local1 == local2 {
             if let (Some(i), Some(j)) = (idx1, idx2) {
                 return if i == j {
                     ApproximateAliasKind::Probably
@@ -1604,32 +1599,45 @@ fn is_parameter(local: Local, body: &Body<'_>) -> bool {
     body.args_iter().any(|arg| arg == local)
 }
 
+#[inline]
+fn param_index(local: Local, body: &Body<'_>) -> Option<usize> {
+    body.args_iter().position(|arg| arg == local)
+}
+
 fn point_to_same_type_param<'tcx>(
     pts1: &FxHashSet<ConstraintNode<'tcx>>,
     pts2: &FxHashSet<ConstraintNode<'tcx>>,
     body1: &Body<'tcx>,
     body2: &Body<'tcx>,
 ) -> bool {
-    let parameter_places1: Vec<_> = pts1.iter().filter_map(|node| match node {
-        ConstraintNode::Alloc(place) | ConstraintNode::Place(place)
-            if is_parameter(place.local, body1) =>
-        {
-            Some(*place)
-        }
-        _ => None,
-    }).collect();
-    let parameter_places2: Vec<_> = pts2.iter().filter_map(|node| match node {
-        ConstraintNode::Alloc(place) | ConstraintNode::Place(place)
-            if is_parameter(place.local, body2) =>
-        {
-            Some(*place)
-        }
-        _ => None,
-    }).collect();
+    let parameter_places1: Vec<_> = pts1
+        .iter()
+        .filter_map(|node| match node {
+            ConstraintNode::Alloc(place) | ConstraintNode::Place(place)
+                if is_parameter(place.local, body1) =>
+            {
+                Some(*place)
+            }
+            _ => None,
+        })
+        .collect();
+    let parameter_places2: Vec<_> = pts2
+        .iter()
+        .filter_map(|node| match node {
+            ConstraintNode::Alloc(place) | ConstraintNode::Place(place)
+                if is_parameter(place.local, body2) =>
+            {
+                Some(*place)
+            }
+            _ => None,
+        })
+        .collect();
     parameter_places1.iter().any(|place1| {
         parameter_places2.iter().any(|place2| {
             body1.local_decls[place1.local].ty == body2.local_decls[place2.local].ty
                 && place1.projection == place2.projection
+                && (body1.source.def_id() == body2.source.def_id()
+                    || param_index(place1.local, body1) == param_index(place2.local, body2))
         })
     })
 }

@@ -1,4 +1,4 @@
-//! 输入、输出及扩展弧关系的稀疏化邻接矩阵封装.
+//! Sparse incidence matrices for input/output (and extended) arc relations.
 use std::fmt;
 use std::ops::{Add, Sub};
 

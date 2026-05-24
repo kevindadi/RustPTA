@@ -1,11 +1,11 @@
-extern crate rustc_hash;
+extern crate rustc_data_structures;
 extern crate rustc_span;
 
 use std::collections::HashMap;
 
 use rustc_middle::ty::{EarlyBinder, TyKind, TypingEnv};
 
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::{self, Instance, TyCtxt};
 use rustc_span::Span;

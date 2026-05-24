@@ -1,0 +1,176 @@
+resources:
+  UserskevinlocalreposRustPTA:
+    kind: Atomic
+functions:
+  at_4::load_then_work:
+    kind: normal
+    body:
+    - sid: at_1
+      op:
+        load: UserskevinlocalreposRustPTA
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:6:16: 6:41 (#0)'
+      bb_index: 1
+    - sid: ret
+      transfer:
+        done: true
+  at_4::main:
+    kind: normal
+    body:
+    - sid: at_1
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: at_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:21:17: 21:71 (#0)'
+      bb_index: 4
+    - sid: at_2
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: at_3
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:25:17: 25:52 (#0)'
+      bb_index: 13
+    - sid: at_3
+      op:
+        join: std::thread::{impl#11}::join
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:27:27: 27:35 (#0)'
+      bb_index: 18
+    - sid: ret
+      transfer:
+        done: true
+  at_4::main::{closure#0}:
+    kind: closure
+    body:
+    - sid: at_c1001
+      op:
+        call: at_4::load_then_work
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  at_4::main::{closure#1}:
+    kind: closure
+    body:
+    - sid: at_1
+      op:
+        call: at_4::writer_4
+      transfer:
+        next: at_c1001
+      bb_index: 0
+    - sid: at_c1001
+      op:
+        call: at_4::writer_4
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  at_4::writer_1:
+    kind: normal
+    body:
+    - sid: at_1
+      op:
+        store:
+          var: UserskevinlocalreposRustPTA
+          val: unknown
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:11:37: 11:66 (#0)'
+      bb_index: 1
+    - sid: ret
+      transfer:
+        done: true
+  at_4::writer_2:
+    kind: normal
+    body:
+    - sid: at_1
+      op:
+        call: at_4::writer_1
+      transfer:
+        next: at_c1001
+      bb_index: 0
+    - sid: at_c1001
+      op:
+        call: at_4::writer_1
+      transfer:
+        next: at_2
+      bb_index: 0
+    - sid: at_2
+      op:
+        store:
+          var: UserskevinlocalreposRustPTA
+          val: unknown
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:12:50: 12:79 (#0)'
+      bb_index: 2
+    - sid: ret
+      transfer:
+        done: true
+  at_4::writer_3:
+    kind: normal
+    body:
+    - sid: at_1
+      op:
+        call: at_4::writer_2
+      transfer:
+        next: at_c1001
+      bb_index: 0
+    - sid: at_c1001
+      op:
+        call: at_4::writer_2
+      transfer:
+        next: at_2
+      bb_index: 0
+    - sid: at_2
+      op:
+        store:
+          var: UserskevinlocalreposRustPTA
+          val: unknown
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:13:50: 13:79 (#0)'
+      bb_index: 2
+    - sid: ret
+      transfer:
+        done: true
+  at_4::writer_4:
+    kind: normal
+    body:
+    - sid: at_1
+      op:
+        call: at_4::writer_3
+      transfer:
+        next: at_c1001
+      bb_index: 0
+    - sid: at_c1001
+      op:
+        call: at_4::writer_3
+      transfer:
+        next: at_2
+      bb_index: 0
+    - sid: at_2
+      op:
+        store:
+          var: UserskevinlocalreposRustPTA
+          val: unknown
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/atomic/at_4.rs:14:50: 14:79 (#0)'
+      bb_index: 2
+    - sid: ret
+      transfer:
+        done: true
+goals:
+- id: G0
+  desc: std::thread::spawn completes
+  marking:
+    cp(std::thread::spawn, ret): 1
+entry: at_4::main

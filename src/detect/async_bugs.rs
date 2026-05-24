@@ -1,24 +1,24 @@
-//! 异步相关 bug 检测
+//! Async-related bug hooks.
 //!
-//! A) holding-lock-across-await: 检测 lock(m) 获取后、unlock(m) 前存在 await_pending 的路径.
-//! B) cancel-safety resource leak: abort 后检查资源库所是否未回到 Init.
+//! A) holding-lock-across-await — paths where `lock(m)` happens before `unlock(m)` but cross `await_pending`.
+//! B) cancel-safety leaks — after abort, resource places fail to return to their idle marking.
 
 use crate::net::structure::TransitionType;
 
-/// 检测是否存在 lock 跨越 await 的路径.
+/// Placeholder: detect locks held across `.await`.
 ///
-/// 完整实现需: 对每个任务,追踪 lock 获取状态,在 await_pending 时检查是否持有锁.
+/// Full implementation needs per-task lock tracking at each `await_pending`.
 #[allow(dead_code)]
 pub fn detect_holding_lock_across_await(
     _transition_types: &[TransitionType],
 ) -> Option<Vec<(usize, usize)>> {
-    // 返回 None 表示未检测到
+    // None ⇒ not detected yet.
     None
 }
 
-/// 检测 cancel 后资源泄漏
+/// Placeholder: resource leaks after cancellation.
 ///
-/// 完整实现需: 在 abort 后检查资源 place 的 token 是否未归还.
+/// Full implementation should inspect resource places after simulated abort.
 #[allow(dead_code)]
 pub fn detect_cancel_safety_resource_leak(
     _abort_task_id: usize,

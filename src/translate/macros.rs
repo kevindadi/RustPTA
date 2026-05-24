@@ -1,13 +1,13 @@
-//! 转换宏
+//! Translation macros.
 //!
-//! - `transition_name!`: 统一变迁/库所命名格式
-//! - `bb_place!`: 创建 BasicBlock 类型库所
-//! - `add_fallthrough_transition!`: 创建 fallthrough 变迁并连接弧
-//! - `add_terminal_transition!`: 创建 terminal 变迁并连接弧
-//! - `add_wait_ret_subnet!`: 创建 wait place + ret transition 子网
+//! - `transition_name!`: unified transition/place naming.
+//! - `bb_place!`: create BasicBlock places.
+//! - `add_fallthrough_transition!`: fallthrough transition + arcs.
+//! - `add_terminal_transition!`: terminal transition + arcs.
+//! - `add_wait_ret_subnet!`: wait place + ret transition subnet.
 
-/// 生成 `{name}_{bb_idx}_{kind}` 格式的变迁/库所名.
-/// 可选后缀: `transition_name!(name, bb_idx, kind, suffix)`.
+/// Build `{name}_{bb_idx}_{kind}` transition/place names.
+/// Optional suffix: `transition_name!(name, bb_idx, kind, suffix)`.
 #[macro_export]
 macro_rules! transition_name {
     ($name:expr, $bb_idx:expr, $kind:expr) => {
@@ -18,7 +18,7 @@ macro_rules! transition_name {
     };
 }
 
-/// 创建 BasicBlock 类型库所 (tokens=0, capacity=1).
+/// Create a BasicBlock place (`tokens = 0`, `capacity = 1`).
 #[macro_export]
 macro_rules! bb_place {
     ($net:expr, $name:expr, $span:expr) => {{
@@ -33,8 +33,8 @@ macro_rules! bb_place {
     }};
 }
 
-/// 创建 fallthrough 变迁并连接 last(bb_idx) -> t -> target.
-/// 返回 TransitionId.
+/// Fallthrough transition wiring `last(bb_idx) -> t -> target`.
+/// Returns `TransitionId`.
 #[macro_export]
 macro_rules! add_fallthrough_transition {
     ($self:expr, $bb_idx:expr, $name:expr, $kind:expr, $trans_type:expr, $target:expr) => {{
@@ -51,8 +51,8 @@ macro_rules! add_fallthrough_transition {
     }};
 }
 
-/// 创建 terminal 变迁并连接 last(bb_idx) -> t -> entry_exit.1.
-/// 返回 TransitionId.
+/// Terminal transition wiring `last(bb_idx) -> t -> entry_exit.1`.
+/// Returns `TransitionId`.
 #[macro_export]
 macro_rules! add_terminal_transition {
     ($self:expr, $bb_idx:expr, $name:expr, $kind:expr, $trans_type:expr) => {{
@@ -67,9 +67,9 @@ macro_rules! add_terminal_transition {
     }};
 }
 
-/// 创建 wait place + ret transition 子网,连接 wait -> bb_end, wait -> ret.
-/// 参数: self, name, bb_idx, kind_wait, kind_ret, trans_type, span, bb_end(TransitionId).
-/// 返回 (PlaceId, TransitionId).
+/// Wait place + ret subnet (`wait -> bb_end`, `wait -> ret`).
+/// Args: `self`, `name`, `bb_idx`, `kind_wait`, `kind_ret`, `trans_type`, `span`, `bb_end` (`TransitionId`).
+/// Returns `(PlaceId, TransitionId)`.
 #[macro_export]
 macro_rules! add_wait_ret_subnet {
     ($self:expr, $name:expr, $bb_idx:expr, $kind_wait:expr, $kind_ret:expr, $trans_type:expr, $span:expr, $bb_end:expr) => {{

@@ -23,7 +23,7 @@ use log::{debug, error, info};
 use rayon::join;
 use rustc_driver::Compilation;
 use rustc_interface::interface;
-use rustc_middle::mir::mono::MonoItem;
+use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
 use serde::Serialize;
 use std::fmt::{Debug, Formatter, Result};
@@ -51,7 +51,7 @@ impl PTACallbacks {
         };
 
         std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
-             log::debug!("Warning: Failed to create output directory: {}", e);
+            log::debug!("Warning: Failed to create output directory: {}", e);
         });
 
         Self {
@@ -79,13 +79,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
         config.opts.optimize = rustc_session::config::OptLevel::No;
         config.opts.debuginfo = rustc_session::config::DebugInfo::None;
 
-        let file_name = config
-            .input
-            .source_name()
-            .prefer_remapped_unconditionally()
-            .to_string();
-
-        debug!("Processing input file: {}", file_name);
         if config.opts.test {
             debug!("in test only mode");
         }
@@ -106,15 +99,15 @@ impl rustc_driver::Callbacks for PTACallbacks {
             return Compilation::Continue;
         }
 
-        // 检查是否在 MIR 后停止(在分析之前)
+        // Stop after MIR dump (before analysis).
         if self.options.stop_after == StopAfter::AfterMir {
-            log::info!("停止分析:在 MIR 输出后停止");
+            log::info!("Stopping analysis after MIR output");
             return Compilation::Stop;
         }
 
         self.analyze_with_pta(compiler, tcx);
 
-        // 如果设置了停止点,在分析后停止编译
+        // When a stop point is set, stop compilation after analysis.
         if self.options.stop_after != StopAfter::None || self.test_run {
             Compilation::Stop
         } else {
@@ -124,6 +117,40 @@ impl rustc_driver::Callbacks for PTACallbacks {
 }
 
 impl PTACallbacks {
+    fn write_cir_yaml(pn: &PetriNet<'_, '_>, dir: &PathBuf) {
+        let artifact = if !pn.cir_functions.is_empty() {
+            crate::cir::pipeline::build_cir_artifact_from_mir_emission(pn)
+        } else {
+            let mut a = match crate::cir::CirExtractor::new(&pn.net).extract() {
+                Ok(a) => a,
+                Err(errs) => {
+                    for e in errs {
+                        log::warn!("CIR extraction: {e}");
+                    }
+                    return;
+                }
+            };
+            crate::cir::pipeline::merge_calls_and_stubs(
+                pn.tcx(),
+                pn.options(),
+                pn.callgraph(),
+                &mut a,
+            );
+            a
+        };
+        let path = dir.join("cir.yaml");
+        match artifact.to_yaml() {
+            Ok(yaml) => {
+                if let Err(err) = std::fs::write(&path, yaml) {
+                    error!("failed to write CIR YAML to {:?}: {err}", path);
+                } else {
+                    info!("CIR YAML written to {:?}", path);
+                }
+            }
+            Err(err) => error!("failed to serialize CIR YAML: {err}"),
+        }
+    }
+
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         let mut mem_watcher = MemoryWatcher::new();
         mem_watcher.start();
@@ -150,23 +177,30 @@ impl PTACallbacks {
         let key_api_regex = crate::translate::structure::KeyApiRegex::new(&self.options.config);
         callgraph.analyze(instances.clone(), tcx, &key_api_regex);
 
-        // 输出 MIR dot(如果启用)
+        // Emit MIR dot when requested.
         if self.options.dump_options.dump_mir {
             self.dump_mir_dots(tcx, &instances);
         }
 
-        // 检查是否在调用图后停止
+        // Stop after call graph construction.
         if self.options.stop_after == StopAfter::AfterCallGraph {
-            log::info!("停止分析:在调用图构建后停止");
+            log::info!("Stopping analysis after call graph construction");
             return;
         }
 
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
         pn.construct();
 
+        if self.options.dump_options.dump_cir {
+            Self::write_cir_yaml(&pn, &self.output_directory);
+        }
+
         let mut reduced_stage_written = false;
         if self.options.dump_options.dump_petri_net {
-            if let Err(err) = pn.net.write_dot(self.output_directory.join("petrinet_raw.dot")) {
+            if let Err(err) = pn
+                .net
+                .write_dot(self.output_directory.join("petrinet_raw.dot"))
+            {
                 error!("failed to write raw Petri net dot file: {err}");
             } else {
                 info!("raw petri net dot exported");
@@ -174,7 +208,7 @@ impl PTACallbacks {
         }
 
         if self.options.config.reduce_net {
-            use crate::net::reduce::{reduce_in_place, ReductionOptions};
+            use crate::net::reduce::{ReductionOptions, reduce_in_place};
             match reduce_in_place(&mut pn.net, ReductionOptions::default()) {
                 Ok(result) => {
                     log::info!(
@@ -206,7 +240,10 @@ impl PTACallbacks {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Petri net reduction failed: {}, continuing without reduction", e);
+                    log::warn!(
+                        "Petri net reduction failed: {}, continuing without reduction",
+                        e
+                    );
                 }
             }
         }
@@ -214,18 +251,23 @@ impl PTACallbacks {
             let raw = self.output_directory.join("petrinet_raw.dot");
             let s1 = self.output_directory.join("petrinet_reduce_1_loop.dot");
             let s2 = self.output_directory.join("petrinet_reduce_2_sequence.dot");
-            let s3 = self.output_directory.join("petrinet_reduce_3_intermediate.dot");
+            let s3 = self
+                .output_directory
+                .join("petrinet_reduce_3_intermediate.dot");
             for path in [s1, s2, s3] {
                 if let Err(err) = std::fs::copy(&raw, &path) {
-                    error!("failed to initialize reduction stage file {:?}: {err}", path);
+                    error!(
+                        "failed to initialize reduction stage file {:?}: {err}",
+                        path
+                    );
                 }
             }
         }
 
-        // 在构建状态图之前执行连通性诊断
+        // Run connectivity diagnostics before building the state graph.
         pn.net.log_diagnostics();
 
-        // 如果启用了诊断输出,保存诊断报告到文件
+        // Optionally persist diagnostics when exporting the Petri net.
         if self.options.dump_options.dump_petri_net {
             let report = pn.net.diagnose_connectivity();
             if report.has_issues() {
@@ -236,11 +278,11 @@ impl PTACallbacks {
             }
         }
 
-        // 检查是否在指针分析后停止
+        // Stop after pointer analysis (or points-to-only mode).
         if self.options.stop_after == StopAfter::AfterPointsTo
             || matches!(self.options.detector_kind, DetectorKind::PointsTo)
         {
-            log::info!("停止分析:在指针分析后停止");
+            log::info!("Stopping analysis after pointer analysis");
             let sg_config = StateGraphConfig {
                 state_limit: self.options.config.state_limit,
                 include_zero_tokens: false,
@@ -260,14 +302,14 @@ impl PTACallbacks {
         let state_graph = StateGraph::with_config(&pn.net, sg_config);
         if state_graph.truncated {
             log::warn!(
-                "状态空间已截断 (limit={:?}), 分析结果可能不完整",
+                "State space truncated (limit={:?}); results may be incomplete",
                 self.options.config.state_limit
             );
         }
 
-        // 检查是否在状态图后停止
+        // Stop after state graph construction.
         if self.options.stop_after == StopAfter::AfterStateGraph {
-            log::info!("停止分析:在状态图构建后停止");
+            log::info!("Stopping analysis after state graph construction");
             self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
             self.write_summary(&callgraph, &pn, &state_graph);
             return;
@@ -385,7 +427,7 @@ impl PTACallbacks {
                 #[cfg(not(feature = "atomic-violation"))]
                 {
                     log::warn!(
-                        "请求执行原子性违背检测,但未启用 atomic-violation feature,分析被跳过."
+                        "Atomicity violation analysis requested but the atomic-violation feature is disabled; skipping analysis."
                     );
                 }
             }
@@ -393,7 +435,7 @@ impl PTACallbacks {
                 #[cfg(feature = "atomic-violation")]
                 {
                     log::info!(
-                        "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
+                        "Data-race and atomicity analyses are mutually exclusive; `--mode all` runs data-race analysis by default. Use `--mode atomic` with the feature enabled for atomicity analysis."
                     );
                 }
                 join(
@@ -421,7 +463,7 @@ impl PTACallbacks {
             }
             DetectorKind::All => {
                 info!(
-                    "由于数据竞争与原子性违背检测互斥,--mode all 默认执行数据竞争分析；如需原子性分析请使用 --mode atomic 并启用 feature."
+                    "Data-race and atomicity analyses are mutually exclusive; `--mode all` runs data-race analysis by default. Use `--mode atomic` with the feature enabled for atomicity analysis."
                 );
                 join(
                     || self.run_deadlock_detector(state_graph),

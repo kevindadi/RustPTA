@@ -10,18 +10,22 @@ use crate::util::format_name;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::IntoNodeReferences;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
 use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
+use crate::cir::mir_emitter::CirMirEmitter;
+use crate::cir::resource_table::ResourceTable;
+use crate::cir::types::FunctionKind;
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::AliasAnalysis;
 use crate::net::{Net, Place, PlaceId};
+use crate::translate::mir_to_cir::BodyToCir;
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
 fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
@@ -50,11 +54,28 @@ pub struct PetriNet<'analysis, 'tcx> {
     lock_info: Arc<LockGuardMap<'tcx>>,
     resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
-    /// 异步任务调度上下文 (tokio::spawn / JoinHandle.await)
+    /// Async task scheduling context (`tokio::spawn` / `JoinHandle.await`).
     pub async_ctx: AsyncTranslateContext,
+    /// MIR→CIR-only async context (separate from `async_ctx` to avoid task-id clashes with the Petri net).
+    pub async_ctx_cir: AsyncTranslateContext,
+    pub cir_resource_table: ResourceTable,
+    pub cir_spawn_targets: BTreeSet<String>,
+    pub cir_functions: BTreeMap<String, crate::cir::types::CirFunction>,
 }
 
 impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
+    pub fn tcx(&self) -> rustc_middle::ty::TyCtxt<'tcx> {
+        self.tcx
+    }
+
+    pub fn options(&self) -> &crate::options::Options {
+        &self.options
+    }
+
+    pub fn callgraph(&self) -> &'analysis CallGraph<'tcx> {
+        self.callgraph
+    }
+
     fn create_resource_place(
         &mut self,
         name: String,
@@ -83,6 +104,10 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
             async_ctx: AsyncTranslateContext::new(1),
+            async_ctx_cir: AsyncTranslateContext::new(1),
+            cir_resource_table: ResourceTable::from_transitions(std::iter::empty()),
+            cir_spawn_targets: BTreeSet::new(),
+            cir_functions: BTreeMap::new(),
         }
     }
 
@@ -181,11 +206,14 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                     alias_id.instance_id.index(),
                     alias_id.local.index()
                 );
-                let pid =
-                    self.create_resource_place(place_name, 1, 1, atomic_info.span.clone());
+                let pid = self.create_resource_place(place_name, 1, 1, atomic_info.span.clone());
                 vec![pid]
             } else {
-                place_ids.into_iter().collect::<HashSet<_>>().into_iter().collect()
+                place_ids
+                    .into_iter()
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect()
             };
 
             self.resources
@@ -239,7 +267,12 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             let policy = self.options.config.alias_unknown_policy;
             for j in i + 1..places_data.len() {
                 let (local_j, info_j) = &places_data[j];
-                if self.alias.borrow_mut().alias(*local_i, *local_j).may_alias(policy) {
+                if self
+                    .alias
+                    .borrow_mut()
+                    .alias(*local_i, *local_j)
+                    .may_alias(policy)
+                {
                     current_group.push((local_j.clone(), info_j.clone()));
                 }
             }
@@ -324,17 +357,15 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         caller: &CallGraphNode<'tcx>,
         key_api_regex: &KeyApiRegex,
     ) {
-        // 使用 instance_mir 而非 optimized_mir,确保与指针分析使用相同的 MIR 版本
-        // instance_mir 会正确处理泛型单态化,而 optimized_mir 可能返回未实例化的版本
+        // Use instance_mir (not optimized_mir) so pointer analysis and translation share the same MIR.
+        // instance_mir is correctly monomorphized; optimized_mir may still be polymorphic.
         let body = self.tcx.instance_mir(caller.instance().def);
 
         if body.source.promoted.is_some() {
             return;
         }
 
-        // 如果启用了 MIR 输出,在转换前输出原始 MIR
-        // 注意:这里不输出,因为已经在 callback.rs 中统一输出了
-        // 但可以在这里输出转换后的中间状态
+        // MIR dot dumping happens centrally in callback.rs; intermediate dumps could go here.
 
         let mut func_body = BodyToPetriNet::new(
             node,
@@ -351,8 +382,43 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             key_api_regex,
             &mut self.async_ctx,
             self.options.config.alias_unknown_policy,
+            self.options.config.break_cfg_cycles,
         );
         func_body.translate();
+
+        let fname = format_name(caller.instance().def_id());
+        let def_id = caller.instance().def_id();
+        let kind = if self.tcx.is_closure_like(def_id) {
+            FunctionKind::Closure
+        } else if body.coroutine_kind().is_some() {
+            FunctionKind::Async
+        } else {
+            FunctionKind::Normal
+        };
+        let mut emitter = CirMirEmitter::new(
+            &fname,
+            &mut self.cir_resource_table,
+            &mut self.cir_spawn_targets,
+        );
+        let mut cir_body = BodyToCir::new(
+            node,
+            caller.instance(),
+            body,
+            self.tcx,
+            self.callgraph,
+            &mut self.alias,
+            Arc::clone(&self.lock_info),
+            &self.functions,
+            &self.resources,
+            key_api_regex,
+            &mut self.async_ctx_cir,
+            self.options.config.alias_unknown_policy,
+            self.options.config.break_cfg_cycles,
+            &mut emitter,
+            &self.options,
+        );
+        cir_body.translate();
+        self.cir_functions.insert(fname, emitter.finish(kind));
     }
 
     pub fn construct_func(&mut self) {
@@ -418,8 +484,8 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         include && !exclude
     }
 
-    /// 收集使用锁/原子变量/条件变量/通道的函数对应的 InstanceId.
-    /// 用于 translate_concurrent_roots: 将这些函数及其被调用者纳入翻译范围.
+    /// Collect `InstanceId`s for functions that use locks / atomics / condvars / channels.
+    /// Used by `translate_concurrent_roots` to widen translation to those roots and callees.
     fn concurrent_root_instance_ids(&self) -> FxHashSet<InstanceId> {
         let mut roots = FxHashSet::default();
 
@@ -439,20 +505,14 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             }
         }
 
-        let mut atomic = AtomicCollector::new(
-            self.tcx,
-            self.callgraph,
-            self.options.crate_name.clone(),
-        );
+        let mut atomic =
+            AtomicCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
         for info in atomic.analyze().into_values() {
             roots.insert(info.instance_id);
         }
 
-        let mut channel = ChannelCollector::new(
-            self.tcx,
-            self.callgraph,
-            self.options.crate_name.clone(),
-        );
+        let mut channel =
+            ChannelCollector::new(self.tcx, self.callgraph, self.options.crate_name.clone());
         channel.analyze();
         for (channel_id, _) in channel.channels {
             roots.insert(channel_id.instance_id);
@@ -470,8 +530,9 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
         if self.options.config.translate_concurrent_roots {
             let concurrent_roots = self.concurrent_root_instance_ids();
-            let reachable_from_concurrent =
-                self.callgraph.reachable_from_roots(concurrent_roots.into_iter());
+            let reachable_from_concurrent = self
+                .callgraph
+                .reachable_from_roots(concurrent_roots.into_iter());
             reachable.extend(reachable_from_concurrent);
         }
 
@@ -575,7 +636,11 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                     .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
                     .may_alias(policy)
                 {
-                    log::debug!("锁 {:?} 和 {:?} 存在别名关系", lockid_vec[i], lockid_vec[j]);
+                    log::debug!(
+                        "Locks {:?} and {:?} may alias",
+                        lockid_vec[i],
+                        lockid_vec[j]
+                    );
                     union(&mut union_find, &lockid_vec[i], &lockid_vec[j]);
                 }
             }
@@ -596,7 +661,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                     let lock_name = format!("Mutex_{}", group_id);
                     let lock_node =
                         self.create_resource_place(lock_name.clone(), 1, 1, String::default());
-                    log::debug!("创建 Mutex 节点: {}", lock_name);
+                    log::debug!("Creating Mutex node: {}", lock_name);
                     for lock in group {
                         let alias_id = lock.get_alias_id();
                         self.resources.locks_mut().insert(alias_id, lock_node);
@@ -606,7 +671,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                     let lock_name = format!("RwLock_{}", group_id);
                     let lock_node =
                         self.create_resource_place(lock_name.clone(), 10, 10, String::default());
-                    log::debug!("创建 RwLock 节点: {}", lock_name);
+                    log::debug!("Creating RwLock node: {}", lock_name);
                     for lock in group {
                         let alias_id = lock.get_alias_id();
                         self.resources.locks_mut().insert(alias_id, lock_node);
@@ -615,7 +680,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             }
             group_id += 1;
         }
-        log::debug!("总共发现 {} 个锁组", group_id);
+        log::debug!("Total lock groups discovered: {}", group_id);
     }
 
     fn collect_blocking_primitives(&mut self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {

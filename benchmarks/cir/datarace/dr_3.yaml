@@ -1,0 +1,100 @@
+resources: {}
+functions:
+  dr_3::bump_n:
+    kind: normal
+    body:
+    - sid: ret
+      transfer:
+        done: true
+  dr_3::main:
+    kind: normal
+    body:
+    - sid: dr_1
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dr_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/datarace/dr_3.rs:18:17: 20:11 (#0)'
+      bb_index: 6
+    - sid: dr_2
+      op:
+        join: std::thread::{impl#11}::join
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/datarace/dr_3.rs:22:27: 22:35 (#0)'
+      bb_index: 12
+    - sid: ret
+      transfer:
+        done: true
+  dr_3::main::{closure#0}:
+    kind: closure
+    body:
+    - sid: dr_1
+      op:
+        call: dr_3::path_3
+      transfer:
+        next: dr_c1001
+      bb_index: 0
+    - sid: dr_c1001
+      op:
+        call: dr_3::path_3
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dr_3::path_1:
+    kind: normal
+    body:
+    - sid: dr_c1001
+      op:
+        call: dr_3::bump_n
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dr_3::path_2:
+    kind: normal
+    body:
+    - sid: dr_c1001
+      op:
+        call: dr_3::path_1
+      transfer:
+        next: dr_c1002
+      bb_index: 0
+    - sid: dr_c1002
+      op:
+        call: dr_3::bump_n
+      transfer:
+        next: ret
+      bb_index: 1
+    - sid: ret
+      transfer:
+        done: true
+  dr_3::path_3:
+    kind: normal
+    body:
+    - sid: dr_c1001
+      op:
+        call: dr_3::path_2
+      transfer:
+        next: dr_c1002
+      bb_index: 0
+    - sid: dr_c1002
+      op:
+        call: dr_3::bump_n
+      transfer:
+        next: ret
+      bb_index: 1
+    - sid: ret
+      transfer:
+        done: true
+goals:
+- id: G0
+  desc: std::thread::spawn completes
+  marking:
+    cp(std::thread::spawn, ret): 1
+entry: dr_3::main

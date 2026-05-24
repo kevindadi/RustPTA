@@ -1,0 +1,466 @@
+resources:
+  m0:
+    kind: Mutex
+  m1:
+    kind: Mutex
+functions:
+  dl_10::helper_1:
+    kind: normal
+    body:
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_2:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_1
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_3:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_2
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_4:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_3
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_5:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_4
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_6:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_5
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_7:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_6
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_8:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_7
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::helper_9:
+    kind: normal
+    body:
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_8
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::lock_ab:
+    kind: normal
+    body:
+    - sid: dl_1
+      op:
+        lock: m0
+      transfer:
+        next: dl_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:5:15: 5:32 (#0)'
+      bb_index: 2
+    - sid: dl_2
+      op:
+        lock: m1
+      transfer:
+        next: dl_3
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:7:15: 7:32 (#0)'
+      bb_index: 6
+    - sid: dl_3
+      op:
+        drop: m1
+      transfer:
+        next: dl_4
+      bb_index: 7
+    - sid: dl_4
+      op:
+        drop: m0
+      transfer:
+        next: ret
+      bb_index: 8
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::lock_ba:
+    kind: normal
+    body:
+    - sid: dl_1
+      op:
+        lock: m1
+      transfer:
+        next: dl_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:11:15: 11:32 (#0)'
+      bb_index: 2
+    - sid: dl_2
+      op:
+        lock: m0
+      transfer:
+        next: dl_3
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:13:15: 13:32 (#0)'
+      bb_index: 6
+    - sid: dl_3
+      op:
+        drop: m0
+      transfer:
+        next: dl_4
+      bb_index: 7
+    - sid: dl_4
+      op:
+        drop: m1
+      transfer:
+        next: ret
+      bb_index: 8
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main:
+    kind: normal
+    body:
+    - sid: dl_1
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_2
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:33:17: 33:57 (#0)'
+      bb_index: 7
+    - sid: dl_2
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_3
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:38:17: 38:57 (#0)'
+      bb_index: 11
+    - sid: dl_3
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_4
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:40:13: 40:60 (#0)'
+      bb_index: 13
+    - sid: dl_4
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_5
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:41:13: 41:60 (#0)'
+      bb_index: 15
+    - sid: dl_5
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_6
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:42:13: 42:60 (#0)'
+      bb_index: 17
+    - sid: dl_6
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_7
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:43:13: 43:60 (#0)'
+      bb_index: 19
+    - sid: dl_7
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_8
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:44:13: 44:60 (#0)'
+      bb_index: 21
+    - sid: dl_8
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_9
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:45:13: 45:60 (#0)'
+      bb_index: 23
+    - sid: dl_9
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_10
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:46:13: 46:60 (#0)'
+      bb_index: 25
+    - sid: dl_10
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_11
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:47:13: 47:60 (#0)'
+      bb_index: 27
+    - sid: dl_11
+      op:
+        spawn: std::thread::spawn
+      transfer:
+        next: dl_12
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:48:13: 48:60 (#0)'
+      bb_index: 29
+    - sid: dl_12
+      op:
+        join: std::thread::{impl#11}::join
+      transfer:
+        next: ret
+      span: '/Users/kevin/local-repos/RustPTA/benchmarks/cases/deadlock/dl_10.rs:49:27: 49:35 (#0)'
+      bb_index: 36
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#0}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::lock_ab
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::lock_ab
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#10}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_9
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_9
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#1}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::lock_ba
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::lock_ba
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#2}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_1
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_1
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#3}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_2
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_2
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#4}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_3
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_3
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#5}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_4
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_4
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#6}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_5
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_5
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#7}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_6
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_6
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#8}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_7
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_7
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+  dl_10::main::{closure#9}:
+    kind: closure
+    body:
+    - sid: dl_1
+      op:
+        call: dl_10::helper_8
+      transfer:
+        next: dl_c1001
+      bb_index: 0
+    - sid: dl_c1001
+      op:
+        call: dl_10::helper_8
+      transfer:
+        next: ret
+      bb_index: 0
+    - sid: ret
+      transfer:
+        done: true
+goals:
+- id: G0
+  desc: std::thread::spawn completes
+  marking:
+    cp(std::thread::spawn, ret): 1
+entry: dl_10::main

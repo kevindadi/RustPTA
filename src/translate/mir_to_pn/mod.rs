@@ -1,8 +1,9 @@
-//! MIR 到 Petri 网转换主模块
+//! MIR → Petri net translation (main module).
 
 mod async_control;
 mod bb_graph;
 mod calls;
+mod cfg_utils;
 mod closure;
 mod concurrency;
 mod drop_unsafe;
@@ -11,19 +12,20 @@ mod thread_control;
 
 use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, InstanceId};
-use bb_graph::BasicBlockGraph;
-#[cfg(feature = "atomic-violation")]
-use bb_graph::SegState;
 use crate::{
     concurrency::blocking::LockGuardMap,
     memory::pointsto::{AliasAnalysis, AliasId},
     net::{Net, PlaceId, TransitionId},
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
 };
+use bb_graph::BasicBlockGraph;
+#[cfg(feature = "atomic-violation")]
+use bb_graph::SegState;
+use rustc_data_structures::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
-    BasicBlock, BasicBlockData, Local, Operand, Rvalue, Statement, StatementKind,
-    TerminatorKind, visit::Visitor,
+    BasicBlock, BasicBlockData, Local, Operand, Rvalue, Statement, StatementKind, TerminatorKind,
+    visit::Visitor,
 };
 use rustc_middle::{
     mir::{Body, Terminator},
@@ -48,6 +50,8 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     resources: &'translate ResourceRegistry,
     bb_graph: BasicBlockGraph,
     pub exclude_bb: HashSet<usize>,
+    back_edges: FxHashSet<(BasicBlock, BasicBlock)>,
+    break_cfg_cycles: bool,
     return_transition: TransitionId,
     entry_exit: (PlaceId, PlaceId),
     key_api_regex: &'translate KeyApiRegex,
@@ -71,7 +75,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         self.functions.counter()
     }
 
-    /// 按 join_id 从 spawn_calls 中 alias 匹配，返回可能对应的 spawn callee DefIds.
+    fn is_back_edge(&self, src: BasicBlock, target: BasicBlock) -> bool {
+        self.break_cfg_cycles && self.back_edges.contains(&(src, target))
+    }
+
+    /// Match `join_id` against `spawn_calls` via alias analysis; returns plausible spawn callee `DefId`s.
     fn get_matching_spawn_callees(&mut self, join_id: AliasId) -> Vec<DefId> {
         self.callgraph
             .get_spawn_calls(self.instance.def_id())
@@ -79,8 +87,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 spawn_calls
                     .iter()
                     .filter_map(|(spawn_dest_id, callees)| {
-                        let alias_kind =
-                            self.alias.borrow_mut().alias(join_id, *spawn_dest_id);
+                        let alias_kind = self.alias.borrow_mut().alias(join_id, *spawn_dest_id);
                         if alias_kind.may_alias(self.alias_unknown_policy) {
                             Some(callees.iter().copied())
                         } else {
@@ -108,6 +115,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         key_api_regex: &'translate KeyApiRegex,
         async_ctx: &'translate mut AsyncTranslateContext,
         alias_unknown_policy: crate::config::AliasUnknownPolicy,
+        break_cfg_cycles: bool,
     ) -> Self {
         let joinhandle_vec_locals: HashSet<Local> = body
             .local_decls
@@ -136,6 +144,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             resources,
             bb_graph: BasicBlockGraph::new(),
             exclude_bb: HashSet::new(),
+            back_edges: FxHashSet::default(),
+            break_cfg_cycles,
             return_transition: TransitionId::new(0),
             entry_exit,
             key_api_regex,
@@ -305,6 +315,10 @@ impl<'translate, 'analysis, 'tcx> Visitor<'tcx> for BodyToPetriNet<'translate, '
         }
 
         self.init_basic_block(body, &fn_name);
+
+        if self.break_cfg_cycles {
+            self.back_edges = cfg_utils::compute_back_edges(body);
+        }
 
         for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
             if bb.is_cleanup || bb.is_empty_unreachable() {
