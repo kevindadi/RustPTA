@@ -1,27 +1,12 @@
-**/target/
-<<<<<<< HEAD
-=======
 Cargo.lock
-.vscode
->>>>>>> e338b1a8de3832d828775b52de75504651f578ec
-*.dot
-/toys
-**/tmp
-RustPetriNet.tar.gz
-example/rayon
-/example
+target
+toys
+tmp
 
-<<<<<<< HEAD
 .vscode
-=======
-.DS_Store
->>>>>>> e338b1a8de3832d828775b52de75504651f578ec
 .cursor
 .claude
 mir_dump/
-
-**/__pycache__
-**/results/**
 
 # rustc single-file and no-link intermediates
 *.rcgu.o
