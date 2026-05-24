@@ -221,19 +221,6 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             return;
         }
 
-        // unsafe_info.iter().for_each(|(def_id, info)| {
-        //     log::debug!(
-        //         "{}:\n{}",
-        //         format_name(*def_id),
-        //         serde_json::to_string_pretty(&json!({
-        //             "unsafe_fn": info.is_unsafe_fn,
-        //             "unsafe_blocks": info.unsafe_blocks,
-        //             "unsafe_places": info.unsafe_places
-        //         }))
-        //         .unwrap()
-        //     )
-        // });
-
         let mut next_alias_id: u32 = 0;
         let mut alias_groups: HashMap<u32, Vec<(AliasId, String)>> = HashMap::new();
         let places_data: Vec<_> = unsafe_data
