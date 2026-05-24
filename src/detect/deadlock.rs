@@ -5,8 +5,7 @@ use crate::net::structure::TransitionType;
 use crate::report::{DeadlockReport, DeadlockState, DeadlockTrace};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use rustc_data_structures::fx::FxHashMap;
-use std::collections::{HashMap, HashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use std::time::Instant;
 
 pub struct DeadlockDetector<'a> {
@@ -24,9 +23,9 @@ impl<'a> DeadlockDetector<'a> {
 
         let reachability_deadlocks = self.detect_reachability_deadlock();
 
-        let dependency_deadlocks = HashSet::new();
+        let dependency_deadlocks = FxHashSet::default();
 
-        let all_deadlocks: HashSet<_> = reachability_deadlocks
+        let all_deadlocks: FxHashSet<_> = reachability_deadlocks
             .into_iter()
             .chain(dependency_deadlocks.into_iter())
             .collect();
@@ -50,8 +49,8 @@ impl<'a> DeadlockDetector<'a> {
         report
     }
 
-    fn detect_reachability_deadlock(&self) -> HashSet<NodeIndex> {
-        let mut deadlocks = HashSet::new();
+    fn detect_reachability_deadlock(&self) -> FxHashSet<NodeIndex> {
+        let mut deadlocks = FxHashSet::default();
 
         for node_idx in self.state_graph.graph.node_indices() {
             let state = self.state_graph.node(node_idx);
@@ -76,11 +75,11 @@ impl<'a> DeadlockDetector<'a> {
         deadlocks
     }
 
-    fn detect_cycle_deadlocks(&self) -> HashSet<NodeIndex> {
-        let mut deadlocks = HashSet::new();
-        let mut visited = HashSet::new();
-        let mut stack = HashSet::new();
-        let mut cycle_groups: FxHashMap<Vec<usize>, HashSet<NodeIndex>> = FxHashMap::default();
+    fn detect_cycle_deadlocks(&self) -> FxHashSet<NodeIndex> {
+        let mut deadlocks = FxHashSet::default();
+        let mut visited = FxHashSet::default();
+        let mut stack = FxHashSet::default();
+        let mut cycle_groups: FxHashMap<Vec<usize>, FxHashSet<NodeIndex>> = FxHashMap::default();
 
         for start_node in self.state_graph.graph.node_indices() {
             if !visited.contains(&start_node) {
@@ -106,9 +105,9 @@ impl<'a> DeadlockDetector<'a> {
     fn find_deadlock_cycles(
         &self,
         current: NodeIndex,
-        visited: &mut HashSet<NodeIndex>,
-        stack: &mut HashSet<NodeIndex>,
-        cycle_groups: &mut FxHashMap<Vec<usize>, HashSet<NodeIndex>>,
+        visited: &mut FxHashSet<NodeIndex>,
+        stack: &mut FxHashSet<NodeIndex>,
+        cycle_groups: &mut FxHashMap<Vec<usize>, FxHashSet<NodeIndex>>,
         current_path: &Vec<NodeIndex>,
     ) {
         visited.insert(current);
@@ -131,7 +130,7 @@ impl<'a> DeadlockDetector<'a> {
                         key.sort_unstable();
                         cycle_groups
                             .entry(key)
-                            .or_insert_with(HashSet::new)
+                            .or_default()
                             .extend(cycle);
                     }
                 }
@@ -141,10 +140,10 @@ impl<'a> DeadlockDetector<'a> {
         stack.remove(&current);
     }
 
-    fn get_consistently_blocked_transitions(&self, cycle: &[NodeIndex]) -> Option<HashSet<usize>> {
+    fn get_consistently_blocked_transitions(&self, cycle: &[NodeIndex]) -> Option<FxHashSet<usize>> {
         let lock_transitions = self.collect_lock_transitions();
-        let mut consistently_blocked = HashSet::new();
-        let all_locks: HashSet<_> = lock_transitions.keys().cloned().collect();
+        let mut consistently_blocked = FxHashSet::default();
+        let all_locks: FxHashSet<_> = lock_transitions.keys().cloned().collect();
 
         if let Some(&first_node) = cycle.first() {
             for (lock, transitions) in &lock_transitions {
@@ -158,7 +157,7 @@ impl<'a> DeadlockDetector<'a> {
         }
 
         for &node in &cycle[1..] {
-            let mut current_blocked = HashSet::new();
+            let mut current_blocked = FxHashSet::default();
             for &lock in &consistently_blocked {
                 if let Some(transitions) = lock_transitions.get(&lock) {
                     let blocked = transitions
@@ -197,8 +196,8 @@ impl<'a> DeadlockDetector<'a> {
         }
     }
 
-    fn collect_lock_transitions(&self) -> HashMap<usize, Vec<TransitionId>> {
-        let mut lock_transitions: HashMap<usize, Vec<TransitionId>> = HashMap::new();
+    fn collect_lock_transitions(&self) -> FxHashMap<usize, Vec<TransitionId>> {
+        let mut lock_transitions: FxHashMap<usize, Vec<TransitionId>> = FxHashMap::default();
 
         for edge in self.state_graph.graph.edge_weights() {
             match &edge.transition.transition_type {

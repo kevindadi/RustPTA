@@ -2,7 +2,10 @@
 
 use super::BodyToPetriNet;
 use crate::{
-    concurrency::blocking::{CondVarId, LockGuardId, LockGuardTy},
+    concurrency::{
+        atomic::{AtomicApi, atomic_api_from_name},
+        blocking::{CondVarId, LockGuardId, LockGuardTy},
+    },
     memory::pointsto::AliasId,
     net::{Idx, PlaceId, TransitionId, TransitionType},
     util::has_pn_attribute,
@@ -12,6 +15,10 @@ use rustc_middle::mir::{BasicBlock, Operand};
 use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
+    fn lock_node_for_guard(&self, guard_id: LockGuardId) -> Option<PlaceId> {
+        self.resources.locks().get(&guard_id.get_alias_id()).copied()
+    }
+
     pub(super) fn handle_lock_call(
         &mut self,
         bb_idx: BasicBlock,
@@ -25,8 +32,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         let lockguard_id = LockGuardId::new(self.instance_id, destination.local);
         if let Some(guard) = self.lockguards.get(&lockguard_id) {
-            let lock_alias = lockguard_id.get_alias_id();
-            let lock_node = self.resources.locks().get(&lock_alias).unwrap();
+            let Some(lock_node) = self.lock_node_for_guard(lockguard_id) else {
+                return None;
+            };
 
             let call_type = match &guard.lockguard_ty {
                 LockGuardTy::StdMutex(_)
@@ -38,7 +46,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 _ => TransitionType::RwLockWrite(lock_node.index()),
             };
 
-            self.update_lock_transition(bb_end, lock_node);
+            self.update_lock_transition(bb_end, &lock_node);
             self.connect_to_target(bb_idx, bb_end, target);
             Some(call_type)
         } else {
@@ -120,22 +128,22 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: &BasicBlock,
         span: &str,
     ) -> bool {
-        if callee_func_name.contains("::load") {
-            if !self.handle_atomic_load(args, bb_end, target, bb_idx, span) {
-                log::debug!("no alias found for atomic load in {:?}", span);
-                self.connect_to_target(*bb_idx, bb_end, target);
+        match atomic_api_from_name(callee_func_name) {
+            Some(AtomicApi::Read) => {
+                if !self.handle_atomic_load(args, bb_end, target, bb_idx, span) {
+                    log::debug!("no alias found for atomic load in {:?}", span);
+                    self.connect_to_target(*bb_idx, bb_end, target);
+                }
+                true
             }
-            return true;
-        } else if callee_func_name.contains("::store") {
-            if !self.handle_atomic_store(args, bb_end, target, bb_idx, span) {
-                log::debug!("no alias found for atomic store in {:?}", span);
-                self.connect_to_target(*bb_idx, bb_end, target);
+            Some(AtomicApi::Write) => {
+                if !self.handle_atomic_store(args, bb_end, target, bb_idx, span) {
+                    log::debug!("no alias found for atomic store in {:?}", span);
+                    self.connect_to_target(*bb_idx, bb_end, target);
+                }
+                true
             }
-            return true;
-        } else if callee_func_name.contains("::compare_exchange") {
-            false
-        } else {
-            false
+            _ => false,
         }
     }
 
@@ -278,10 +286,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 self.instance_id,
                 args.get(1).unwrap().node.place().unwrap().local,
             );
-            let lock_alias = guard_id.get_alias_id();
-            let lock_node = self.resources.locks().get(&lock_alias).unwrap();
-            self.net.add_output_arc(*lock_node, bb_end, 1);
-            self.net.add_input_arc(*lock_node, bb_ret, 1);
+            let Some(lock_node) = self.lock_node_for_guard(guard_id) else {
+                return false;
+            };
+            self.net.add_output_arc(lock_node, bb_end, 1);
+            self.net.add_input_arc(lock_node, bb_ret, 1);
 
             self.connect_to_target(*bb_idx, bb_ret, target);
             true
@@ -413,13 +422,15 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 args.get(0).unwrap().node.place().unwrap().local,
             );
             if self.lockguards.get(&lockguard_id).is_some() {
-                let lock_alias = lockguard_id.get_alias_id();
-                let lock_node = self.resources.locks().get(&lock_alias).unwrap();
+                let Some(lock_node) = self.lock_node_for_guard(lockguard_id) else {
+                    self.connect_to_target(bb_idx, bb_end, target);
+                    return;
+                };
                 match &self.lockguards[&lockguard_id].lockguard_ty {
                     LockGuardTy::StdMutex(_)
                     | LockGuardTy::ParkingLotMutex(_)
                     | LockGuardTy::SpinMutex(_) => {
-                        self.net.add_output_arc(*lock_node, bb_end, 1);
+                        self.net.add_output_arc(lock_node, bb_end, 1);
 
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
                             transition.transition_type = TransitionType::Unlock(lock_node.index());
@@ -429,14 +440,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     LockGuardTy::StdRwLockRead(_)
                     | LockGuardTy::ParkingLotRead(_)
                     | LockGuardTy::SpinRead(_) => {
-                        self.net.add_output_arc(*lock_node, bb_end, 1);
+                        self.net.add_output_arc(lock_node, bb_end, 1);
 
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
                             transition.transition_type = TransitionType::Unlock(lock_node.index());
                         }
                     }
                     _ => {
-                        self.net.add_output_arc(*lock_node, bb_end, 10);
+                        self.net.add_output_arc(lock_node, bb_end, 10);
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
                             transition.transition_type = TransitionType::Unlock(lock_node.index());
                         }

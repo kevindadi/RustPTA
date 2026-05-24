@@ -3,6 +3,7 @@ target
 toys
 tmp
 docs
+tools
 
 .vscode
 .cursor

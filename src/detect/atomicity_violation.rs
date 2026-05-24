@@ -8,7 +8,7 @@ use crate::report::{AtomicOperation, AtomicReport, AtomicViolation, ViolationPat
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::{Direction, stable_graph::StableGraph};
-use std::collections::{HashMap, HashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use std::time::Instant;
 
 pub struct AtomicityViolationDetector<'a> {
@@ -49,11 +49,11 @@ impl<'a> AtomicityViolationDetector<'a> {
     fn collect_atomic_operations(
         &self,
     ) -> (
-        HashMap<TransitionId, AtomicOp>,
-        HashMap<TransitionId, AtomicOp>,
+        FxHashMap<TransitionId, AtomicOp>,
+        FxHashMap<TransitionId, AtomicOp>,
     ) {
-        let mut loads = HashMap::new();
-        let mut stores = HashMap::new();
+        let mut loads = FxHashMap::default();
+        let mut stores = FxHashMap::default();
 
         for edge in self.state_graph.graph.edge_weights() {
             match &edge.transition.transition_type {
@@ -81,8 +81,8 @@ impl<'a> AtomicityViolationDetector<'a> {
 
     fn check_violations(
         &self,
-        loads: HashMap<TransitionId, AtomicOp>,
-        stores: HashMap<TransitionId, AtomicOp>,
+        loads: FxHashMap<TransitionId, AtomicOp>,
+        stores: FxHashMap<TransitionId, AtomicOp>,
     ) -> Vec<ViolationPattern> {
         let mut all_violations = Vec::new();
         let graph = &self.state_graph.graph;
@@ -101,7 +101,7 @@ impl<'a> AtomicityViolationDetector<'a> {
             }
         }
 
-        let mut pattern_map: HashMap<ViolationPattern, Vec<Vec<(usize, u8)>>> = HashMap::new();
+        let mut pattern_map: FxHashMap<ViolationPattern, Vec<Vec<(usize, u8)>>> = FxHashMap::default();
 
         for violation in all_violations {
             let pattern = ViolationPattern {
@@ -129,10 +129,10 @@ impl<'a> AtomicityViolationDetector<'a> {
         graph: &StableGraph<StateNode, StateEdge>,
         load_state: NodeIndex,
         load_op: &AtomicOp,
-        stores: &HashMap<TransitionId, AtomicOp>,
+        stores: &FxHashMap<TransitionId, AtomicOp>,
     ) -> Option<AtomicViolation> {
-        let mut visited = HashSet::new();
-        let mut write_operations = HashSet::new();
+        let mut visited = FxHashSet::default();
+        let mut write_operations = FxHashSet::default();
         let mut stack = vec![load_state];
 
         while let Some(current) = stack.pop() {

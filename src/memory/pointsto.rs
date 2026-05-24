@@ -2,7 +2,7 @@ extern crate rustc_hir;
 extern crate rustc_index;
 
 use std::cmp::{Ordering, PartialOrd};
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -26,6 +26,7 @@ use crate::concurrency::blocking::{CondVarId, LockGuardId};
 use crate::concurrency::channel::ChannelId;
 use crate::memory::ownership;
 use crate::translate::callgraph::{CallGraph, CallGraphNode, CallSiteLocation, InstanceId};
+use crate::translate::mir_utils::operand_place;
 
 pub struct Andersen<'a, 'tcx> {
     body: &'a Body<'tcx>,
@@ -575,7 +576,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
 
     fn process_generic_call(&mut self, args: &[Spanned<Operand<'tcx>>], destination: &Place<'tcx>) {
         for arg in args {
-            if let Operand::Move(place) | Operand::Copy(place) = arg.node {
+            if let Some(place) = operand_place(&arg.node) {
                 self.graph.add_copy(destination.as_ref(), place.as_ref());
             }
         }
@@ -1335,16 +1336,16 @@ impl<'a, 'tcx> AliasAnalysis<'a, 'tcx> {
         let pts2 = points_to_map.get(&node2)?;
 
         if !pts1.is_disjoint(pts2) {
-            let allocs1: HashSet<_> = pts1
+            let allocs1: FxHashSet<_> = pts1
                 .iter()
                 .filter(|n| matches!(n, ConstraintNode::Alloc(_) | ConstraintNode::Place(_)))
                 .collect();
-            let allocs2: HashSet<_> = pts2
+            let allocs2: FxHashSet<_> = pts2
                 .iter()
                 .filter(|n| matches!(n, ConstraintNode::Alloc(_) | ConstraintNode::Place(_)))
                 .collect();
 
-            let common_allocs: HashSet<_> = allocs1.intersection(&allocs2).collect();
+            let common_allocs: FxHashSet<_> = allocs1.intersection(&allocs2).collect();
 
             if !common_allocs.is_empty() {
                 return Some(ApproximateAliasKind::Probably);
