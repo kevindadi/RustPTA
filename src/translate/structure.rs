@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-
 use regex::Regex;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 
 use crate::concurrency::atomic::AtomicOrdering;
@@ -9,84 +7,84 @@ use crate::config::PnConfig;
 use crate::{memory::pointsto::AliasId, net::PlaceId};
 
 pub struct ResourceRegistry {
-    locks: HashMap<AliasId, PlaceId>,
-    condvars: HashMap<AliasId, PlaceId>,
+    locks: FxHashMap<AliasId, PlaceId>,
+    condvars: FxHashMap<AliasId, PlaceId>,
     /// Each alias may map to multiple places (after dropping first-match, one pointer may alias several atomics).
-    atomic_places: HashMap<AliasId, Vec<PlaceId>>,
-    atomic_orders: HashMap<AliasId, AtomicOrdering>,
-    unsafe_places: HashMap<AliasId, PlaceId>,
-    channel_places: HashMap<AliasId, PlaceId>,
+    atomic_places: FxHashMap<AliasId, Vec<PlaceId>>,
+    atomic_orders: FxHashMap<AliasId, AtomicOrdering>,
+    unsafe_places: FxHashMap<AliasId, PlaceId>,
+    channel_places: FxHashMap<AliasId, PlaceId>,
 }
 
 impl ResourceRegistry {
     pub fn new() -> Self {
         Self {
-            locks: HashMap::default(),
-            condvars: HashMap::default(),
-            atomic_places: HashMap::default(),
-            atomic_orders: HashMap::default(),
-            unsafe_places: HashMap::default(),
-            channel_places: HashMap::default(),
+            locks: FxHashMap::default(),
+            condvars: FxHashMap::default(),
+            atomic_places: FxHashMap::default(),
+            atomic_orders: FxHashMap::default(),
+            unsafe_places: FxHashMap::default(),
+            channel_places: FxHashMap::default(),
         }
     }
 
-    pub fn locks(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn locks(&self) -> &FxHashMap<AliasId, PlaceId> {
         &self.locks
     }
 
-    pub fn locks_mut(&mut self) -> &mut HashMap<AliasId, PlaceId> {
+    pub fn locks_mut(&mut self) -> &mut FxHashMap<AliasId, PlaceId> {
         &mut self.locks
     }
 
-    pub fn condvars(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn condvars(&self) -> &FxHashMap<AliasId, PlaceId> {
         &self.condvars
     }
 
-    pub fn condvars_mut(&mut self) -> &mut HashMap<AliasId, PlaceId> {
+    pub fn condvars_mut(&mut self) -> &mut FxHashMap<AliasId, PlaceId> {
         &mut self.condvars
     }
 
-    pub fn atomic_places(&self) -> &HashMap<AliasId, Vec<PlaceId>> {
+    pub fn atomic_places(&self) -> &FxHashMap<AliasId, Vec<PlaceId>> {
         &self.atomic_places
     }
 
-    pub fn atomic_places_mut(&mut self) -> &mut HashMap<AliasId, Vec<PlaceId>> {
+    pub fn atomic_places_mut(&mut self) -> &mut FxHashMap<AliasId, Vec<PlaceId>> {
         &mut self.atomic_places
     }
 
-    pub fn atomic_orders(&self) -> &HashMap<AliasId, AtomicOrdering> {
+    pub fn atomic_orders(&self) -> &FxHashMap<AliasId, AtomicOrdering> {
         &self.atomic_orders
     }
 
-    pub fn atomic_orders_mut(&mut self) -> &mut HashMap<AliasId, AtomicOrdering> {
+    pub fn atomic_orders_mut(&mut self) -> &mut FxHashMap<AliasId, AtomicOrdering> {
         &mut self.atomic_orders
     }
 
-    pub fn unsafe_places(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn unsafe_places(&self) -> &FxHashMap<AliasId, PlaceId> {
         &self.unsafe_places
     }
 
-    pub fn unsafe_places_mut(&mut self) -> &mut HashMap<AliasId, PlaceId> {
+    pub fn unsafe_places_mut(&mut self) -> &mut FxHashMap<AliasId, PlaceId> {
         &mut self.unsafe_places
     }
 
-    pub fn channel_places(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn channel_places(&self) -> &FxHashMap<AliasId, PlaceId> {
         &self.channel_places
     }
 
-    pub fn channel_places_mut(&mut self) -> &mut HashMap<AliasId, PlaceId> {
+    pub fn channel_places_mut(&mut self) -> &mut FxHashMap<AliasId, PlaceId> {
         &mut self.channel_places
     }
 }
 
 pub struct FunctionRegistry {
-    counter: HashMap<DefId, (PlaceId, PlaceId)>,
+    counter: FxHashMap<DefId, (PlaceId, PlaceId)>,
 }
 
 impl FunctionRegistry {
     pub fn new() -> Self {
         Self {
-            counter: HashMap::new(),
+            counter: FxHashMap::default(),
         }
     }
 
@@ -98,7 +96,7 @@ impl FunctionRegistry {
         self.counter.insert(def_id, (start, end));
     }
 
-    pub fn counter(&self) -> &HashMap<DefId, (PlaceId, PlaceId)> {
+    pub fn counter(&self) -> &FxHashMap<DefId, (PlaceId, PlaceId)> {
         &self.counter
     }
 
@@ -107,8 +105,8 @@ impl FunctionRegistry {
         F: FnOnce() -> (PlaceId, PlaceId),
     {
         match self.counter.entry(def_id) {
-            Entry::Occupied(existing) => *existing.get(),
-            Entry::Vacant(vacant) => {
+            std::collections::hash_map::Entry::Occupied(existing) => *existing.get(),
+            std::collections::hash_map::Entry::Vacant(vacant) => {
                 let place_pair = create();
                 vacant.insert(place_pair);
                 place_pair

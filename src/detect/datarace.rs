@@ -3,8 +3,9 @@ use crate::net::index_vec::Idx;
 use crate::net::structure::TransitionType;
 use crate::report::{RaceCondition, RaceOperation, RaceReport};
 use petgraph::graph::NodeIndex;
-use std::collections::HashMap;
 use std::time::Instant;
+
+use rustc_data_structures::fx::FxHashMap;
 
 pub struct DataRaceDetector<'a> {
     state_graph: &'a StateGraph,
@@ -82,7 +83,7 @@ impl<'a> DataRaceDetector<'a> {
     }
 
     fn merge_race_conditions(&self, conditions: Vec<RaceCondition>) -> Vec<RaceCondition> {
-        let mut merged = HashMap::new();
+        let mut merged = FxHashMap::default();
 
         for condition in conditions {
             let key = (

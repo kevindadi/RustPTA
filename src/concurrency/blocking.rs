@@ -1,8 +1,6 @@
 extern crate rustc_data_structures;
 extern crate rustc_span;
 
-use std::collections::HashMap;
-
 use rustc_middle::ty::{EarlyBinder, TyKind, TypingEnv};
 
 use rustc_data_structures::fx::FxHashMap;
@@ -45,7 +43,7 @@ impl CondVarId {
     }
 }
 
-pub type CondvarMap<'tcx> = HashMap<CondVarId, String>;
+pub type CondvarMap<'tcx> = FxHashMap<CondVarId, String>;
 
 #[derive(Clone, Debug)]
 pub enum LockGuardTy<'tcx> {

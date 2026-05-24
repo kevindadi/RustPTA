@@ -1,19 +1,19 @@
 //! Async translation context: tracks task lifecycle while building the Petri net.
 
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
-use std::collections::HashMap;
 
 use crate::net::PlaceId;
-use crate::translate::async_ppn::{add_task_lifecycle_places, add_worker_place, TaskId};
 use crate::translate::async_ppn::TaskLifecyclePlaces;
+use crate::translate::async_ppn::{TaskId, add_task_lifecycle_places, add_worker_place};
 
 /// Stateful helper used during Petri-net construction for async tasks.
 #[derive(Default)]
 pub struct AsyncTranslateContext {
     pub worker_place: Option<PlaceId>,
     pub worker_count: u64,
-    pub spawn_to_task: HashMap<DefId, TaskId>,
-    pub task_lifecycle: HashMap<usize, TaskLifecyclePlaces>,
+    pub spawn_to_task: FxHashMap<DefId, TaskId>,
+    pub task_lifecycle: FxHashMap<usize, TaskLifecyclePlaces>,
     next_task_id: usize,
 }
 
@@ -22,8 +22,8 @@ impl AsyncTranslateContext {
         Self {
             worker_place: None,
             worker_count,
-            spawn_to_task: HashMap::new(),
-            task_lifecycle: HashMap::new(),
+            spawn_to_task: FxHashMap::default(),
+            task_lifecycle: FxHashMap::default(),
             next_task_id: 0,
         }
     }

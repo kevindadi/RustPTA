@@ -13,7 +13,6 @@ use petgraph::visit::IntoNodeReferences;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -24,7 +23,7 @@ use crate::memory::pointsto::AliasAnalysis;
 use crate::net::{Net, Place, PlaceId};
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
-fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
+fn find(union_find: &FxHashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
     let mut current = x;
     while union_find[current] != *current {
         current = &union_find[current];
@@ -32,7 +31,7 @@ fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> Lock
     current.clone()
 }
 
-fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
+fn union(union_find: &mut FxHashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
     let root_x = find(union_find, x);
     let root_y = find(union_find, y);
     if root_x != root_y {
@@ -93,7 +92,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             callgraph,
             alias,
             functions: FunctionRegistry::new(),
-            lock_info: Arc::new(HashMap::default()),
+            lock_info: Arc::new(FxHashMap::default()),
             resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
             async_ctx: AsyncTranslateContext::new(1),
@@ -107,7 +106,8 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         channel_collector.analyze();
         channel_collector.to_json_pretty().unwrap();
 
-        let mut span_groups: HashMap<String, Vec<(AliasId, ChannelInfo<'tcx>)>> = HashMap::new();
+        let mut span_groups: FxHashMap<String, Vec<(AliasId, ChannelInfo<'tcx>)>> =
+            FxHashMap::default();
 
         for (id, info) in channel_collector.channels {
             let key_string = format!("{:?}", info.span)
@@ -201,7 +201,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             } else {
                 place_ids
                     .into_iter()
-                    .collect::<HashSet<_>>()
+                    .collect::<FxHashSet<_>>()
                     .into_iter()
                     .collect()
             };
@@ -222,7 +222,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         }
 
         let mut next_alias_id: u32 = 0;
-        let mut alias_groups: HashMap<u32, Vec<(AliasId, String)>> = HashMap::new();
+        let mut alias_groups: FxHashMap<u32, Vec<(AliasId, String)>> = FxHashMap::default();
         let places_data: Vec<_> = unsafe_data
             .unsafe_places
             .iter()
@@ -305,7 +305,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
     fn translate_all_functions(&mut self, key_api_regex: &KeyApiRegex) {
         let reachable = self.reachable_instance_ids();
-        let mut visited_func_id = HashSet::<DefId>::new();
+        let mut visited_func_id = FxHashSet::<DefId>::default();
         for (node, caller) in self.callgraph.graph.node_references() {
             if let Some(ref set) = reachable {
                 if !set.contains(&node) {
@@ -597,7 +597,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             info.extend(map);
         }
 
-        let mut union_find: HashMap<LockGuardId, LockGuardId> = HashMap::new();
+        let mut union_find: FxHashMap<LockGuardId, LockGuardId> = FxHashMap::default();
         let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect();
 
         for lock_id in &lockid_vec {
@@ -623,7 +623,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             }
         }
 
-        let mut temp_groups: HashMap<LockGuardId, Vec<LockGuardId>> = HashMap::new();
+        let mut temp_groups: FxHashMap<LockGuardId, Vec<LockGuardId>> = FxHashMap::default();
         for lock_id in &lockid_vec {
             let root = find(&union_find, lock_id);
             temp_groups.entry(root).or_default().push(lock_id.clone());
@@ -730,11 +730,11 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         })
     }
 
-    pub fn unsafe_places(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn unsafe_places(&self) -> &FxHashMap<AliasId, PlaceId> {
         self.resources.unsafe_places()
     }
 
-    pub fn channel_places(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn channel_places(&self) -> &FxHashMap<AliasId, PlaceId> {
         self.resources.channel_places()
     }
 }
