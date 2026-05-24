@@ -19,9 +19,6 @@ use std::time::Instant;
 
 use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use crate::cir::mir_emitter::CirMirEmitter;
-use crate::cir::resource_table::ResourceTable;
-use crate::cir::types::FunctionKind;
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::AliasAnalysis;
 use crate::net::{Net, Place, PlaceId};
@@ -57,9 +54,6 @@ pub struct PetriNet<'analysis, 'tcx> {
     pub async_ctx: AsyncTranslateContext,
     /// MIR→CIR-only async context (separate from `async_ctx` to avoid task-id clashes with the Petri net).
     pub async_ctx_cir: AsyncTranslateContext,
-    pub cir_resource_table: ResourceTable,
-    pub cir_spawn_targets: BTreeSet<String>,
-    pub cir_functions: BTreeMap<String, crate::cir::types::CirFunction>,
 }
 
 impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
@@ -104,9 +98,6 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
             async_ctx: AsyncTranslateContext::new(1),
             async_ctx_cir: AsyncTranslateContext::new(1),
-            cir_resource_table: ResourceTable::from_transitions(std::iter::empty()),
-            cir_spawn_targets: BTreeSet::new(),
-            cir_functions: BTreeMap::new(),
         }
     }
 

@@ -2,5 +2,5 @@
 #![warn(non_snake_case)]
 
 fn main() {
-    RustPTA::run();
+    rust_petri_net_analysis::run();
 }
