@@ -212,32 +212,73 @@ impl fmt::Display for IncidentReport {
                 writeln!(f, "  {}", incident.developer_explanation)?;
             }
             writeln!(f)?;
-            writeln!(f, "State evidence:")?;
-            if let Some(state_id) = &incident.state_id {
-                writeln!(f, "  state id       : {}", state_id)?;
-            }
-            if !incident.evidence.incoming_trace.is_empty() {
-                writeln!(
-                    f,
-                    "  incoming trace : {}",
-                    incident.evidence.incoming_trace.join(" -> ")
-                )?;
-            }
-            if !incident.diagnosis.conflicting_operations.is_empty() {
-                writeln!(f, "  conflicts      :")?;
-                for operation in &incident.diagnosis.conflicting_operations {
-                    writeln!(f, "    - {}", operation)?;
+            if incident.kind == "deadlock" {
+                writeln!(f, "Deadlock state:")?;
+                if let Some(state_id) = &incident.state_id {
+                    writeln!(f, "  state id : {}", state_id)?;
                 }
-            }
-            writeln!(f, "  why bug        : {}", incident.diagnosis.why_bug)?;
-            writeln!(f)?;
-            writeln!(f, "Relevant marking:")?;
-            if incident.evidence.marking.is_empty() {
-                writeln!(f, "  No marked places were recorded for this incident.")?;
+                writeln!(f, "  reason   : {}", incident.diagnosis.why_bug)?;
+
+                let active_places = incident
+                    .evidence
+                    .marking
+                    .iter()
+                    .filter(|mark| mark.span.is_some())
+                    .collect::<Vec<_>>();
+                let resource_places = incident
+                    .evidence
+                    .marking
+                    .iter()
+                    .filter(|mark| mark.span.is_none())
+                    .collect::<Vec<_>>();
+
+                if !active_places.is_empty() {
+                    writeln!(f)?;
+                    writeln!(f, "  active control places:")?;
+                    for mark in active_places {
+                        let span = mark.span.as_deref().unwrap_or_default();
+                        writeln!(f, "    - {} tokens={} at {}", mark.place, mark.tokens, span)?;
+                    }
+                }
+
+                if !resource_places.is_empty() {
+                    writeln!(f)?;
+                    writeln!(f, "  resource tokens:")?;
+                    for mark in resource_places {
+                        writeln!(f, "    - {} tokens={}", mark.place, mark.tokens)?;
+                    }
+                }
             } else {
-                for mark in &incident.evidence.marking {
-                    let span = mark.span.as_deref().unwrap_or("span unavailable");
-                    writeln!(f, "  - {:<40} tokens={}  {}", mark.place, mark.tokens, span)?;
+                writeln!(f, "State evidence:")?;
+                if let Some(state_id) = &incident.state_id {
+                    writeln!(f, "  state id       : {}", state_id)?;
+                }
+                if !incident.evidence.incoming_trace.is_empty() {
+                    writeln!(
+                        f,
+                        "  incoming trace : {}",
+                        incident.evidence.incoming_trace.join(" -> ")
+                    )?;
+                }
+                if !incident.diagnosis.conflicting_operations.is_empty() {
+                    writeln!(f, "  conflicts      :")?;
+                    for operation in &incident.diagnosis.conflicting_operations {
+                        writeln!(f, "    - {}", operation)?;
+                    }
+                }
+                writeln!(f, "  why bug        : {}", incident.diagnosis.why_bug)?;
+                writeln!(f)?;
+                writeln!(f, "Relevant marking:")?;
+                if incident.evidence.marking.is_empty() {
+                    writeln!(f, "  No marked places were recorded for this incident.")?;
+                } else {
+                    for mark in &incident.evidence.marking {
+                        if let Some(span) = mark.span.as_deref() {
+                            writeln!(f, "  - {} tokens={} at {}", mark.place, mark.tokens, span)?;
+                        } else {
+                            writeln!(f, "  - {} tokens={}", mark.place, mark.tokens)?;
+                        }
+                    }
                 }
             }
             writeln!(f)?;
@@ -373,11 +414,14 @@ fn render_source_location(location: &SourceLocation) -> String {
 }
 
 fn marking_evidence(place: &str, tokens: u8) -> MarkingEvidence {
-    if let Some((name, span)) = place.rsplit_once(" (") {
+    if let Some((name, span)) = place.split_once(" (") {
         MarkingEvidence {
             place: name.to_string(),
             tokens,
-            span: Some(span.trim_end_matches(')').to_string()),
+            span: span
+                .strip_suffix(')')
+                .filter(|span| !span.is_empty())
+                .map(str::to_string),
         }
     } else {
         MarkingEvidence {
@@ -853,7 +897,7 @@ mod tests {
                         "thread_a_after_lock_mutex_0 (src/main.rs:40:5)".to_string(),
                         1,
                     ),
-                    ("mutex_0_resource (src/main.rs:42:17)".to_string(), 0),
+                    ("Mutex_0 ()".to_string(), 0),
                 ],
                 description: "Deadlock state with blocked resources".to_string(),
                 blocked_transitions: Vec::new(),
@@ -886,8 +930,14 @@ mod tests {
         let explanation = text.find("Developer explanation:").unwrap();
         let first_incident = text.find("Incident deadlock-1").unwrap();
         assert!(explanation < first_incident);
-        assert!(text.contains("State evidence:"));
-        assert!(text.contains("Relevant marking:"));
+        assert!(text.contains("Deadlock state:"));
+        assert!(text.contains("  state id : s37"));
+        assert!(text.contains("  reason   : Deadlock state with blocked resources"));
+        assert!(text.contains("  active control places:"));
+        assert!(text.contains("  resource tokens:"));
+        assert!(!text.contains("State evidence:"));
+        assert!(!text.contains("Relevant marking:"));
+        assert!(!text.contains("Path reconstruction not implemented yet"));
         assert!(text.contains("Suggested next steps:"));
         assert!(text.contains("stategraph.dot"));
         assert!(text.contains("petrinet.dot"));
@@ -969,6 +1019,24 @@ mod tests {
         assert!(text.contains("last resource use"));
         assert!(text.contains("s0 -> s1: thread_a_lock [Lock acquisition] at src/main.rs:8:5"));
         assert!(text.contains("Mutex_0: 1 -> 0"));
+    }
+
+    #[test]
+    fn deadlock_display_formats_marking_spans_with_nested_parentheses() {
+        let mut report = sample_deadlock_report();
+        report.deadlock_states[0].marking = vec![
+            (
+                "main_3_wait (src/main.rs:163:5: 163:29 (#0))".to_string(),
+                1,
+            ),
+            ("Mutex_0 ()".to_string(), 1),
+        ];
+
+        let text = report.to_string();
+
+        assert!(text.contains("  - main_3_wait tokens=1 at src/main.rs:163:5: 163:29 (#0)"));
+        assert!(text.contains("  - Mutex_0 tokens=1"));
+        assert!(!text.contains("main_3_wait (src/main.rs"));
     }
 
     #[test]
