@@ -229,25 +229,29 @@ impl<'a> DeadlockDetector<'a> {
             .any(|summary| summary.id == transition_id)
     }
 
-    /// Find resource-related transitions that are blocked in the given state.
-    /// Scopes to: Lock, RwLockRead, RwLockWrite, UnsafeOperation, AtomicOperation.
     fn find_blocked_resource_transitions(
         &self,
         state: NodeIndex,
     ) -> Vec<crate::report::BlockedTransition> {
+        use crate::net::structure::PlaceType;
         use crate::report::{BlockedTransition, ResourceStatus};
 
         let state_node = self.state_graph.node(state);
+        let net = match &self.state_graph.net {
+            Some(net) => net,
+            None => return Vec::new(),
+        };
+        let token_count = |place: PlaceId| state_node.marking.0.get(place).copied().unwrap_or(0);
+        let place_names: FxHashMap<PlaceId, (String, String)> = net
+            .places
+            .iter_enumerated()
+            .map(|(place_id, place)| (place_id, (place.name.clone(), place.span.clone())))
+            .collect();
         let mut blocked = Vec::new();
 
-        // Iterate through all transitions in the state graph edges
-        for edge in self.state_graph.graph.edge_weights() {
-            let trans = &edge.transition;
-            let transition_id = trans.id;
-
-            // Only consider resource-related transitions
-            let is_resource_op = matches!(
-                trans.transition_type,
+        for (transition_id, transition) in net.transitions.iter_enumerated() {
+            let is_resource_operation = matches!(
+                &transition.transition_type,
                 TransitionType::Lock(_)
                     | TransitionType::RwLockRead(_)
                     | TransitionType::RwLockWrite(_)
@@ -257,56 +261,71 @@ impl<'a> DeadlockDetector<'a> {
                     | TransitionType::AtomicStore(_, _, _, _)
                     | TransitionType::AtomicCmpXchg(_, _, _, _, _)
             );
-            if !is_resource_op {
+            if !is_resource_operation || self.is_transition_enabled(state, transition_id) {
                 continue;
             }
 
-            // Skip if this transition is already enabled in current state
-            if self.is_transition_enabled(state, transition_id) {
+            let pre_places: Vec<(PlaceId, u64, PlaceType)> = net
+                .places
+                .iter_enumerated()
+                .filter_map(|(place_id, place)| {
+                    let weight = *net.pre.get(place_id, transition_id);
+                    (weight > 0).then(|| (place_id, weight, place.place_type.clone()))
+                })
+                .collect();
+            if pre_places.is_empty() {
                 continue;
             }
 
-            // Get required resources from the net's pre arcs
-            let needed: Vec<(PlaceId, u64)> = self
-                .state_graph
-                .get_transition_resources(transition_id);
-
-            if needed.is_empty() {
-                continue;
-            }
-
-            // Build resource status for each needed resource
-            let resource_status: Vec<ResourceStatus> = needed
+            let control_places: Vec<(PlaceId, u64)> = pre_places
                 .iter()
-                .map(|(place_id, needed_tokens)| {
-                    let has = state_node.marking.0.get(*place_id).copied().unwrap_or(0);
-                    let place_name = state_node
-                        .places
-                        .iter()
-                        .find(|p| p.place == *place_id)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| format!("place#{}", place_id.index()));
-                    ResourceStatus {
-                        resource_name: place_name,
-                        has,
-                        needs: *needed_tokens,
-                    }
+                .filter_map(|(place_id, weight, place_type)| {
+                    matches!(place_type, PlaceType::BasicBlock | PlaceType::FunctionStart)
+                        .then_some((*place_id, *weight))
+                })
+                .collect();
+            let resource_places: Vec<(PlaceId, u64)> = pre_places
+                .iter()
+                .filter_map(|(place_id, weight, place_type)| {
+                    matches!(place_type, PlaceType::Resources).then_some((*place_id, *weight))
                 })
                 .collect();
 
-            // Determine source location from the last place with tokens that feeds this transition
-            let location = state_node
-                .places
+            if !control_places
                 .iter()
-                .find(|p| {
-                    state_node.marking.0.get(p.place).map_or(false, |&t| t > 0)
-                        && needed.iter().any(|(pid, _)| *pid == p.place)
-                })
-                .map(|p| p.span.clone())
-                .unwrap_or_default();
+                .any(|(place_id, _)| token_count(*place_id) > 0)
+            {
+                continue;
+            }
 
-            // Determine operation type string
-            let operation = match &trans.transition_type {
+            let resource_status: Vec<ResourceStatus> = resource_places
+                .iter()
+                .filter_map(|(place_id, weight)| {
+                    let has = token_count(*place_id);
+                    if has >= *weight {
+                        return None;
+                    }
+                    let (resource_name, _) = place_names
+                        .get(place_id)
+                        .cloned()
+                        .unwrap_or_else(|| (format!("place#{}", place_id.index()), String::new()));
+                    Some(ResourceStatus {
+                        resource_name,
+                        has,
+                        needs: *weight,
+                    })
+                })
+                .collect();
+            if resource_status.is_empty() {
+                continue;
+            }
+
+            let location = control_places
+                .iter()
+                .find(|(place_id, _)| token_count(*place_id) > 0)
+                .and_then(|(place_id, _)| place_names.get(place_id).map(|(_, span)| span.clone()))
+                .unwrap_or_default();
+            let operation = match &transition.transition_type {
                 TransitionType::Lock(_) => "Lock acquisition",
                 TransitionType::RwLockRead(_) => "RwLock read lock",
                 TransitionType::RwLockWrite(_) => "RwLock write lock",
@@ -318,15 +337,14 @@ impl<'a> DeadlockDetector<'a> {
                 _ => "Resource operation",
             }
             .to_string();
-
-            let needed_resources: Vec<String> = resource_status
+            let needed_resources = resource_status
                 .iter()
-                .map(|rs| rs.resource_name.clone())
+                .map(|status| status.resource_name.clone())
                 .collect();
 
             blocked.push(BlockedTransition {
                 id: format!("t{}", transition_id.index()),
-                name: trans.name.clone(),
+                name: transition.name.clone(),
                 location,
                 operation,
                 needed_resources,
@@ -385,7 +403,7 @@ mod tests {
     use super::*;
     use crate::analysis::reachability::StateGraph;
     use crate::net::Net;
-    use crate::net::structure::{Place, PlaceType, Transition};
+    use crate::net::structure::{Place, PlaceType, Transition, TransitionType};
 
     fn build_deadlock_net() -> Net {
         let mut net = Net::empty();
@@ -436,5 +454,50 @@ mod tests {
         assert!(report.has_deadlock, "Expected deadlock to be detected");
         assert!(report.deadlock_count >= 1);
         assert!(!report.deadlock_states.is_empty());
+    }
+
+    #[test]
+    fn reports_blocked_resource_transition_even_when_it_has_no_state_graph_edge() {
+        let mut net = Net::empty();
+        let control = net.add_place(Place::new(
+            "main_0_wait",
+            1,
+            1,
+            PlaceType::BasicBlock,
+            "src/main.rs:10:5".into(),
+        ));
+        let resource = net.add_place(Place::new(
+            "Mutex_0",
+            0,
+            1,
+            PlaceType::Resources,
+            String::new(),
+        ));
+        let after_lock = net.add_place(Place::new(
+            "main_1",
+            0,
+            1,
+            PlaceType::BasicBlock,
+            "src/main.rs:11:5".into(),
+        ));
+        let lock = net.add_transition(Transition::new_with_transition_type(
+            "main_0_lock",
+            TransitionType::Lock(0),
+        ));
+
+        net.add_input_arc(control, lock, 1);
+        net.add_input_arc(resource, lock, 1);
+        net.add_output_arc(after_lock, lock, 1);
+
+        let state_graph = StateGraph::from_net(&net);
+        let detector = DeadlockDetector::new(&state_graph);
+        let report = detector.detect();
+        let blocked = &report.deadlock_states[0].blocked_transitions;
+
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].name, "main_0_lock");
+        assert_eq!(blocked[0].needed_resources, vec!["Mutex_0"]);
+        assert_eq!(blocked[0].resource_status[0].has, 0);
+        assert_eq!(blocked[0].resource_status[0].needs, 1);
     }
 }

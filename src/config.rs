@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReportLevel {
+    #[default]
+    Developer,
+    Research,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PnConfig {
     /// State-space exploration cap. `None` means unbounded (risk of OOM on large crates).
@@ -46,6 +54,8 @@ pub struct PnConfig {
     /// Unknown-alias policy: conservative (sound) treats Unknown as Possibly; optimistic treats Unknown as Unlikely.
     #[serde(default = "default_alias_unknown_policy")]
     pub alias_unknown_policy: AliasUnknownPolicy,
+    #[serde(default)]
+    pub report_level: ReportLevel,
 }
 
 /// Policy for pointer-analysis results that are Unknown.
@@ -79,6 +89,7 @@ impl Default for PnConfig {
             atomic_load: default_atomic_load(),
             atomic_store: default_atomic_store(),
             alias_unknown_policy: default_alias_unknown_policy(),
+            report_level: ReportLevel::Developer,
         }
     }
 }

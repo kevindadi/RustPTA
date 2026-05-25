@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 
-use crate::config::{AliasUnknownPolicy, PnConfig};
+use crate::config::{AliasUnknownPolicy, PnConfig, ReportLevel};
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
 
@@ -72,6 +72,13 @@ fn make_options_parser() -> clap::Command {
                 .short('p')
                 .long("pn-crate")
                 .help("Target crate for analysis (required for cargo; optional for single file)"),
+        )
+        .arg(
+            Arg::new("input_file")
+                .short('f')
+                .long("file")
+                .value_name("FILE")
+                .help("Single .rs file to analyze (optional; not needed for cargo)"),
         )
         .group(
             ArgGroup::new("visualization")
@@ -185,6 +192,13 @@ fn make_options_parser() -> clap::Command {
                 .value_name("POLICY")
                 .help("When alias analysis returns Unknown: conservative (treat as Possibly, sound) or optimistic (treat as Unlikely)")
                 .value_parser(["conservative", "optimistic"]),
+        )
+        .arg(
+            Arg::new("report_level")
+                .long("report-level")
+                .value_name("LEVEL")
+                .help("Report audience: developer (default, concise) or research (internal diagnostics)")
+                .value_parser(["developer", "research"]),
         );
     parser
 }
@@ -302,6 +316,9 @@ impl Options {
             self.detector_kind = DetectorKind::Deadlock;
         }
 
+        self.input_file = matches
+            .get_one::<String>("input_file")
+            .map(PathBuf::from);
         self.crate_name = matches
             .get_one::<String>("target_crate")
             .cloned()
@@ -380,6 +397,12 @@ impl Options {
                 _ => AliasUnknownPolicy::Conservative,
             };
         }
+        if let Some(level) = matches.get_one::<String>("report_level") {
+            self.config.report_level = match level.as_str() {
+                "research" => ReportLevel::Research,
+                _ => ReportLevel::Developer,
+            };
+        }
 
         rustc_args.to_vec()
     }
@@ -407,5 +430,19 @@ impl Options {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ReportLevel;
+
+    #[test]
+    fn parses_report_level_research_flag() {
+        let mut options = Options::default();
+        options.parse_from_args(&["--report-level".to_string(), "research".to_string()]);
+
+        assert_eq!(options.config.report_level, ReportLevel::Research);
     }
 }

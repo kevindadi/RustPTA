@@ -323,7 +323,11 @@ impl Net {
         for (transition_id, transition) in self.transitions.iter_enumerated() {
             let node_id = format!("trans_{}", transition_id.index());
             let transition_ty = format!("{:?}", transition.transition_type);
-            let label = format!("{}\\n{}", escape_label(&transition.name), escape_label(&transition_ty));
+            let label = format!(
+                "{}\\n{}",
+                escape_label(&transition.name),
+                escape_label(&transition_ty)
+            );
             let _ = writeln!(
                 &mut dot,
                 "    {} [label=\"{}\", shape=box, style=filled, fillcolor=\"#ffe0b2\"];",
@@ -389,24 +393,25 @@ impl Net {
 
         // Check arc incidence for each place.
         for (place_id, place) in self.places.iter_enumerated() {
-            let has_input = self.pre.rows()[place_id].iter().any(|w| *w > 0);
-            let has_output = self.post.rows()[place_id].iter().any(|w| *w > 0);
+            let has_outgoing = self.pre.rows()[place_id].iter().any(|w| *w > 0);
+            let has_incoming = self.post.rows()[place_id].iter().any(|w| *w > 0);
 
-            if !has_input && !has_output {
+            if !has_incoming && !has_outgoing {
                 isolated_places.push((place_id, place.name.clone()));
-            } else if !has_input && place.tokens == 0 {
-                // No preset and zero tokens: place can never gain tokens.
-                // Skip function start places (e.g., "inter::main_start") - they are entry points.
-                if !place.name.ends_with("_start") {
+            } else if !has_incoming && place.tokens == 0 {
+                if !matches!(place.place_type, crate::net::structure::PlaceType::FunctionStart)
+                    || !place.name.ends_with("main_start")
+                {
                     warnings.push(format!(
                         "Place '{}' (id={}) has no input arcs and initial marking 0 (never activated)",
                         place.name,
                         place_id.index()
                     ));
                 }
-            } else if !has_output {
-                // Sink place (may be normal function exit).
-                if !place.name.ends_with("_end") {
+            } else if !has_outgoing {
+                if !matches!(place.place_type, crate::net::structure::PlaceType::FunctionEnd)
+                    || !place.name.ends_with("main_end")
+                {
                     warnings.push(format!(
                         "Place '{}' (id={}) has no output arcs (sink); verify this is intended",
                         place.name,
@@ -819,6 +824,56 @@ mod tests {
         assert_eq!(net.transitions_len(), 1);
         assert_eq!(*net.pre.get(p, t), 1);
         assert_eq!(*net.post.get(p, t), 1);
+    }
+
+    #[test]
+    fn diagnostics_accept_main_entry_and_exit_but_warn_other_disconnected_function_places() {
+        let mut net = Net::empty();
+        let main_start = net.add_place(Place::new(
+            "inter::main_start",
+            1,
+            1,
+            PlaceType::FunctionStart,
+            String::new(),
+        ));
+        let main_end = net.add_place(Place::new(
+            "inter::main_end",
+            0,
+            1,
+            PlaceType::FunctionEnd,
+            String::new(),
+        ));
+        let helper_start = net.add_place(Place::new(
+            "inter::helper_start",
+            0,
+            1,
+            PlaceType::FunctionStart,
+            String::new(),
+        ));
+        let helper_end = net.add_place(Place::new(
+            "inter::helper_end",
+            0,
+            1,
+            PlaceType::FunctionEnd,
+            String::new(),
+        ));
+        let enter_main = net.add_transition(Transition::new("enter_main"));
+        let leave_main = net.add_transition(Transition::new("leave_main"));
+        let enter_helper = net.add_transition(Transition::new("enter_helper"));
+        let leave_helper = net.add_transition(Transition::new("leave_helper"));
+
+        net.add_input_arc(main_start, enter_main, 1);
+        net.add_output_arc(main_end, leave_main, 1);
+        net.add_input_arc(helper_start, enter_helper, 1);
+        net.add_output_arc(helper_end, leave_helper, 1);
+
+        let report = net.diagnose_connectivity();
+        let warnings = report.warnings.join("\n");
+
+        assert!(!warnings.contains("inter::main_start"));
+        assert!(!warnings.contains("inter::main_end"));
+        assert!(warnings.contains("inter::helper_start"));
+        assert!(warnings.contains("inter::helper_end"));
     }
 
     #[cfg(feature = "invariants")]

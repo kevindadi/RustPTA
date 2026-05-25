@@ -2,6 +2,7 @@ extern crate rustc_driver;
 extern crate rustc_hir;
 
 use crate::analysis::reachability::{StateGraph, StateGraphConfig};
+use crate::config::ReportLevel;
 #[cfg(feature = "atomic-violation")]
 use crate::detect::atomic_violation_detector::{
     Witness, detect_atomicity_violations, marking_from_places, print_witnesses,
@@ -59,6 +60,10 @@ impl PTACallbacks {
             output_directory: diagnostics_output,
             test_run: false,
         }
+    }
+
+    fn is_research_report(&self) -> bool {
+        self.options.config.report_level == ReportLevel::Research
     }
 }
 
@@ -226,11 +231,11 @@ impl PTACallbacks {
             }
         }
 
-        // Run connectivity diagnostics before building the state graph.
-        pn.net.log_diagnostics();
+        if self.is_research_report() {
+            pn.net.log_diagnostics();
+        }
 
-        // Optionally persist diagnostics when exporting the Petri net.
-        if self.options.dump_options.dump_petri_net {
+        if self.is_research_report() && self.options.dump_options.dump_petri_net {
             let report = pn.net.diagnose_connectivity();
             if report.has_issues() {
                 let report_path = self.output_directory.join("petri_net_diagnostics.txt");

@@ -181,6 +181,31 @@ impl fmt::Display for IncidentReport {
                     writeln!(f, "    - {}", operation)?;
                 }
             }
+            if !incident.diagnosis.blocked_operations.is_empty() {
+                writeln!(f, "  blocked ops    :")?;
+                for operation in &incident.diagnosis.blocked_operations {
+                    let location = if operation.location.is_empty() {
+                        "unknown source"
+                    } else {
+                        operation.location.as_str()
+                    };
+                    writeln!(
+                        f,
+                        "    - {} [{}] at {}",
+                        operation.name, operation.operation, location
+                    )?;
+                    if !operation.needed_resources.is_empty() {
+                        writeln!(f, "      needs: {}", operation.needed_resources.join(", "))?;
+                    }
+                    for resource in &operation.resource_status {
+                        writeln!(
+                            f,
+                            "      resource {}: has {}, needs {}",
+                            resource.resource_name, resource.has, resource.needs
+                        )?;
+                    }
+                }
+            }
             writeln!(f, "  why bug        : {}", incident.diagnosis.why_bug)?;
             writeln!(f)?;
             writeln!(f, "Relevant marking:")?;
@@ -472,14 +497,6 @@ impl DeadlockReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        let json_path = format!("{}.json", path);
-        std::fs::write(
-            json_path,
-            serde_json::to_string_pretty(&self.to_incident_report())
-                .unwrap()
-                .as_bytes(),
-        )?;
-
         Ok(())
     }
 }
@@ -627,14 +644,6 @@ impl AtomicReport {
 
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
-
-        let json_path = format!("{}.json", path);
-        std::fs::write(
-            json_path,
-            serde_json::to_string_pretty(&self.to_incident_report())
-                .unwrap()
-                .as_bytes(),
-        )?;
 
         Ok(())
     }
@@ -784,14 +793,6 @@ impl RaceReport {
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
 
-        let json_path = format!("{}.json", path);
-        std::fs::write(
-            json_path,
-            serde_json::to_string_pretty(&self.to_incident_report())
-                .unwrap()
-                .as_bytes(),
-        )?;
-
         Ok(())
     }
 }
@@ -868,6 +869,50 @@ mod tests {
                 .len()
                 >= 1
         );
+    }
+
+    #[test]
+    fn deadlock_save_to_file_writes_only_txt_report() {
+        let path = std::env::temp_dir().join(format!(
+            "rustpta_deadlock_report_{}.txt",
+            std::process::id()
+        ));
+        let json_path = format!("{}.json", path.to_string_lossy());
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&json_path);
+
+        sample_deadlock_report()
+            .save_to_file(path.to_str().unwrap())
+            .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("RustPTA Bug Report"));
+        assert!(!std::path::Path::new(&json_path).exists());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn deadlock_display_shows_blocked_resource_operations() {
+        let mut report = sample_deadlock_report();
+        report.deadlock_states[0].blocked_transitions = vec![BlockedTransition {
+            id: "t5".to_string(),
+            name: "main_0_lock".to_string(),
+            location: "src/main.rs:10:5".to_string(),
+            operation: "Lock acquisition".to_string(),
+            needed_resources: vec!["Mutex_0".to_string()],
+            resource_status: vec![ResourceStatus {
+                resource_name: "Mutex_0".to_string(),
+                has: 0,
+                needs: 1,
+            }],
+        }];
+
+        let text = report.to_string();
+        assert!(text.contains("main_0_lock"));
+        assert!(text.contains("src/main.rs:10:5"));
+        assert!(text.contains("Lock acquisition"));
+        assert!(text.contains("Mutex_0"));
     }
 
     #[test]
