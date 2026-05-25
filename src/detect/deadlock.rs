@@ -1,5 +1,5 @@
 use crate::analysis::reachability::StateGraph;
-use crate::net::ids::TransitionId;
+use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::index_vec::Idx;
 use crate::net::structure::TransitionType;
 use crate::report::{DeadlockReport, DeadlockState, DeadlockTrace};
@@ -229,6 +229,114 @@ impl<'a> DeadlockDetector<'a> {
             .any(|summary| summary.id == transition_id)
     }
 
+    /// Find resource-related transitions that are blocked in the given state.
+    /// Scopes to: Lock, RwLockRead, RwLockWrite, UnsafeOperation, AtomicOperation.
+    fn find_blocked_resource_transitions(
+        &self,
+        state: NodeIndex,
+    ) -> Vec<crate::report::BlockedTransition> {
+        use crate::report::{BlockedTransition, ResourceStatus};
+
+        let state_node = self.state_graph.node(state);
+        let mut blocked = Vec::new();
+
+        // Iterate through all transitions in the state graph edges
+        for edge in self.state_graph.graph.edge_weights() {
+            let trans = &edge.transition;
+            let transition_id = trans.id;
+
+            // Only consider resource-related transitions
+            let is_resource_op = matches!(
+                trans.transition_type,
+                TransitionType::Lock(_)
+                    | TransitionType::RwLockRead(_)
+                    | TransitionType::RwLockWrite(_)
+                    | TransitionType::UnsafeRead(_, _, _, _)
+                    | TransitionType::UnsafeWrite(_, _, _, _)
+                    | TransitionType::AtomicLoad(_, _, _, _)
+                    | TransitionType::AtomicStore(_, _, _, _)
+                    | TransitionType::AtomicCmpXchg(_, _, _, _, _)
+            );
+            if !is_resource_op {
+                continue;
+            }
+
+            // Skip if this transition is already enabled in current state
+            if self.is_transition_enabled(state, transition_id) {
+                continue;
+            }
+
+            // Get required resources from the net's pre arcs
+            let needed: Vec<(PlaceId, u64)> = self
+                .state_graph
+                .get_transition_resources(transition_id);
+
+            if needed.is_empty() {
+                continue;
+            }
+
+            // Build resource status for each needed resource
+            let resource_status: Vec<ResourceStatus> = needed
+                .iter()
+                .map(|(place_id, needed_tokens)| {
+                    let has = state_node.marking.0.get(*place_id).copied().unwrap_or(0);
+                    let place_name = state_node
+                        .places
+                        .iter()
+                        .find(|p| p.place == *place_id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| format!("place#{}", place_id.index()));
+                    ResourceStatus {
+                        resource_name: place_name,
+                        has,
+                        needs: *needed_tokens,
+                    }
+                })
+                .collect();
+
+            // Determine source location from the last place with tokens that feeds this transition
+            let location = state_node
+                .places
+                .iter()
+                .find(|p| {
+                    state_node.marking.0.get(p.place).map_or(false, |&t| t > 0)
+                        && needed.iter().any(|(pid, _)| *pid == p.place)
+                })
+                .map(|p| p.span.clone())
+                .unwrap_or_default();
+
+            // Determine operation type string
+            let operation = match &trans.transition_type {
+                TransitionType::Lock(_) => "Lock acquisition",
+                TransitionType::RwLockRead(_) => "RwLock read lock",
+                TransitionType::RwLockWrite(_) => "RwLock write lock",
+                TransitionType::UnsafeRead(_, _, _, _) => "Unsafe read",
+                TransitionType::UnsafeWrite(_, _, _, _) => "Unsafe write",
+                TransitionType::AtomicLoad(_, _, _, _) => "Atomic load",
+                TransitionType::AtomicStore(_, _, _, _) => "Atomic store",
+                TransitionType::AtomicCmpXchg(_, _, _, _, _) => "Atomic compare-exchange",
+                _ => "Resource operation",
+            }
+            .to_string();
+
+            let needed_resources: Vec<String> = resource_status
+                .iter()
+                .map(|rs| rs.resource_name.clone())
+                .collect();
+
+            blocked.push(BlockedTransition {
+                id: format!("t{}", transition_id.index()),
+                name: trans.name.clone(),
+                location,
+                operation,
+                needed_resources,
+                resource_status,
+            });
+        }
+
+        blocked
+    }
+
     fn format_deadlock_state(&self, node: NodeIndex) -> DeadlockState {
         let state = self.state_graph.node(node);
         let marking: Vec<(String, u8)> = state
@@ -252,7 +360,7 @@ impl<'a> DeadlockDetector<'a> {
             state_id: format!("s{}", state.index),
             marking,
             description: "Deadlock state with blocked resources".to_string(),
-            blocked_transitions: Vec::new(),
+            blocked_transitions: self.find_blocked_resource_transitions(node),
         }
     }
 
