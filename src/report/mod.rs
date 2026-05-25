@@ -269,6 +269,25 @@ impl fmt::Display for IncidentReport {
                 writeln!(f)?;
                 writeln!(f, "Developer explanation:")?;
                 writeln!(f, "  At least one conflicting access is a write; read/read pairs are not reported.")?;
+            } else if incident.kind == "atomicity_violation" {
+                writeln!(f, "Candidate atomic pattern:")?;
+                if let Some((load, stores)) = incident.diagnosis.conflicting_operations.split_first() {
+                    writeln!(f, "  load:")?;
+                    writeln!(f, "    - {}", load)?;
+                    if !stores.is_empty() {
+                        writeln!(f, "  competing stores:")?;
+                        for store in stores {
+                            writeln!(f, "    - {}", store)?;
+                        }
+                    }
+                }
+                writeln!(f)?;
+                writeln!(f, "Pattern note:")?;
+                writeln!(
+                    f,
+                    "  state-graph reachability can include operations from alternative branches unless a witness trace is available."
+                )?;
+                writeln!(f, "  why bug: {}", incident.diagnosis.why_bug)?;
             } else {
                 writeln!(f, "State evidence:")?;
                 if let Some(state_id) = &incident.state_id {
@@ -1118,6 +1137,54 @@ mod tests {
         assert!(text.contains("Enabled state:"));
         assert!(text.contains("  - place#1 tokens=1"));
         assert!(text.contains("At least one conflicting access is a write; read/read pairs are not reported."));
+        assert!(!text.contains("Relevant marking:"));
+    }
+
+    fn sample_atomic_report() -> AtomicReport {
+        AtomicReport {
+            tool_name: "State Graph Atomicity Detector".to_string(),
+            has_violation: true,
+            violation_count: 1,
+            violations: vec![ViolationPattern {
+                load_op: AtomicOperation {
+                    operation_type: "load".to_string(),
+                    ordering: "Acquire".to_string(),
+                    variable: "AtomicUsize".to_string(),
+                    location: "src/main.rs:10:5".to_string(),
+                },
+                store_ops: vec![
+                    AtomicOperation {
+                        operation_type: "store".to_string(),
+                        ordering: "Release".to_string(),
+                        variable: "AtomicUsize".to_string(),
+                        location: "src/main.rs:20:5".to_string(),
+                    },
+                    AtomicOperation {
+                        operation_type: "store".to_string(),
+                        ordering: "Relaxed".to_string(),
+                        variable: "AtomicUsize".to_string(),
+                        location: "src/main.rs:30:5".to_string(),
+                    },
+                ],
+            }],
+            analysis_time: Duration::from_millis(10),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn atomic_display_labels_candidate_pattern_and_branch_limit() {
+        let text = sample_atomic_report().to_string();
+
+        assert!(text.contains("Mode          : atomic"));
+        assert!(text.contains("Incident atomicity-1"));
+        assert!(text.contains("Candidate atomic pattern:"));
+        assert!(text.contains("  load:"));
+        assert!(text.contains("    - load AtomicUsize at src/main.rs:10:5 (Acquire)"));
+        assert!(text.contains("  competing stores:"));
+        assert!(text.contains("    - store AtomicUsize at src/main.rs:20:5 (Release)"));
+        assert!(text.contains("    - store AtomicUsize at src/main.rs:30:5 (Relaxed)"));
+        assert!(text.contains("state-graph reachability can include operations from alternative branches"));
         assert!(!text.contains("Relevant marking:"));
     }
 }
