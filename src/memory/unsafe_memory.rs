@@ -159,7 +159,10 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
     }
 
     fn check_unsafe_fn(&self) -> bool {
-        self.info.unsafe_places.values().any(|place| !place.is_param)
+        self.info
+            .unsafe_places
+            .values()
+            .any(|place| !place.is_param)
     }
 
     fn is_unsafe_operation(&mut self, statement: &Statement<'tcx>, location: Location) -> bool {

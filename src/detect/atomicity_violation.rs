@@ -101,7 +101,8 @@ impl<'a> AtomicityViolationDetector<'a> {
             }
         }
 
-        let mut pattern_map: FxHashMap<ViolationPattern, Vec<Vec<(usize, u8)>>> = FxHashMap::default();
+        let mut pattern_map: FxHashMap<ViolationPattern, Vec<Vec<(usize, u8)>>> =
+            FxHashMap::default();
 
         for violation in all_violations {
             let pattern = ViolationPattern {

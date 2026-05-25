@@ -257,7 +257,9 @@ impl PTACallbacks {
             };
             let sg = StateGraph::with_config(&pn.net, sg_config);
             self.handle_visualizations(&callgraph, &pn, &sg, &instances);
-            self.write_summary(&callgraph, &pn, &sg);
+            if self.is_research_report() {
+                self.write_summary(&callgraph, &pn, &sg);
+            }
             return;
         }
 
@@ -278,12 +280,16 @@ impl PTACallbacks {
         if self.options.stop_after == StopAfter::AfterStateGraph {
             log::info!("Stopping analysis after state graph construction");
             self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
-            self.write_summary(&callgraph, &pn, &state_graph);
+            if self.is_research_report() {
+                self.write_summary(&callgraph, &pn, &state_graph);
+            }
             return;
         }
 
         self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
-        self.write_summary(&callgraph, &pn, &state_graph);
+        if self.is_research_report() {
+            self.write_summary(&callgraph, &pn, &state_graph);
+        }
         #[cfg(feature = "atomic-violation")]
         self.run_detectors(&pn, &state_graph);
         #[cfg(not(feature = "atomic-violation"))]
@@ -538,9 +544,9 @@ impl PTACallbacks {
             petrinet_reduce_2_sequence_dot: &'static str,
             petrinet_reduce_3_intermediate_dot: &'static str,
             stategraph_dot: &'static str,
-            deadlock_report_json: &'static str,
-            datarace_report_json: &'static str,
-            atomicity_report_json: &'static str,
+            deadlock_report: &'static str,
+            datarace_report: &'static str,
+            atomicity_report: &'static str,
             points_to_report: &'static str,
         }
 
@@ -584,9 +590,9 @@ impl PTACallbacks {
                 petrinet_reduce_2_sequence_dot: "petrinet_reduce_2_sequence.dot",
                 petrinet_reduce_3_intermediate_dot: "petrinet_reduce_3_intermediate.dot",
                 stategraph_dot: "stategraph.dot",
-                deadlock_report_json: "deadlock_report.txt.json",
-                datarace_report_json: "datarace_report.txt.json",
-                atomicity_report_json: "atomicity_report.txt.json",
+                deadlock_report: "deadlock_report.txt",
+                datarace_report: "datarace_report.txt",
+                atomicity_report: "atomicity_report.txt",
                 points_to_report: "points_to_report.txt",
             },
         };

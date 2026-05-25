@@ -24,8 +24,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     Const::Unevaluated(unevaluated, _) => Some(unevaluated.def),
                     _ => {
                         if let rustc_middle::ty::TyKind::Closure(def_id, _)
-                        | rustc_middle::ty::TyKind::FnDef(def_id, _) =
-                            constant.ty().kind()
+                        | rustc_middle::ty::TyKind::FnDef(def_id, _) = constant.ty().kind()
                         {
                             Some(*def_id)
                         } else {

@@ -137,51 +137,19 @@ impl fmt::Display for IncidentReport {
         )?;
         writeln!(f, "Analysis time : {}", self.analysis_time)?;
 
+        if !self.summary.explanation.is_empty() {
+            writeln!(f)?;
+            writeln!(f, "Developer explanation:")?;
+            writeln!(f, "  {}", self.summary.explanation)?;
+        }
+
         for incident in &self.incidents {
             write_section(f, &format!("Incident {}", incident.id))?;
             writeln!(f)?;
             writeln!(f, "What happened:")?;
             writeln!(f, "  {}", incident.what_happened)?;
-            writeln!(f)?;
-            writeln!(f, "Where to look first:")?;
-            if incident.where_to_look.is_empty() {
-                writeln!(
-                    f,
-                    "  Source location unavailable; inspect the Petri-net evidence below."
-                )?;
-            } else {
-                for (index, location) in incident.where_to_look.iter().enumerate() {
-                    writeln!(
-                        f,
-                        "  {}. {:<32} {}",
-                        index + 1,
-                        render_source_location(location),
-                        location.message
-                    )?;
-                }
-            }
-            writeln!(f)?;
-            writeln!(f, "Developer explanation:")?;
-            writeln!(f, "  {}", incident.developer_explanation)?;
-            writeln!(f)?;
-            writeln!(f, "State evidence:")?;
-            if let Some(state_id) = &incident.state_id {
-                writeln!(f, "  state id       : {}", state_id)?;
-            }
-            if !incident.evidence.incoming_trace.is_empty() {
-                writeln!(
-                    f,
-                    "  incoming trace : {}",
-                    incident.evidence.incoming_trace.join(" -> ")
-                )?;
-            }
-            if !incident.diagnosis.conflicting_operations.is_empty() {
-                writeln!(f, "  conflicts      :")?;
-                for operation in &incident.diagnosis.conflicting_operations {
-                    writeln!(f, "    - {}", operation)?;
-                }
-            }
             if !incident.diagnosis.blocked_operations.is_empty() {
+                writeln!(f)?;
                 writeln!(f, "  blocked ops    :")?;
                 for operation in &incident.diagnosis.blocked_operations {
                     let location = if operation.location.is_empty() {
@@ -204,6 +172,61 @@ impl fmt::Display for IncidentReport {
                             resource.resource_name, resource.has, resource.needs
                         )?;
                     }
+                    if !operation.resource_trace.is_empty() {
+                        writeln!(f, "      last resource use:")?;
+                        for step in &operation.resource_trace {
+                            writeln!(
+                                f,
+                                "        {} -> {}: {} [{}] at {}",
+                                step.from_state,
+                                step.to_state,
+                                step.transition_name,
+                                step.operation,
+                                step.location
+                            )?;
+                            writeln!(
+                                f,
+                                "        {}: {} -> {}",
+                                step.resource_name, step.before, step.after
+                            )?;
+                        }
+                    }
+                }
+            }
+            if incident.kind != "deadlock" && !incident.where_to_look.is_empty() {
+                writeln!(f)?;
+                writeln!(f, "Where to look:")?;
+                for (index, location) in incident.where_to_look.iter().enumerate() {
+                    writeln!(
+                        f,
+                        "  {}. {:<32} {}",
+                        index + 1,
+                        render_source_location(location),
+                        location.message
+                    )?;
+                }
+            }
+            if incident.kind != "deadlock" && !incident.developer_explanation.is_empty() {
+                writeln!(f)?;
+                writeln!(f, "Developer explanation:")?;
+                writeln!(f, "  {}", incident.developer_explanation)?;
+            }
+            writeln!(f)?;
+            writeln!(f, "State evidence:")?;
+            if let Some(state_id) = &incident.state_id {
+                writeln!(f, "  state id       : {}", state_id)?;
+            }
+            if !incident.evidence.incoming_trace.is_empty() {
+                writeln!(
+                    f,
+                    "  incoming trace : {}",
+                    incident.evidence.incoming_trace.join(" -> ")
+                )?;
+            }
+            if !incident.diagnosis.conflicting_operations.is_empty() {
+                writeln!(f, "  conflicts      :")?;
+                for operation in &incident.diagnosis.conflicting_operations {
+                    writeln!(f, "    - {}", operation)?;
                 }
             }
             writeln!(f, "  why bug        : {}", incident.diagnosis.why_bug)?;
@@ -250,6 +273,15 @@ fn default_artifacts() -> ReportArtifacts {
         stategraph: "stategraph.dot".to_string(),
         petrinet: "petrinet.dot".to_string(),
         summary: "summary.json".to_string(),
+    }
+}
+
+fn remove_legacy_json_sidecar(path: &str) -> std::io::Result<()> {
+    let json_path = format!("{path}.json");
+    match std::fs::remove_file(json_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
     }
 }
 
@@ -301,6 +333,18 @@ pub struct ResourceStatus {
     pub needs: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceTraceStep {
+    pub resource_name: String,
+    pub transition_name: String,
+    pub operation: String,
+    pub location: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub before: u64,
+    pub after: u64,
+}
+
 /// A resource-related transition that is blocked in a deadlock state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockedTransition {
@@ -316,6 +360,7 @@ pub struct BlockedTransition {
     pub needed_resources: Vec<String>,
     /// For each needed resource: current tokens vs required tokens
     pub resource_status: Vec<ResourceStatus>,
+    pub resource_trace: Vec<ResourceTraceStep>,
 }
 
 fn render_source_location(location: &SourceLocation) -> String {
@@ -422,15 +467,7 @@ impl DeadlockReport {
                     .iter()
                     .map(|(place, tokens)| marking_evidence(place, *tokens))
                     .collect::<Vec<_>>();
-                let where_to_look = marking
-                    .iter()
-                    .filter_map(|mark| {
-                        mark.span.as_deref().map(|span| {
-                            source_location(format!("marked place {}", mark.place), span)
-                        })
-                    })
-                    .take(5)
-                    .collect::<Vec<_>>();
+                let where_to_look = Vec::new();
 
                 Incident {
                     id: format!("deadlock-{}", index + 1),
@@ -438,7 +475,7 @@ impl DeadlockReport {
                     state_id: Some(state.state_id.clone()),
                     what_happened: "A reachable global state has no progress transition before normal termination.".to_string(),
                     where_to_look,
-                    developer_explanation: "The listed marking records which Petri-net places still hold tokens when execution stops making progress. A zero-token resource place next to active control-flow places usually identifies the lock or resource that blocks progress.".to_string(),
+                    developer_explanation: String::new(),
                     diagnosis: IncidentDiagnosis {
                         blocked_resources: marking
                             .iter()
@@ -477,8 +514,7 @@ impl DeadlockReport {
                 state_space: self.state_space_info.clone(),
                 primary_locations: primary_locations(&incidents),
                 explanation: if self.has_deadlock {
-                    "No enabled progress transition remains in at least one reachable state."
-                        .to_string()
+                    "The blocked operations list shows which transition cannot fire, which resource it needs, and the most recent resource-consuming step found on a witness path to the deadlock state.".to_string()
                 } else {
                     "No deadlock state was found in the explored state graph.".to_string()
                 },
@@ -496,6 +532,7 @@ impl DeadlockReport {
 
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
+        remove_legacy_json_sidecar(path)?;
 
         Ok(())
     }
@@ -644,6 +681,7 @@ impl AtomicReport {
 
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
+        remove_legacy_json_sidecar(path)?;
 
         Ok(())
     }
@@ -792,6 +830,7 @@ impl RaceReport {
 
         let mut file = File::create(path)?;
         writeln!(file, "{}", self)?;
+        remove_legacy_json_sidecar(path)?;
 
         Ok(())
     }
@@ -842,8 +881,11 @@ mod tests {
         assert!(text.contains("Mode          : deadlock"));
         assert!(text.contains("Incident deadlock-1"));
         assert!(text.contains("What happened:"));
-        assert!(text.contains("Where to look first:"));
+        assert!(!text.contains("Where to look first:"));
         assert!(text.contains("Developer explanation:"));
+        let explanation = text.find("Developer explanation:").unwrap();
+        let first_incident = text.find("Incident deadlock-1").unwrap();
+        assert!(explanation < first_incident);
         assert!(text.contains("State evidence:"));
         assert!(text.contains("Relevant marking:"));
         assert!(text.contains("Suggested next steps:"));
@@ -880,6 +922,7 @@ mod tests {
         let json_path = format!("{}.json", path.to_string_lossy());
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&json_path);
+        std::fs::write(&json_path, "stale json").unwrap();
 
         sample_deadlock_report()
             .save_to_file(path.to_str().unwrap())
@@ -906,6 +949,16 @@ mod tests {
                 has: 0,
                 needs: 1,
             }],
+            resource_trace: vec![ResourceTraceStep {
+                resource_name: "Mutex_0".to_string(),
+                transition_name: "thread_a_lock".to_string(),
+                operation: "Lock acquisition".to_string(),
+                location: "src/main.rs:8:5".to_string(),
+                from_state: "s0".to_string(),
+                to_state: "s1".to_string(),
+                before: 1,
+                after: 0,
+            }],
         }];
 
         let text = report.to_string();
@@ -913,6 +966,9 @@ mod tests {
         assert!(text.contains("src/main.rs:10:5"));
         assert!(text.contains("Lock acquisition"));
         assert!(text.contains("Mutex_0"));
+        assert!(text.contains("last resource use"));
+        assert!(text.contains("s0 -> s1: thread_a_lock [Lock acquisition] at src/main.rs:8:5"));
+        assert!(text.contains("Mutex_0: 1 -> 0"));
     }
 
     #[test]

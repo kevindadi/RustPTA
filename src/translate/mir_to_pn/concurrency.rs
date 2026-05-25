@@ -1,13 +1,13 @@
 //! Concurrency primitives: locks, condvars, channels, atomics.
 
 use super::BodyToPetriNet;
+#[cfg(feature = "atomic-violation")]
+use crate::net::{Place, structure::PlaceType};
 use crate::{
     concurrency::atomic::AtomicOrdering,
     memory::pointsto::AliasId,
     net::{PlaceId, Transition, TransitionId, TransitionType},
 };
-#[cfg(feature = "atomic-violation")]
-use crate::net::{structure::PlaceType, Place};
 use rustc_middle::mir::BasicBlock;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {

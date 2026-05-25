@@ -16,7 +16,10 @@ use rustc_span::Spanned;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     fn lock_node_for_guard(&self, guard_id: LockGuardId) -> Option<PlaceId> {
-        self.resources.locks().get(&guard_id.get_alias_id()).copied()
+        self.resources
+            .locks()
+            .get(&guard_id.get_alias_id())
+            .copied()
     }
 
     pub(super) fn handle_lock_call(

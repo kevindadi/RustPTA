@@ -229,8 +229,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         if let Some((closure_start, closure_end)) = self.resolve_closure_places_at(args, 1) {
             self.net.add_output_arc(closure_start, bb_end, 1);
-        self.net
-            .add_input_arc(closure_end, self.return_transition, 1);
+            self.net
+                .add_input_arc(closure_end, self.return_transition, 1);
         }
         self.connect_to_target(*bb_idx, bb_end, target);
     }

@@ -15,5 +15,5 @@ pub use ids::{EventId, TaskId};
 pub use labels::OpKind;
 pub use meta::TransitionMeta;
 pub use model::{
-    add_task_lifecycle_places, add_worker_place, AsyncSchedulerState, TaskLifecyclePlaces,
+    AsyncSchedulerState, TaskLifecyclePlaces, add_task_lifecycle_places, add_worker_place,
 };

@@ -93,10 +93,22 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return;
         }
 
-        crate::add_fallthrough_transition!(self, bb_idx, name, "goto", TransitionType::Goto, target);
+        crate::add_fallthrough_transition!(
+            self,
+            bb_idx,
+            name,
+            "goto",
+            TransitionType::Goto,
+            target
+        );
     }
 
-    pub(super) fn handle_switch(&mut self, bb_idx: BasicBlock, targets: &SwitchTargets, name: &str) {
+    pub(super) fn handle_switch(
+        &mut self,
+        bb_idx: BasicBlock,
+        targets: &SwitchTargets,
+        name: &str,
+    ) {
         let mut t_num = 1u8;
         for t in targets.all_targets() {
             if self.exclude_bb.contains(&t.index()) {
@@ -142,7 +154,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             .add_output_arc(return_node, self.return_transition, 1);
     }
 
-    pub(super) fn create_call_transition(&mut self, bb_idx: BasicBlock, bb_term_name: &str) -> TransitionId {
+    pub(super) fn create_call_transition(
+        &mut self,
+        bb_idx: BasicBlock,
+        bb_term_name: &str,
+    ) -> TransitionId {
         let bb_term_transition = Transition::new_with_transition_type(
             bb_term_name.to_string(),
             TransitionType::Function,

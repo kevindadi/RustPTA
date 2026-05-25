@@ -60,8 +60,8 @@ pub fn atomic_api_from_name(fn_name: &str) -> Option<AtomicApi> {
     match last_segment {
         "load" => Some(AtomicApi::Read),
         "store" => Some(AtomicApi::Write),
-        "compare_exchange" | "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or"
-        | "fetch_xor" | "swap" => Some(AtomicApi::ReadWrite),
+        "compare_exchange" | "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor"
+        | "swap" => Some(AtomicApi::ReadWrite),
         _ => None,
     }
 }

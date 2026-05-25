@@ -399,8 +399,10 @@ impl Net {
             if !has_incoming && !has_outgoing {
                 isolated_places.push((place_id, place.name.clone()));
             } else if !has_incoming && place.tokens == 0 {
-                if !matches!(place.place_type, crate::net::structure::PlaceType::FunctionStart)
-                    || !place.name.ends_with("main_start")
+                if !matches!(
+                    place.place_type,
+                    crate::net::structure::PlaceType::FunctionStart
+                ) || !place.name.ends_with("main_start")
                 {
                     warnings.push(format!(
                         "Place '{}' (id={}) has no input arcs and initial marking 0 (never activated)",
@@ -409,8 +411,10 @@ impl Net {
                     ));
                 }
             } else if !has_outgoing {
-                if !matches!(place.place_type, crate::net::structure::PlaceType::FunctionEnd)
-                    || !place.name.ends_with("main_end")
+                if !matches!(
+                    place.place_type,
+                    crate::net::structure::PlaceType::FunctionEnd
+                ) || !place.name.ends_with("main_end")
                 {
                     warnings.push(format!(
                         "Place '{}' (id={}) has no output arcs (sink); verify this is intended",

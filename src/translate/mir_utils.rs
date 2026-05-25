@@ -13,12 +13,10 @@ pub fn rvalue_read_places<'a, 'tcx>(rvalue: &'a Rvalue<'tcx>) -> Vec<&'a Place<'
         | Rvalue::Repeat(operand, _)
         | Rvalue::Cast(_, operand, _)
         | Rvalue::UnaryOp(_, operand) => operand_place(operand).into_iter().collect(),
-        Rvalue::BinaryOp(_, box (left, right)) => {
-            [operand_place(left), operand_place(right)]
-                .into_iter()
-                .flatten()
-                .collect()
-        }
+        Rvalue::BinaryOp(_, box (left, right)) => [operand_place(left), operand_place(right)]
+            .into_iter()
+            .flatten()
+            .collect(),
         Rvalue::Ref(_, _, place)
         | Rvalue::RawPtr(_, place)
         | Rvalue::Discriminant(place)

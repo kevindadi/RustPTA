@@ -316,9 +316,7 @@ impl Options {
             self.detector_kind = DetectorKind::Deadlock;
         }
 
-        self.input_file = matches
-            .get_one::<String>("input_file")
-            .map(PathBuf::from);
+        self.input_file = matches.get_one::<String>("input_file").map(PathBuf::from);
         self.crate_name = matches
             .get_one::<String>("target_crate")
             .cloned()

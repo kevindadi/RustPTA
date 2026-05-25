@@ -15,18 +15,19 @@ OPTIONS:
                                    - datarace: Data race detection
                                    - atomic: Atomicity Violation detection
                                    - pointsto: Standalone pointer analysis
-                                   - [default: all]
-    -p, --pn-crate <NAME>           Target crate for analysis(Only underlined links can be used)
-    --pn-analysis-dir=<PATH>       Output path for analysis results [default: diagnostics.json]
+                                   - [default: deadlock]
+    -p, --pn-crate <NAME>          Target crate for analysis
+    --pn-analysis-dir=<PATH>       Directory for Petri net analysis outputs
+    --report-level <LEVEL>         Report audience: developer or research [default: developer]
     --full                         Translate all functions (disables entry-reachable and concurrent-roots filtering)
-    --no-concurrent-roots           Disable translating functions that use locks/atomics/condvars/channels (and their callees)
+    --no-concurrent-roots          Disable translating functions that use locks/atomics/condvars/channels (and their callees)
 
 VISUALIZATION OPTIONS:
         --viz-callgraph            Generate call graph visualization
         --viz-petrinet             Generate Petri net visualization
         --viz-stategraph           Generate state graph visualization
         --viz-unsafe               Generate unsafe operations report
-        --viz-pointsto 
+        --viz-pointsto             Generate points-to relations report
 
 EXAMPLES:
     cargo pn -m datarace -t my_crate

@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -65,7 +65,7 @@ async fn main() {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-     log::debug!(
+    log::debug!(
         "pn-web cases={} runs={} at http://{}",
         cases_root.display(),
         runs_root.display(),
@@ -417,7 +417,9 @@ fn count_state_nodes(path: &FsPath) -> Result<usize, ApiError> {
 }
 
 fn count_prefix_nodes(path: &FsPath, prefix: &str) -> Result<usize, ApiError> {
-    count_dot_lines(path, |line| line.trim_start().starts_with(prefix) && line.contains('['))
+    count_dot_lines(path, |line| {
+        line.trim_start().starts_with(prefix) && line.contains('[')
+    })
 }
 
 fn count_state_edges(path: &FsPath) -> Result<usize, ApiError> {

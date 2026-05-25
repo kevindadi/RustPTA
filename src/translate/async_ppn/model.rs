@@ -41,14 +41,12 @@ impl AsyncSchedulerState {
 
     /// Lookup `p_blocked` for `(task_id, event)`.
     pub fn blocked_place(&self, task_id: TaskId, event: EventId) -> Option<PlaceId> {
-        self.task_places
-            .get(task_id.index())
-            .and_then(|tp| {
-                tp.blocked
-                    .iter()
-                    .find(|(e, _)| *e == event)
-                    .map(|(_, p)| *p)
-            })
+        self.task_places.get(task_id.index()).and_then(|tp| {
+            tp.blocked
+                .iter()
+                .find(|(e, _)| *e == event)
+                .map(|(_, p)| *p)
+        })
     }
 
     /// `p_ready` for `task_id`.
