@@ -87,6 +87,8 @@ pub struct IncidentDiagnosis {
     pub blocked_resources: Vec<String>,
     pub conflicting_operations: Vec<String>,
     pub why_bug: String,
+    /// Resource-related transitions that are blocked in this deadlock state
+    pub blocked_operations: Vec<BlockedTransition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,6 +422,7 @@ impl DeadlockReport {
                             .collect(),
                         conflicting_operations: Vec::new(),
                         why_bug: state.description.clone(),
+                        blocked_operations: state.blocked_transitions.clone(),
                     },
                     evidence: IncidentEvidence {
                         state: Vec::new(),
@@ -575,6 +578,7 @@ impl AtomicReport {
                         blocked_resources: Vec::new(),
                         conflicting_operations: operations,
                         why_bug: "Multiple stores to the same atomic location are compatible with the load under the modeled ordering relation.".to_string(),
+                        blocked_operations: Vec::new(),
                     },
                     evidence: IncidentEvidence {
                         state: Vec::new(),
@@ -729,6 +733,7 @@ impl RaceReport {
                         blocked_resources: Vec::new(),
                         conflicting_operations,
                         why_bug: "A read/write or write/write pair is simultaneously enabled for the same alias location.".to_string(),
+                        blocked_operations: Vec::new(),
                     },
                     evidence: IncidentEvidence {
                         state: race.state.clone(),
