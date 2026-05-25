@@ -248,6 +248,27 @@ impl fmt::Display for IncidentReport {
                         writeln!(f, "    - {} tokens={}", mark.place, mark.tokens)?;
                     }
                 }
+            } else if incident.kind == "datarace" {
+                writeln!(f, "Conflicting unsafe accesses:")?;
+                for operation in &incident.diagnosis.conflicting_operations {
+                    writeln!(f, "  - {}", operation)?;
+                }
+                writeln!(f)?;
+                writeln!(f, "Enabled state:")?;
+                if incident.evidence.marking.is_empty() {
+                    writeln!(f, "  No state marking was recorded for this incident.")?;
+                } else {
+                    for mark in &incident.evidence.marking {
+                        if let Some(span) = mark.span.as_deref() {
+                            writeln!(f, "  - {} tokens={} at {}", mark.place, mark.tokens, span)?;
+                        } else {
+                            writeln!(f, "  - {} tokens={}", mark.place, mark.tokens)?;
+                        }
+                    }
+                }
+                writeln!(f)?;
+                writeln!(f, "Developer explanation:")?;
+                writeln!(f, "  At least one conflicting access is a write; read/read pairs are not reported.")?;
             } else {
                 writeln!(f, "State evidence:")?;
                 if let Some(state_id) = &incident.state_id {
@@ -791,7 +812,16 @@ impl RaceReport {
                 let conflicting_operations = race
                     .operations
                     .iter()
-                    .map(|op| format!("{} {} at {}", op.operation_type, op.variable, op.location))
+                    .map(|op| {
+                        if let Some(basic_block) = op.basic_block {
+                            format!(
+                                "{} {} at {} (bb{})",
+                                op.operation_type, op.variable, op.location, basic_block
+                            )
+                        } else {
+                            format!("{} {} at {}", op.operation_type, op.variable, op.location)
+                        }
+                    })
                     .collect::<Vec<_>>();
                 let where_to_look = race
                     .operations
@@ -1039,9 +1069,8 @@ mod tests {
         assert!(!text.contains("main_3_wait (src/main.rs"));
     }
 
-    #[test]
-    fn race_display_names_conflicting_operations() {
-        let report = RaceReport {
+    fn sample_race_report() -> RaceReport {
+        RaceReport {
             tool_name: "State Graph Data Race Detector".to_string(),
             has_race: true,
             race_count: 1,
@@ -1065,14 +1094,30 @@ mod tests {
             }],
             analysis_time: Duration::from_millis(10),
             error: None,
-        };
+        }
+    }
 
-        let text = report.to_string();
+    #[test]
+    fn race_display_names_conflicting_operations() {
+        let text = sample_race_report().to_string();
 
         assert!(text.contains("Mode          : datarace"));
         assert!(text.contains("Incident datarace-1"));
         assert!(text.contains("read i32"));
         assert!(text.contains("write i32"));
         assert!(text.contains("Both operations are enabled in the same reachable state"));
+    }
+
+    #[test]
+    fn race_display_focuses_on_enabled_unsafe_accesses() {
+        let text = sample_race_report().to_string();
+
+        assert!(text.contains("Conflicting unsafe accesses:"));
+        assert!(text.contains("  - read i32 at src/main.rs:10:5 (bb0)"));
+        assert!(text.contains("  - write i32 at src/main.rs:20:5 (bb1)"));
+        assert!(text.contains("Enabled state:"));
+        assert!(text.contains("  - place#1 tokens=1"));
+        assert!(text.contains("At least one conflicting access is a write; read/read pairs are not reported."));
+        assert!(!text.contains("Relevant marking:"));
     }
 }
