@@ -1,4 +1,7 @@
+//! The general rustc plugin framework.
+//! Inspired by <https://github.com/facebookexperimental/MIRAI/blob/9cf3067309d591894e2d0cd9b1ee6e18d0fdd26c/checker/src/main.rs>
 #![feature(rustc_private)]
+#![feature(process_exitcode_internals)]
 #![feature(box_patterns)]
 
 pub mod analysis;
@@ -23,31 +26,27 @@ extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_symbol_mangling;
 
+use callback::PTACallbacks;
 use log::debug;
 use options::Options;
 use rustc_session::{EarlyDiagCtxt, config::ErrorOutputType};
 
-/// Entry point for the `pn` driver (invoked from `src/bin/pn.rs`).
 pub fn run() -> ! {
+    // Initialize loggers.
     let handler = EarlyDiagCtxt::new(ErrorOutputType::default());
-
     if std::env::var("RUSTC_LOG").is_ok() {
         rustc_driver::init_rustc_env_logger(&handler);
     }
-
     if std::env::var("PN_LOG").is_ok() {
         let e = env_logger::Env::new()
             .filter("PN_LOG")
             .write_style("PN_LOG_STYLE");
         env_logger::init_from_env(e);
     }
-
+    // Get any options specified via the PN_FLAGS environment variable
     let mut options = Options::default();
-
-    let _ = options.parse_from_str(&std::env::var("PN_FLAGS").unwrap_or_default(), &handler);
-
-    log::debug!("PN options from environment: {:?}", options);
-
+    options.parse_from_str(&std::env::var("PN_FLAGS").unwrap_or_default(), &handler);
+    debug!("PN options from environment: {options:?}");
     let mut args = std::env::args_os()
         .enumerate()
         .map(|(i, arg)| {
@@ -58,76 +57,57 @@ pub fn run() -> ! {
         .collect::<Vec<_>>();
     assert!(!args.is_empty());
 
-    if args.len() > 1 {
-        let first_arg = &args[1];
-        if first_arg == "-vV" || first_arg == "--version" || first_arg == "-V" {
-            use std::process::Command;
-            let rustc_path = args[1].clone();
-            let mut cmd = Command::new(rustc_path);
-            cmd.args(&args[2..]);
-            let status = cmd.status().unwrap_or_else(|e| {
-                log::debug!("Failed to execute rustc: {}", e);
-                std::process::exit(1);
-            });
-            std::process::exit(status.code().unwrap_or(1));
-        }
-
-        if std::path::Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
-            args.remove(1);
-        }
+    // Setting RUSTC_WRAPPER causes Cargo to pass 'rustc' as the first argument.
+    // We're invoking the compiler programmatically, so we remove it if present.
+    if args.len() > 1 && std::path::Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
+        args.remove(1);
     }
 
-    let args_slice = if args.len() > 1 { &args[1..] } else { &[] };
-    let mut rustc_command_line_arguments = options.parse_from_args(args_slice);
-
-    let result = rustc_driver::catch_fatal_errors(|| {
-        rustc_command_line_arguments.insert(0, args[0].clone());
-
-        let print: String = "--print=".into();
+    let mut rustc_command_line_arguments = args;
+    rustc_driver::install_ice_hook("petri net", |_| ());
+    let exit_code = rustc_driver::catch_with_exit_code(|| {
+        let print = "--print=";
         if rustc_command_line_arguments
             .iter()
-            .any(|arg| arg.starts_with(&print))
+            .any(|arg| arg.starts_with(print))
         {
+            // If a --print option is given on the command line we wont get called to analyze
+            // anything. We also don't want to the caller to know that LOCKBUD adds configuration
+            // parameters to the command line, lest the caller be cargo and it panics because
+            // the output from --print=cfg is not what it expects.
         } else {
-            let sysroot: String = "--sysroot".into();
+            let sysroot = "--sysroot";
             if !rustc_command_line_arguments
                 .iter()
-                .any(|arg| arg.starts_with(&sysroot))
+                .any(|arg| arg.starts_with(sysroot))
             {
-                rustc_command_line_arguments.push(sysroot);
-                rustc_command_line_arguments.push(find_sysroot());
+                // Tell compiler where to find the std library and so on.
+                // The compiler relies on the standard rustc driver to tell it, so we have to do likewise.
+                rustc_command_line_arguments.push(format!("{sysroot}={}", find_sysroot()));
             }
 
-            let always_encode_mir: String = "always-encode-mir".into();
+            let always_encode_mir = "always-encode-mir";
             if !rustc_command_line_arguments
                 .iter()
-                .any(|arg| arg.ends_with(&always_encode_mir))
+                .any(|arg| arg.ends_with(always_encode_mir))
             {
-                rustc_command_line_arguments.push("-Z".into());
-                rustc_command_line_arguments.push(always_encode_mir);
+                // Tell compiler to emit MIR into crate for every function with a body.
+                rustc_command_line_arguments.push(format!("-Z{always_encode_mir}"));
             }
         }
 
-        options.infer_crate_name_from_rustc_args(&rustc_command_line_arguments);
-        let mut callbacks = callback::PTACallbacks::new(options);
-        debug!(
-            "rustc_command_line_arguments {:?}",
-            rustc_command_line_arguments
-        );
-
+        let mut callbacks = PTACallbacks::new(options);
+        debug!("rustc_command_line_arguments {rustc_command_line_arguments:?}");
         rustc_driver::run_compiler(&rustc_command_line_arguments, &mut callbacks);
     });
 
-    let exit_code = match result {
-        Ok(_) => rustc_driver::EXIT_SUCCESS,
-        Err(_) => rustc_driver::EXIT_FAILURE,
-    };
-    std::process::exit(exit_code);
+    std::process::exit(exit_code.to_i32());
 }
 
 fn find_sysroot() -> String {
     let home = option_env!("RUSTUP_HOME");
     let toolchain = option_env!("RUSTUP_TOOLCHAIN");
+    #[allow(clippy::option_env_unwrap)]
     match (home, toolchain) {
         (Some(home), Some(toolchain)) => format!("{}/toolchains/{}", home, toolchain),
         _ => option_env!("RUST_SYSROOT")

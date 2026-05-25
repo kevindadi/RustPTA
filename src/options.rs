@@ -278,9 +278,14 @@ impl Options {
         let matches = make_options_parser()
             .try_get_matches_from(pn_args.iter())
             .unwrap_or_else(|e| match e.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::UnknownArgument => {
-                    log::debug!("{e}");
+                ErrorKind::DisplayHelp => {
                     e.exit();
+                }
+                // Unknown arguments are rustc flags — skip them and parse what remains.
+                ErrorKind::UnknownArgument => {
+                    log::debug!("Unknown PN arg (skipping, likely rustc arg): {}", e);
+                    make_options_parser()
+                        .get_matches_from(pn_args.iter().filter(|s| !s.starts_with('-')))
                 }
                 _ => {
                     log::debug!("{e}");
@@ -300,9 +305,7 @@ impl Options {
         if matches!(self.detector_kind, DetectorKind::AtomicityViolation)
             && !cfg!(feature = "atomic-violation")
         {
-            log::warn!(
-                "atomic-violation feature is disabled; falling back to deadlock detection."
-            );
+            log::warn!("atomic-violation feature is disabled; falling back to deadlock detection.");
             self.detector_kind = DetectorKind::Deadlock;
         }
 
