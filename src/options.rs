@@ -50,7 +50,7 @@ fn make_options_parser() -> clap::Command {
         }
     };
 
-    let parser = Command::new("PN")
+    let parser = Command::new("pn")
         .no_binary_name(true)
         .version("v0.1.0")
         .arg(analysis_arg)
@@ -72,13 +72,6 @@ fn make_options_parser() -> clap::Command {
                 .short('p')
                 .long("pn-crate")
                 .help("Target crate for analysis (required for cargo; optional for single file)"),
-        )
-        .arg(
-            Arg::new("input_file")
-                .short('f')
-                .long("file")
-                .value_name("FILE")
-                .help("Single .rs file to analyze (use with rustc invocation)"),
         )
         .group(
             ArgGroup::new("visualization")
@@ -309,9 +302,6 @@ impl Options {
             self.detector_kind = DetectorKind::Deadlock;
         }
 
-        self.input_file = matches
-            .get_one::<String>("input_file")
-            .map(|f| PathBuf::from(f));
         self.crate_name = matches
             .get_one::<String>("target_crate")
             .cloned()

@@ -396,14 +396,17 @@ impl Net {
                 isolated_places.push((place_id, place.name.clone()));
             } else if !has_input && place.tokens == 0 {
                 // No preset and zero tokens: place can never gain tokens.
-                warnings.push(format!(
-                    "Place '{}' (id={}) has no input arcs and initial marking 0 (never activated)",
-                    place.name,
-                    place_id.index()
-                ));
+                // Skip function start places (e.g., "inter::main_start") - they are entry points.
+                if !place.name.ends_with("_start") {
+                    warnings.push(format!(
+                        "Place '{}' (id={}) has no input arcs and initial marking 0 (never activated)",
+                        place.name,
+                        place_id.index()
+                    ));
+                }
             } else if !has_output {
                 // Sink place (may be normal function exit).
-                if !place.name.contains("_end") {
+                if !place.name.ends_with("_end") {
                     warnings.push(format!(
                         "Place '{}' (id={}) has no output arcs (sink); verify this is intended",
                         place.name,

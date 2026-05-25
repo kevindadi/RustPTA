@@ -1,6 +1,5 @@
 use std::env;
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::process::Command;
 
 const CARGO_PN_HELP: &str = r#"Petri Net-based Analysis Tool for Rust Programs
@@ -52,62 +51,25 @@ fn has_arg_flag(name: &str) -> bool {
     args.any(|val| val == name)
 }
 
-fn find_pn_binary() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let pn = dir.join("pn");
-            if pn.exists() {
-                return pn;
-            }
-            let pn = dir.join("pn.exe");
-            if pn.exists() {
-                return pn;
-            }
-        }
-    }
-    PathBuf::from("pn")
-}
-
 fn in_cargo_pta() {
-    let args: Vec<String> = std::env::args().skip(2).collect();
-    let split_pos = args.iter().position(|a| a == "--");
-    let (flags, rest) = match split_pos {
-        Some(pos) => (&args[..pos], &args[pos + 1..]),
-        None => (args.as_slice(), &[][..]),
-    };
-    let flags_str = flags.join(" ");
-
-    let file_arg = flags.iter().position(|a| a == "-f" || a == "--file");
-    let single_file = file_arg.and_then(|i| flags.get(i + 1).cloned());
-
-    if let Some(file) = single_file {
-        let rustc = env::var_os("RUSTC").unwrap_or_else(|| OsString::from("rustc"));
-        let pn_path = find_pn_binary();
-        let mut cmd = Command::new(&pn_path);
-        cmd.arg(&rustc);
-        cmd.arg(&file);
-        cmd.env("RUST_BACKTRACE", "full");
-        cmd.env("PN_LOG", "info");
-        cmd.env("PN_FLAGS", flags_str);
-        let exit_status = cmd
-            .spawn()
-            .expect("could not run pn")
-            .wait()
-            .expect("failed to wait for pn?");
-        if !exit_status.success() {
-            std::process::exit(exit_status.code().unwrap_or(-1));
-        }
-        return;
-    }
-
     let mut cmd = cargo();
     cmd.arg("build");
-    cmd.env("RUSTC_WRAPPER", find_pn_binary());
+    cmd.env("RUSTC_WRAPPER", "pn");
     cmd.env("RUST_BACKTRACE", "full");
-    cmd.env("PN_LOG", "info");
-    cmd.env("PN_FLAGS", flags_str);
-    cmd.args(rest);
+
+    // Pass PN_LOG if specified by the user. Default to info if not specified.
+    const PN_LOG: &str = "PN_LOG";
+    let log_level = env::var(PN_LOG).ok();
+    cmd.env(PN_LOG, log_level.as_deref().unwrap_or("info"));
+
+    let mut args = std::env::args().skip(2);
+
+    let flags: Vec<_> = args.by_ref().take_while(|arg| arg != "--").collect();
+    let flags = flags.join(" ");
+    cmd.env("PN_FLAGS", flags);
+
     let exit_status = cmd
+        .args(args)
         .spawn()
         .expect("could not run cargo")
         .wait()

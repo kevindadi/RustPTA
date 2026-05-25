@@ -362,40 +362,6 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             self.options.config.break_cfg_cycles,
         );
         func_body.translate();
-
-        // let fname = format_name(caller.instance().def_id());
-        // let def_id = caller.instance().def_id();
-        // let kind = if self.tcx.is_closure_like(def_id) {
-        //     FunctionKind::Closure
-        // } else if body.coroutine_kind().is_some() {
-        //     FunctionKind::Async
-        // } else {
-        //     FunctionKind::Normal
-        // };
-        // let mut emitter = CirMirEmitter::new(
-        //     &fname,
-        //     &mut self.cir_resource_table,
-        //     &mut self.cir_spawn_targets,
-        // );
-        // let mut cir_body = BodyToCir::new(
-        //     node,
-        //     caller.instance(),
-        //     body,
-        //     self.tcx,
-        //     self.callgraph,
-        //     &mut self.alias,
-        //     Arc::clone(&self.lock_info),
-        //     &self.functions,
-        //     &self.resources,
-        //     key_api_regex,
-        //     &mut self.async_ctx_cir,
-        //     self.options.config.alias_unknown_policy,
-        //     self.options.config.break_cfg_cycles,
-        //     &mut emitter,
-        //     &self.options,
-        // );
-        // cir_body.translate();
-        // self.cir_functions.insert(fname, emitter.finish(kind));
     }
 
     pub fn construct_func(&mut self) {
