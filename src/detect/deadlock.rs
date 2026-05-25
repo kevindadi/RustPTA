@@ -252,6 +252,7 @@ impl<'a> DeadlockDetector<'a> {
             state_id: format!("s{}", state.index),
             marking,
             description: "Deadlock state with blocked resources".to_string(),
+            blocked_transitions: Vec::new(),
         }
     }
 

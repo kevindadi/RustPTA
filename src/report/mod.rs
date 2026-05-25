@@ -263,6 +263,34 @@ fn source_location(message: impl Into<String>, location: &str) -> SourceLocation
     }
 }
 
+/// Information about a resource's current status relative to what's needed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceStatus {
+    /// Name of the resource (e.g., Mutex_0, RwLock_1)
+    pub resource_name: String,
+    /// Current tokens available for this resource
+    pub has: u64,
+    /// Tokens required by the transition
+    pub needs: u64,
+}
+
+/// A resource-related transition that is blocked in a deadlock state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockedTransition {
+    /// The transition identifier
+    pub id: String,
+    /// Human-readable name like "Foo::mutex_lock_1"
+    pub name: String,
+    /// Source location (e.g., "src/main.rs:28:20")
+    pub location: String,
+    /// What kind of resource operation (Lock, RwLockRead, RwLockWrite, etc.)
+    pub operation: String,
+    /// Resource IDs this transition needs (e.g., Mutex_0, RwLock_1)
+    pub needed_resources: Vec<String>,
+    /// For each needed resource: current tokens vs required tokens
+    pub resource_status: Vec<ResourceStatus>,
+}
+
 fn render_source_location(location: &SourceLocation) -> String {
     match (&location.file, location.line, location.column) {
         (Some(file), Some(line), Some(column)) => format!("{file}:{line}:{column}"),
@@ -301,6 +329,8 @@ pub struct DeadlockState {
     pub state_id: String,
     pub marking: Vec<(String, u8)>,
     pub description: String,
+    /// Transitions that are blocked due to missing resources
+    pub blocked_transitions: Vec<BlockedTransition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -781,6 +811,7 @@ mod tests {
                     ("mutex_0_resource (src/main.rs:42:17)".to_string(), 0),
                 ],
                 description: "Deadlock state with blocked resources".to_string(),
+                blocked_transitions: Vec::new(),
             }],
             traces: vec![DeadlockTrace {
                 steps: vec!["s31 --t92--> s37".to_string()],
