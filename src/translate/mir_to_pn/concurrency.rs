@@ -6,8 +6,10 @@ use crate::net::{Place, structure::PlaceType};
 use crate::{
     concurrency::atomic::AtomicOrdering,
     memory::pointsto::AliasId,
-    net::{PlaceId, Transition, TransitionId, TransitionType},
+    net::{PlaceId, TransitionId, TransitionType},
 };
+#[cfg(not(feature = "atomic-violation"))]
+use crate::net::Transition;
 use rustc_middle::mir::BasicBlock;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {

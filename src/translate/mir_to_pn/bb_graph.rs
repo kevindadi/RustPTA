@@ -43,8 +43,8 @@ impl BasicBlockGraph {
 #[cfg(feature = "atomic-violation")]
 #[derive(Default)]
 pub(super) struct SegState {
-    pub seg_index: HashMap<usize, usize>,
-    pub seg_place_of: HashMap<(usize, usize), PlaceId>,
+    pub seg_index: FxHashMap<usize, usize>,
+    pub seg_place_of: FxHashMap<(usize, usize), PlaceId>,
     pub seqcst_place: Option<PlaceId>,
 }
 
