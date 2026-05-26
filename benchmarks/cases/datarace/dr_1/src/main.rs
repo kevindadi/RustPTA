@@ -8,7 +8,9 @@ unsafe fn bump_n(n: i32) {
     }
 }
 
-unsafe fn path_1() { bump_n(10); }
+unsafe fn path_1() {
+    bump_n(10);
+}
 
 fn main() {
     let mut hs = Vec::new();
@@ -17,6 +19,10 @@ fn main() {
             path_1();
         }));
     }
-    for h in hs { let _ = h.join(); }
-    unsafe { let _ = COUNTER; }
+    for h in hs {
+        let _ = h.join();
+    }
+    unsafe {
+        let _ = COUNTER;
+    }
 }
