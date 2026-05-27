@@ -23,6 +23,7 @@ use crate::util::mem_watcher::MemoryWatcher;
 use log::{debug, error, info};
 use rayon::join;
 use rustc_driver::Compilation;
+use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
@@ -41,15 +42,7 @@ pub struct PTACallbacks {
 
 impl PTACallbacks {
     pub fn new(options: Options) -> Self {
-        let diagnostics_output = if let Some(output) = options.output.clone() {
-            let mut path = PathBuf::from(output);
-            path.push(&options.crate_name);
-            path
-        } else {
-            let mut path = PathBuf::from("/Users/kevin/local-repos/RustPTA/tmp");
-            path.push(&options.crate_name);
-            path
-        };
+        let diagnostics_output = options.analysis_output_dir_for(&options.crate_name);
 
         std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
             log::debug!("Warning: Failed to create output directory: {}", e);
@@ -129,6 +122,12 @@ impl PTACallbacks {
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
+
+        let current_crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
+        self.output_directory = self.options.analysis_output_dir_for(&current_crate_name);
+        std::fs::create_dir_all(&self.output_directory).unwrap_or_else(|e| {
+            log::debug!("Warning: Failed to create output directory: {}", e);
+        });
 
         let cgus = tcx.collect_and_partition_mono_items(()).codegen_units;
         let instances: Vec<Instance<'tcx>> = cgus

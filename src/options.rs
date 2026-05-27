@@ -405,6 +405,22 @@ impl Options {
         rustc_args.to_vec()
     }
 
+    pub fn targets_current_crate(&self, current_crate_name: &str) -> bool {
+        fn normalize(name: &str) -> String {
+            name.replace('-', "_")
+        }
+
+        normalize(&self.crate_name) == normalize(current_crate_name)
+    }
+
+    pub fn analysis_output_dir_for(&self, current_crate_name: &str) -> PathBuf {
+        let base = self
+            .output
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_ANALYSIS_DIR));
+        base.join(current_crate_name)
+    }
+
     /// Infer crate name from rustc arguments when neither `-p` nor `-f` is set.
     pub fn infer_crate_name_from_rustc_args(&mut self, rustc_args: &[String]) {
         if !self.crate_name.is_empty() && self.crate_name != "main" {
@@ -442,5 +458,44 @@ mod tests {
         options.parse_from_args(&["--report-level".to_string(), "research".to_string()]);
 
         assert_eq!(options.config.report_level, ReportLevel::Research);
+    }
+
+    #[test]
+    fn matches_only_the_target_crate() {
+        let options = Options {
+            crate_name: "dr_1".to_string(),
+            ..Options::default()
+        };
+
+        assert!(options.targets_current_crate("dr_1"));
+        assert!(!options.targets_current_crate("hashbrown"));
+    }
+
+    #[test]
+    fn normalizes_hyphenated_cargo_package_names() {
+        let options = Options {
+            crate_name: "my-crate".to_string(),
+            ..Options::default()
+        };
+
+        assert!(options.targets_current_crate("my_crate"));
+    }
+
+    #[test]
+    fn uses_current_crate_name_for_non_target_output_dir() {
+        let options = Options {
+            crate_name: "dr_1".to_string(),
+            output: Some(PathBuf::from("/tmp/pn-tests")),
+            ..Options::default()
+        };
+
+        assert_eq!(
+            options.analysis_output_dir_for("hashbrown"),
+            PathBuf::from("/tmp/pn-tests/hashbrown")
+        );
+        assert_eq!(
+            options.analysis_output_dir_for("dr_1"),
+            PathBuf::from("/tmp/pn-tests/dr_1")
+        );
     }
 }
