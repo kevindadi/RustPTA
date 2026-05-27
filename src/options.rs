@@ -413,12 +413,12 @@ impl Options {
         normalize(&self.crate_name) == normalize(current_crate_name)
     }
 
-    pub fn analysis_output_dir_for(&self, current_crate_name: &str) -> PathBuf {
+    pub fn analysis_output_dir(&self) -> PathBuf {
         let base = self
             .output
             .clone()
             .unwrap_or_else(|| PathBuf::from(DEFAULT_ANALYSIS_DIR));
-        base.join(current_crate_name)
+        base.join(&self.crate_name)
     }
 
     /// Infer crate name from rustc arguments when neither `-p` nor `-f` is set.
@@ -482,20 +482,13 @@ mod tests {
     }
 
     #[test]
-    fn uses_current_crate_name_for_non_target_output_dir() {
+    fn analysis_output_dir_uses_target_crate_name() {
         let options = Options {
             crate_name: "dr_1".to_string(),
             output: Some(PathBuf::from("/tmp/pn-tests")),
             ..Options::default()
         };
 
-        assert_eq!(
-            options.analysis_output_dir_for("hashbrown"),
-            PathBuf::from("/tmp/pn-tests/hashbrown")
-        );
-        assert_eq!(
-            options.analysis_output_dir_for("dr_1"),
-            PathBuf::from("/tmp/pn-tests/dr_1")
-        );
+        assert_eq!(options.analysis_output_dir(), PathBuf::from("/tmp/pn-tests/dr_1"));
     }
 }
