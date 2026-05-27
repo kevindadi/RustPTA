@@ -5,7 +5,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::Bfs;
 use petgraph::{Directed, Graph};
 
-use std::collections::hash_map::RandomState;
+use std::collections::{VecDeque, hash_map::RandomState};
 use std::fs;
 use std::path::Path;
 
@@ -174,14 +174,16 @@ impl<'tcx> CallGraph<'tcx> {
         tcx: TyCtxt<'tcx>,
         key_api_regex: &KeyApiRegex,
     ) {
-        let idx_insts = instances
+        let mut scheduled = FxHashSet::default();
+        let mut pending = instances
             .into_iter()
-            .map(|inst| {
+            .filter_map(|inst| {
                 let idx = self.insert_instance(CallGraphNode::WithBody(inst));
-                (idx, inst)
+                scheduled.insert(inst).then_some((idx, inst))
             })
-            .collect::<Vec<_>>();
-        for (caller_idx, caller) in idx_insts {
+            .collect::<VecDeque<_>>();
+
+        while let Some((caller_idx, caller)) = pending.pop_front() {
             let body = tcx.instance_mir(caller.def);
 
             if body.source.promoted.is_some() {
@@ -191,7 +193,16 @@ impl<'tcx> CallGraph<'tcx> {
                 CallSiteCollector::new(caller, caller_idx, body, tcx, key_api_regex);
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
-                let callee_idx = self.insert_instance(CallGraphNode::WithoutBody(callee));
+                let expand_callee = callee.def_id().is_local() && tcx.is_mir_available(callee.def_id());
+                let callee_idx = self.insert_instance(if expand_callee {
+                    CallGraphNode::WithBody(callee)
+                } else {
+                    CallGraphNode::WithoutBody(callee)
+                });
+
+                if expand_callee && scheduled.insert(callee) {
+                    pending.push_back((callee_idx, callee));
+                }
 
                 if let CallSiteLocation::ThreadControl {
                     kind:
