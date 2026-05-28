@@ -554,14 +554,7 @@ impl Net {
                     .as_ref()
                     .map(|caps| caps[place])
                     .unwrap_or(self.places[place].capacity);
-                if after > capacity {
-                    return Err(FireError::Capacity {
-                        place,
-                        after,
-                        capacity,
-                    });
-                }
-                *tokens = after;
+                *tokens = after.min(capacity);
             }
         }
 
