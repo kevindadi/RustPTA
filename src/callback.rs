@@ -273,7 +273,7 @@ impl PTACallbacks {
             log::info!("State graph built in {:?}", sg_build_time);
             self.handle_visualizations(&callgraph, &pn, &sg, &instances);
             if self.is_research_report() {
-                self.write_summary(&callgraph, &pn, &sg);
+                self.write_summary(&callgraph, &pn, &sg, net_construct_time, net_reduce_time, sg_build_time);
             }
             return;
         }
@@ -299,14 +299,14 @@ impl PTACallbacks {
             log::info!("Stopping analysis after state graph construction");
             self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
             if self.is_research_report() {
-                self.write_summary(&callgraph, &pn, &state_graph);
+                self.write_summary(&callgraph, &pn, &state_graph, net_construct_time, net_reduce_time, sg_build_time);
             }
             return;
         }
 
         self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
         if self.is_research_report() {
-            self.write_summary(&callgraph, &pn, &state_graph);
+            self.write_summary(&callgraph, &pn, &state_graph, net_construct_time, net_reduce_time, sg_build_time);
         }
         #[cfg(feature = "atomic-violation")]
         self.run_detectors(&pn, &state_graph);
@@ -541,6 +541,9 @@ impl PTACallbacks {
         callgraph: &CallGraph<'tcx>,
         pn: &PetriNet<'analysis, 'tcx>,
         state_graph: &StateGraph,
+        net_construct_time: std::time::Duration,
+        net_reduce_time: Option<std::time::Duration>,
+        sg_build_time: std::time::Duration,
     ) {
         #[derive(Serialize)]
         struct SummaryMetrics {
@@ -551,6 +554,9 @@ impl PTACallbacks {
             state_edges: usize,
             deadlock_states: usize,
             truncated: bool,
+            net_construct_time_ms: u64,
+            net_reduce_time_ms: Option<u64>,
+            state_graph_build_time_ms: u64,
         }
 
         #[derive(Serialize)]
@@ -599,6 +605,9 @@ impl PTACallbacks {
                 state_edges: stats.edge_count,
                 deadlock_states: stats.deadlock_count,
                 truncated: stats.truncated,
+                net_construct_time_ms: net_construct_time.as_millis() as u64,
+                net_reduce_time_ms: net_reduce_time.map(|t| t.as_millis() as u64),
+                state_graph_build_time_ms: sg_build_time.as_millis() as u64,
             },
             artifacts: SummaryArtifacts {
                 callgraph_dot: "callgraph.dot",
