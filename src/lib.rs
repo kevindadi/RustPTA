@@ -65,6 +65,7 @@ pub fn run() -> ! {
 
     let mut rustc_command_line_arguments = args;
     rustc_driver::install_ice_hook("petri net", |_| ());
+
     let exit_code = rustc_driver::catch_with_exit_code(|| {
         let print = "--print=";
         if rustc_command_line_arguments
@@ -98,6 +99,7 @@ pub fn run() -> ! {
 
         let mut callbacks = PTACallbacks::new(options);
         debug!("rustc_command_line_arguments {rustc_command_line_arguments:?}");
+        #[allow(internal_features)]
         rustc_driver::run_compiler(&rustc_command_line_arguments, &mut callbacks);
     });
 

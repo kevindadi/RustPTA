@@ -7,6 +7,7 @@ tools
 
 .vscode
 .claude
+.DS_Store
 mir_dump/
 
 # rustc single-file and no-link intermediates
