@@ -172,14 +172,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
     pub(super) fn connect_to_target(
         &mut self,
-        bb_idx: BasicBlock,
+        _bb_idx: BasicBlock,
         bb_end: TransitionId,
         target: &Option<BasicBlock>,
     ) {
         if let Some(target_bb) = target {
-            if self.is_back_edge(bb_idx, *target_bb) {
-                return;
-            }
             self.net
                 .add_output_arc(self.bb_graph.start(*target_bb), bb_end, 1);
         }

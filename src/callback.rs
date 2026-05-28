@@ -30,6 +30,7 @@ use rustc_middle::ty::{Instance, TyCtxt};
 use serde::Serialize;
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
+use std::time::Instant;
 #[cfg(feature = "atomic-violation")]
 use std::time::Instant;
 
@@ -164,7 +165,10 @@ impl PTACallbacks {
         }
 
         let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
+        let net_construct_start = Instant::now();
         pn.construct();
+        let net_construct_time = net_construct_start.elapsed();
+        log::info!("Petri net constructed in {:?}", net_construct_time);
 
         let mut reduced_stage_written = false;
         if self.options.dump_options.dump_petri_net {
@@ -178,12 +182,16 @@ impl PTACallbacks {
             }
         }
 
+        let mut net_reduce_time = None::<std::time::Duration>;
         if self.options.config.reduce_net {
             use crate::net::reduce::{ReductionOptions, reduce_in_place};
+            let reduce_start = Instant::now();
             match reduce_in_place(&mut pn.net, ReductionOptions::default()) {
                 Ok(result) => {
+                    net_reduce_time = Some(reduce_start.elapsed());
                     log::info!(
-                        "Petri net reduced: {} steps (loops/sequences/intermediate)",
+                        "Petri net reduced in {:?}: {} steps (loops/sequences/intermediate)",
+                        net_reduce_time,
                         result.steps.len()
                     );
                     if self.options.dump_options.dump_petri_net {
@@ -259,7 +267,10 @@ impl PTACallbacks {
                 include_zero_tokens: false,
                 use_por: self.options.config.por_enabled,
             };
+            let sg_build_start = Instant::now();
             let sg = StateGraph::with_config(&pn.net, sg_config);
+            let sg_build_time = sg_build_start.elapsed();
+            log::info!("State graph built in {:?}", sg_build_time);
             self.handle_visualizations(&callgraph, &pn, &sg, &instances);
             if self.is_research_report() {
                 self.write_summary(&callgraph, &pn, &sg);
@@ -272,7 +283,10 @@ impl PTACallbacks {
             include_zero_tokens: false,
             use_por: self.options.config.por_enabled,
         };
+        let sg_build_start = Instant::now();
         let state_graph = StateGraph::with_config(&pn.net, sg_config);
+        let sg_build_time = sg_build_start.elapsed();
+        log::info!("State graph built in {:?}", sg_build_time);
         if state_graph.truncated {
             log::warn!(
                 "State space truncated (limit={:?}); results may be incomplete",

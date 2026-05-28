@@ -71,8 +71,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         self.functions.counter()
     }
 
-    fn is_back_edge(&self, src: BasicBlock, target: BasicBlock) -> bool {
-        self.break_cfg_cycles && self.back_edges.contains(&(src, target))
+    fn is_back_edge(&self, _src: BasicBlock, _target: BasicBlock) -> bool {
+        // Preserve complete control flow; do not skip back edges.
+        false
     }
 
     /// Match `join_id` against `spawn_calls` via alias analysis; returns plausible spawn callee `DefId`s.
