@@ -6,7 +6,7 @@ use crate::config::{AliasUnknownPolicy, PnConfig, ReportLevel};
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
 
-const DEFAULT_ANALYSIS_DIR: &str = "/Users/kevin/local-repos/RustPTA/tmp";
+const DEFAULT_ANALYSIS_DIR: &str = "/home/kevin/RustPTA/tmp";
 #[derive(Debug, Clone)]
 pub enum CrateNameList {
     White(Vec<String>),

@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::{Component, Path as FsPath, PathBuf};
 use tokio::process::Command;
 
-const DEFAULT_OUTPUT_ROOT: &str = "/Users/kevin/local-repos/RustPTA/tmp";
+const DEFAULT_OUTPUT_ROOT: &str = "/home/kevin/RustPTA/tmp";
 
 #[derive(Clone)]
 struct AppState {
