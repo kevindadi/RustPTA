@@ -71,7 +71,7 @@ pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
     ) {
         let mut stdout = std::io::stdout();
         stdout.write_fmt(format_args!("{:?}", def_id)).unwrap();
-        rustc_middle::mir::write_mir_pretty(tcx, Some(def_id), &mut stdout).unwrap();
+        rustc_middle::mir::write_mir_pretty(tcx, &mut stdout).unwrap();
         let _ = stdout.flush();
     }
 }

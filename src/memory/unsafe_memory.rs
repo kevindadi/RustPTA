@@ -180,7 +180,7 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
                 }
 
                 match rvalue {
-                    Rvalue::Use(operand) => {
+                    Rvalue::Use(operand, _) => {
                         self.check_operand_usage(operand, &loc_str);
                         self.is_unsafe_operand(operand)
                     }

@@ -9,7 +9,7 @@ pub fn operand_place<'a, 'tcx>(operand: &'a Operand<'tcx>) -> Option<&'a Place<'
 
 pub fn rvalue_read_places<'a, 'tcx>(rvalue: &'a Rvalue<'tcx>) -> Vec<&'a Place<'tcx>> {
     match rvalue {
-        Rvalue::Use(operand)
+        Rvalue::Use(operand, _)
         | Rvalue::Repeat(operand, _)
         | Rvalue::Cast(_, operand, _)
         | Rvalue::UnaryOp(_, operand) => operand_place(operand).into_iter().collect(),

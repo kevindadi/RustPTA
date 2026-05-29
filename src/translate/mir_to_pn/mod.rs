@@ -270,7 +270,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             Rvalue::Ref(_, _, place) => {
                 self.local_ref_source.insert(dest, place.local);
             }
-            Rvalue::Use(op) => {
+            Rvalue::Use(op, _) => {
                 if let Operand::Move(place) | Operand::Copy(place) = op {
                     let src = place.local;
                     if let Some(end) = self.spawn_handle_end.get(&src).copied() {
