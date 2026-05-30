@@ -60,20 +60,6 @@ Use `cargo pn` when analyzing a normal Cargo package. The `-p/--pn-crate` value 
 cargo pn -m deadlock -p your_crate --viz-callgraph --viz-petrinet --viz-stategraph
 ```
 
-### Analyze a single Rust file
-
-Use `-f/--file` for single-file cases. Arguments after `--` are forwarded to rustc.
-
-```bash
-cargo run --bin pn -- \
-  -f path/to/file.rs \
-  -m datarace \
-  --viz-callgraph \
-  --viz-petrinet \
-  --viz-stategraph \
-  -- path/to/file.rs
-```
-
 ### Run atomicity analysis
 
 Atomicity detection is behind the `atomic-violation` feature.
@@ -103,7 +89,6 @@ cargo run --bin pn -- \
 | --- | --- |
 | `-m, --mode <deadlock\|datarace\|atomic\|all\|pointsto>` | Select the analysis mode. `atomic` is accepted only when the `atomic-violation` feature is enabled. |
 | `-p, --pn-crate <name>` | Set the target crate/output name for Cargo-based analysis. |
-| `-f, --file <file.rs>` | Analyze a single Rust source file. |
 | `--pn-analysis-dir <path>` | Set the output root for analysis artifacts. |
 | `--config <file>` | Load configuration from a TOML file. Defaults to `pn.toml` when present. |
 | `--viz-callgraph` | Emit `callgraph.dot`. |
@@ -178,13 +163,6 @@ Benchmark helpers live under `benchmarks/`.
 ./benchmarks/run_benchmarks.sh
 ```
 
-The benchmark script runs deadlock, data-race, and atomic benchmark cases with and without Petri-net reduction, then writes:
-
-- `benchmarks/results/benchmark_metrics.csv`
-- `benchmarks/results/benchmark_table.tex`
-
-Set `BENCHMARK_RELEASE=0` to run the benchmark script in debug mode.
-
 ## Configuration
 
 RustPTA loads `pn.toml` by default when it exists. Use `--config <file>` to select another TOML configuration file.
@@ -194,7 +172,6 @@ Supported configuration areas include:
 - `state_limit` — maximum number of states to explore, or unlimited through the CLI with `--state-limit 0`;
 - `entry_reachable` — whether to translate only entry-reachable functions;
 - `reduce_net` — whether to reduce the Petri net before state-graph construction;
-- `break_cfg_cycles` — whether MIR-level CFG back edges are broken;
 - `por_enabled` — whether partial-order reduction is enabled;
 - `translate_concurrent_roots` — whether to include functions using configured concurrency APIs and their callees;
 - concurrency API regex lists for thread spawn/join, scoped spawn/join, condvars, channels, and atomics;
@@ -217,7 +194,6 @@ Supported configuration areas include:
 | `src/memory/` | Ownership, unsafe-memory, and points-to analysis support. |
 | `src/report/` | Text/JSON report structures. |
 | `src/util/` | MIR DOT export, memory watcher, and helper utilities. |
-| `benchmarks/` | Benchmark cases, generation scripts, and metrics output. |
 
 ## Known limitations
 
