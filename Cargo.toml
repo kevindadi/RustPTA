@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rust_pta_async"]
+members = [".", "crates/rust_pta_async", "crates/rust_pta_cir"]
 resolver = "2"
 
 [package]
