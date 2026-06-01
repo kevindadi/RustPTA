@@ -140,7 +140,7 @@ fn format_statement(stmt: &Statement<'_>) -> String {
         rustc_middle::mir::StatementKind::SetDiscriminant { .. } => "SetDiscriminant".to_string(),
         rustc_middle::mir::StatementKind::StorageLive(..) => "StorageLive".to_string(),
         rustc_middle::mir::StatementKind::StorageDead(..) => "StorageDead".to_string(),
-        rustc_middle::mir::StatementKind::Retag(..) => "Retag".to_string(),
+        // rustc_middle::mir::StatementKind::Retag(.., _) => "Retag".to_string(),
         rustc_middle::mir::StatementKind::PlaceMention(..) => "PlaceMention".to_string(),
         rustc_middle::mir::StatementKind::AscribeUserType(..) => "AscribeUserType".to_string(),
         rustc_middle::mir::StatementKind::Coverage(..) => "Coverage".to_string(),

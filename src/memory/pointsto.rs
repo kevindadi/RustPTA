@@ -524,7 +524,7 @@ impl<'a, 'tcx> ConstraintGraphCollector<'a, 'tcx> {
 
     fn process_rvalue(rvalue: &Rvalue<'tcx>) -> Vec<Option<AccessPattern<'tcx>>> {
         match rvalue {
-            Rvalue::Use(operand)
+            Rvalue::Use(operand, _)
             | Rvalue::Repeat(operand, _)
             | Rvalue::Cast(_, operand, _)
             | Rvalue::UnaryOp(_, operand) => {
@@ -652,7 +652,7 @@ impl<'a, 'tcx> Visitor<'tcx> for ConstraintGraphCollector<'a, 'tcx> {
 
             StatementKind::StorageDead(_) => {}
 
-            StatementKind::Retag(_, _) => {}
+            // StatementKind::Retag(_, _, _) => {}
 
             StatementKind::AscribeUserType(_, _)
             | StatementKind::Coverage(_)

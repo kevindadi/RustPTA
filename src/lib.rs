@@ -1,7 +1,6 @@
 //! The general rustc plugin framework.
 //! Inspired by <https://github.com/facebookexperimental/MIRAI/blob/9cf3067309d591894e2d0cd9b1ee6e18d0fdd26c/checker/src/main.rs>
 #![feature(rustc_private)]
-#![feature(process_exitcode_internals)]
 #![feature(box_patterns)]
 
 pub mod analysis;
@@ -30,8 +29,9 @@ use callback::PTACallbacks;
 use log::debug;
 use options::Options;
 use rustc_session::{EarlyDiagCtxt, config::ErrorOutputType};
+use std::process::ExitCode;
 
-pub fn run() -> ! {
+pub fn run() -> ExitCode {
     // Initialize loggers.
     let handler = EarlyDiagCtxt::new(ErrorOutputType::default());
     if std::env::var("RUSTC_LOG").is_ok() {
@@ -66,7 +66,7 @@ pub fn run() -> ! {
     let mut rustc_command_line_arguments = args;
     rustc_driver::install_ice_hook("petri net", |_| ());
 
-    let exit_code = rustc_driver::catch_with_exit_code(|| {
+    rustc_driver::catch_with_exit_code(|| {
         let print = "--print=";
         if rustc_command_line_arguments
             .iter()
@@ -99,11 +99,8 @@ pub fn run() -> ! {
 
         let mut callbacks = PTACallbacks::new(options);
         debug!("rustc_command_line_arguments {rustc_command_line_arguments:?}");
-        #[allow(internal_features)]
         rustc_driver::run_compiler(&rustc_command_line_arguments, &mut callbacks);
-    });
-
-    std::process::exit(exit_code.to_i32());
+    })
 }
 
 fn find_sysroot() -> String {
