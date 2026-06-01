@@ -1,8 +1,6 @@
 extern crate rustc_data_structures;
 extern crate rustc_span;
 
-use std::collections::HashMap;
-
 use rustc_middle::ty::{EarlyBinder, TyKind, TypingEnv};
 
 use rustc_data_structures::fx::FxHashMap;
@@ -45,7 +43,7 @@ impl CondVarId {
     }
 }
 
-pub type CondvarMap<'tcx> = HashMap<CondVarId, String>;
+pub type CondvarMap<'tcx> = FxHashMap<CondVarId, String>;
 
 #[derive(Clone, Debug)]
 pub enum LockGuardTy<'tcx> {
@@ -200,6 +198,14 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
             if let TyKind::Adt(adt_def, _) = local_ty.kind() {
                 let def_id = adt_def.did();
                 if has_pn_attribute(self.tcx, def_id, "pn_condvar") {
+                    log::warn!(
+                        "[condvar-detect] attr match: instance={:?} local={:?} ty={} path={} span={:?}",
+                        self.instance.def_id(),
+                        local,
+                        local_ty,
+                        self.tcx.def_path_str(def_id),
+                        local_decl.source_info.span,
+                    );
                     self.condvars.insert(
                         CondVarId::new(self.instance_id, local),
                         format!("{:?}", local_decl.source_info.span),
@@ -207,6 +213,14 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
                 } else {
                     let path = self.tcx.def_path_str(def_id);
                     if path.starts_with("std::sync::Condvar") {
+                        log::warn!(
+                            "[condvar-detect] std match: instance={:?} local={:?} ty={} path={} span={:?}",
+                            self.instance.def_id(),
+                            local,
+                            local_ty,
+                            path,
+                            local_decl.source_info.span,
+                        );
                         self.condvars.insert(
                             CondVarId::new(self.instance_id, local),
                             format!("{:?}", local_decl.source_info.span),

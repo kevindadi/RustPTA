@@ -1,5 +1,6 @@
 use crate::net::Net;
 use crate::net::ids::{PlaceId, TransitionId};
+use crate::net::index_vec::Idx;
 use crate::net::structure::{Marking, Place, PlaceType, Transition, TransitionType};
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::NodeIndex;
@@ -264,6 +265,7 @@ pub struct StateGraph {
     pub truncated: bool,
     pub failures: Vec<TransitionFailure>,
     pub markings: FxHashMap<Marking, NodeIndex>,
+    pub net: Option<Net>, // Reference to underlying net for arc inspection
 }
 
 impl StateGraph {
@@ -409,6 +411,7 @@ impl StateGraph {
             truncated,
             failures,
             markings,
+            net: Some(net.clone()),
         }
     }
 
@@ -522,6 +525,7 @@ impl StateGraph {
             truncated,
             failures,
             markings,
+            net: Some(net.clone()),
         }
     }
 
@@ -540,6 +544,21 @@ impl StateGraph {
 
     pub fn contains_marking(&self, marking: &Marking) -> bool {
         self.markings.contains_key(marking)
+    }
+
+    /// Get the resources (places + required tokens) that a transition needs.
+    /// Returns Vec of (place_id, required_tokens).
+    pub fn get_transition_resources(&self, transition_id: TransitionId) -> Vec<(PlaceId, u64)> {
+        let mut resources = Vec::new();
+        if let Some(net) = &self.net {
+            for (place_id, row) in net.pre.rows().iter_enumerated() {
+                let weight = row[transition_id.index()];
+                if weight > 0 {
+                    resources.push((place_id, weight));
+                }
+            }
+        }
+        resources
     }
 }
 

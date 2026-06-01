@@ -159,9 +159,10 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
     }
 
     fn check_unsafe_fn(&self) -> bool {
-        // TODO: Need a new way to test whether a function is `unsafe`.
-        // Conservatively return false because `hir()` is unavailable on this toolchain snapshot.
-        false
+        self.info
+            .unsafe_places
+            .values()
+            .any(|place| !place.is_param)
     }
 
     fn is_unsafe_operation(&mut self, statement: &Statement<'tcx>, location: Location) -> bool {
@@ -179,7 +180,7 @@ impl<'a, 'tcx> UnsafeCollector<'a, 'tcx> {
                 }
 
                 match rvalue {
-                    Rvalue::Use(operand) => {
+                    Rvalue::Use(operand, _) => {
                         self.check_operand_usage(operand, &loc_str);
                         self.is_unsafe_operand(operand)
                     }

@@ -1,6 +1,5 @@
 //! MIR → Petri net translation (main module).
 
-mod async_control;
 mod bb_graph;
 mod calls;
 mod cfg_utils;
@@ -10,7 +9,6 @@ mod drop_unsafe;
 mod terminator;
 mod thread_control;
 
-use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, InstanceId};
 use crate::{
     concurrency::blocking::LockGuardMap,
@@ -21,7 +19,7 @@ use crate::{
 use bb_graph::BasicBlockGraph;
 #[cfg(feature = "atomic-violation")]
 use bb_graph::SegState;
-use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
     BasicBlock, BasicBlockData, Local, Operand, Rvalue, Statement, StatementKind, TerminatorKind,
@@ -31,11 +29,7 @@ use rustc_middle::{
     mir::{Body, Terminator},
     ty::{Instance, TyCtxt},
 };
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
-};
+use std::{cell::RefCell, collections::VecDeque, sync::Arc};
 
 pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     instance_id: InstanceId,
@@ -49,34 +43,34 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     functions: &'translate FunctionRegistry,
     resources: &'translate ResourceRegistry,
     bb_graph: BasicBlockGraph,
-    pub exclude_bb: HashSet<usize>,
+    pub exclude_bb: FxHashSet<usize>,
     back_edges: FxHashSet<(BasicBlock, BasicBlock)>,
     break_cfg_cycles: bool,
     return_transition: TransitionId,
     entry_exit: (PlaceId, PlaceId),
     key_api_regex: &'translate KeyApiRegex,
-    async_ctx: &'translate mut AsyncTranslateContext,
     alias_unknown_policy: crate::config::AliasUnknownPolicy,
     ordered_spawn_ends: VecDeque<PlaceId>,
-    spawn_handle_end: HashMap<Local, PlaceId>,
-    local_ref_source: HashMap<Local, Local>,
-    vec_alias_source: HashMap<Local, Local>,
-    vec_spawn_ends: HashMap<Local, VecDeque<PlaceId>>,
-    iter_vec_source: HashMap<Local, Local>,
-    option_vec_source: HashMap<Local, Local>,
-    handle_vec_source: HashMap<Local, Local>,
-    joinhandle_vec_locals: HashSet<Local>,
+    spawn_handle_end: FxHashMap<Local, PlaceId>,
+    local_ref_source: FxHashMap<Local, Local>,
+    vec_alias_source: FxHashMap<Local, Local>,
+    vec_spawn_ends: FxHashMap<Local, VecDeque<PlaceId>>,
+    iter_vec_source: FxHashMap<Local, Local>,
+    option_vec_source: FxHashMap<Local, Local>,
+    handle_vec_source: FxHashMap<Local, Local>,
+    joinhandle_vec_locals: FxHashSet<Local>,
     #[cfg(feature = "atomic-violation")]
     seg: SegState,
 }
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
-    fn functions_map(&self) -> &HashMap<DefId, (PlaceId, PlaceId)> {
+    fn functions_map(&self) -> &FxHashMap<DefId, (PlaceId, PlaceId)> {
         self.functions.counter()
     }
 
-    fn is_back_edge(&self, src: BasicBlock, target: BasicBlock) -> bool {
-        self.break_cfg_cycles && self.back_edges.contains(&(src, target))
+    fn is_back_edge(&self, _src: BasicBlock, _target: BasicBlock) -> bool {
+        // Preserve complete control flow; do not skip back edges.
+        false
     }
 
     /// Match `join_id` against `spawn_calls` via alias analysis; returns plausible spawn callee `DefId`s.
@@ -113,11 +107,10 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         resources: &'translate ResourceRegistry,
         entry_exit: (PlaceId, PlaceId),
         key_api_regex: &'translate KeyApiRegex,
-        async_ctx: &'translate mut AsyncTranslateContext,
         alias_unknown_policy: crate::config::AliasUnknownPolicy,
         break_cfg_cycles: bool,
     ) -> Self {
-        let joinhandle_vec_locals: HashSet<Local> = body
+        let joinhandle_vec_locals: FxHashSet<Local> = body
             .local_decls
             .iter_enumerated()
             .filter_map(|(local, decl)| {
@@ -143,22 +136,21 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             functions,
             resources,
             bb_graph: BasicBlockGraph::new(),
-            exclude_bb: HashSet::new(),
+            exclude_bb: FxHashSet::default(),
             back_edges: FxHashSet::default(),
             break_cfg_cycles,
             return_transition: TransitionId::new(0),
             entry_exit,
             key_api_regex,
-            async_ctx,
             alias_unknown_policy,
             ordered_spawn_ends: VecDeque::new(),
-            spawn_handle_end: HashMap::new(),
-            local_ref_source: HashMap::new(),
-            vec_alias_source: HashMap::new(),
-            vec_spawn_ends: HashMap::new(),
-            iter_vec_source: HashMap::new(),
-            option_vec_source: HashMap::new(),
-            handle_vec_source: HashMap::new(),
+            spawn_handle_end: FxHashMap::default(),
+            local_ref_source: FxHashMap::default(),
+            vec_alias_source: FxHashMap::default(),
+            vec_spawn_ends: FxHashMap::default(),
+            iter_vec_source: FxHashMap::default(),
+            option_vec_source: FxHashMap::default(),
+            handle_vec_source: FxHashMap::default(),
             joinhandle_vec_locals,
             #[cfg(feature = "atomic-violation")]
             seg: SegState::default(),
@@ -273,7 +265,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             Rvalue::Ref(_, _, place) => {
                 self.local_ref_source.insert(dest, place.local);
             }
-            Rvalue::Use(op) => {
+            Rvalue::Use(op, _) => {
                 if let Operand::Move(place) | Operand::Copy(place) = op {
                     let src = place.local;
                     if let Some(end) = self.spawn_handle_end.get(&src).copied() {

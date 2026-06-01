@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rustc_data_structures::fx::FxHashSet;
 
 use crate::net::ids::{PlaceId, TransitionId};
 use crate::net::structure::PlaceType;
@@ -19,7 +19,7 @@ impl ReductionGraph {
     /// - When the circuit satisfies the conditions, remove all of C_P and C_T, record identities, and clean adjacency.
     pub(crate) fn remove_simple_loops(&mut self) -> Vec<ReductionStep> {
         let mut steps = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
 
         for start_idx in 0..self.places.len() {
             if visited.contains(&start_idx) {
@@ -42,7 +42,7 @@ impl ReductionGraph {
             let mut cycle_transitions = Vec::new();
 
             let mut current_place = start_idx;
-            let mut local_visited = HashSet::new();
+            let mut local_visited = FxHashSet::default();
             let mut valid_cycle = true;
 
             loop {

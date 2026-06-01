@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 
-use crate::config::{AliasUnknownPolicy, PnConfig};
+use crate::config::{AliasUnknownPolicy, PnConfig, ReportLevel};
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
 
-const DEFAULT_ANALYSIS_DIR: &str = "/Users/kevin/local-repos/RustPTA/tmp";
+const DEFAULT_ANALYSIS_DIR: &str = "/home/kevin/RustPTA/tmp";
 #[derive(Debug, Clone)]
 pub enum CrateNameList {
     White(Vec<String>),
@@ -50,7 +50,7 @@ fn make_options_parser() -> clap::Command {
         }
     };
 
-    let parser = Command::new("PN")
+    let parser = Command::new("pn")
         .no_binary_name(true)
         .version("v0.1.0")
         .arg(analysis_arg)
@@ -78,7 +78,7 @@ fn make_options_parser() -> clap::Command {
                 .short('f')
                 .long("file")
                 .value_name("FILE")
-                .help("Single .rs file to analyze (use with rustc invocation)"),
+                .help("Single .rs file to analyze (optional; not needed for cargo)"),
         )
         .group(
             ArgGroup::new("visualization")
@@ -192,6 +192,13 @@ fn make_options_parser() -> clap::Command {
                 .value_name("POLICY")
                 .help("When alias analysis returns Unknown: conservative (treat as Possibly, sound) or optimistic (treat as Unlikely)")
                 .value_parser(["conservative", "optimistic"]),
+        )
+        .arg(
+            Arg::new("report_level")
+                .long("report-level")
+                .value_name("LEVEL")
+                .help("Report audience: developer (default, concise) or research (internal diagnostics)")
+                .value_parser(["developer", "research"]),
         );
     parser
 }
@@ -278,9 +285,14 @@ impl Options {
         let matches = make_options_parser()
             .try_get_matches_from(pn_args.iter())
             .unwrap_or_else(|e| match e.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::UnknownArgument => {
-                    log::debug!("{e}");
+                ErrorKind::DisplayHelp => {
                     e.exit();
+                }
+                // Unknown arguments are rustc flags — skip them and parse what remains.
+                ErrorKind::UnknownArgument => {
+                    log::debug!("Unknown PN arg (skipping, likely rustc arg): {}", e);
+                    make_options_parser()
+                        .get_matches_from(pn_args.iter().filter(|s| !s.starts_with('-')))
                 }
                 _ => {
                     log::debug!("{e}");
@@ -300,15 +312,11 @@ impl Options {
         if matches!(self.detector_kind, DetectorKind::AtomicityViolation)
             && !cfg!(feature = "atomic-violation")
         {
-            log::warn!(
-                "atomic-violation feature is disabled; falling back to deadlock detection."
-            );
+            log::warn!("atomic-violation feature is disabled; falling back to deadlock detection.");
             self.detector_kind = DetectorKind::Deadlock;
         }
 
-        self.input_file = matches
-            .get_one::<String>("input_file")
-            .map(|f| PathBuf::from(f));
+        self.input_file = matches.get_one::<String>("input_file").map(PathBuf::from);
         self.crate_name = matches
             .get_one::<String>("target_crate")
             .cloned()
@@ -387,8 +395,30 @@ impl Options {
                 _ => AliasUnknownPolicy::Conservative,
             };
         }
+        if let Some(level) = matches.get_one::<String>("report_level") {
+            self.config.report_level = match level.as_str() {
+                "research" => ReportLevel::Research,
+                _ => ReportLevel::Developer,
+            };
+        }
 
         rustc_args.to_vec()
+    }
+
+    pub fn targets_current_crate(&self, current_crate_name: &str) -> bool {
+        fn normalize(name: &str) -> String {
+            name.replace('-', "_")
+        }
+
+        normalize(&self.crate_name) == normalize(current_crate_name)
+    }
+
+    pub fn analysis_output_dir(&self) -> PathBuf {
+        let base = self
+            .output
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_ANALYSIS_DIR));
+        base.join(&self.crate_name)
     }
 
     /// Infer crate name from rustc arguments when neither `-p` nor `-f` is set.
@@ -414,5 +444,51 @@ impl Options {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ReportLevel;
+
+    #[test]
+    fn parses_report_level_research_flag() {
+        let mut options = Options::default();
+        options.parse_from_args(&["--report-level".to_string(), "research".to_string()]);
+
+        assert_eq!(options.config.report_level, ReportLevel::Research);
+    }
+
+    #[test]
+    fn matches_only_the_target_crate() {
+        let options = Options {
+            crate_name: "dr_1".to_string(),
+            ..Options::default()
+        };
+
+        assert!(options.targets_current_crate("dr_1"));
+        assert!(!options.targets_current_crate("hashbrown"));
+    }
+
+    #[test]
+    fn normalizes_hyphenated_cargo_package_names() {
+        let options = Options {
+            crate_name: "my-crate".to_string(),
+            ..Options::default()
+        };
+
+        assert!(options.targets_current_crate("my_crate"));
+    }
+
+    #[test]
+    fn analysis_output_dir_uses_target_crate_name() {
+        let options = Options {
+            crate_name: "dr_1".to_string(),
+            output: Some(PathBuf::from("/tmp/pn-tests")),
+            ..Options::default()
+        };
+
+        assert_eq!(options.analysis_output_dir(), PathBuf::from("/tmp/pn-tests/dr_1"));
     }
 }

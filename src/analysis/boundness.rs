@@ -39,7 +39,11 @@ impl fmt::Display for BoundnessResult {
                 unbounded_places,
                 witness_sequence,
             } => {
-                write!(f, "Petri net is unbounded; unbounded places: {:?}", unbounded_places)?;
+                write!(
+                    f,
+                    "Petri net is unbounded; unbounded places: {:?}",
+                    unbounded_places
+                )?;
                 if let Some(seq) = witness_sequence {
                     write!(f, "; witness sequence: {:?}", seq)?;
                 }
@@ -382,19 +386,21 @@ impl BoundnessAnalyzer {
 
     /// Strict componentwise `<` with ω semantics as in the coverability construction.
     fn is_strictly_smaller(&self, marking1: &[Option<u64>], marking2: &[Option<u64>]) -> bool {
-        marking1.iter().zip(marking2.iter()).all(|(m1, m2)| {
-            match (m1, m2) {
+        marking1
+            .iter()
+            .zip(marking2.iter())
+            .all(|(m1, m2)| match (m1, m2) {
                 (None, Some(_)) => false,
                 (Some(v1), Some(v2)) => v1 < v2,
                 _ => false,
-            }
-        }) && marking1
-            .iter()
-            .zip(marking2.iter())
-            .any(|(m1, m2)| match (m1, m2) {
-                (Some(v1), Some(v2)) => v1 < v2,
-                _ => false,
             })
+            && marking1
+                .iter()
+                .zip(marking2.iter())
+                .any(|(m1, m2)| match (m1, m2) {
+                    (Some(v1), Some(v2)) => v1 < v2,
+                    _ => false,
+                })
     }
 
     fn create_omega_marking(

@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::{Component, Path as FsPath, PathBuf};
 use tokio::process::Command;
 
-const DEFAULT_OUTPUT_ROOT: &str = "/Users/kevin/local-repos/RustPTA/tmp";
+const DEFAULT_OUTPUT_ROOT: &str = "/home/kevin/RustPTA/tmp";
 
 #[derive(Clone)]
 struct AppState {
@@ -65,7 +65,7 @@ async fn main() {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-     log::debug!(
+    log::debug!(
         "pn-web cases={} runs={} at http://{}",
         cases_root.display(),
         runs_root.display(),
@@ -410,36 +410,34 @@ fn case_file_path(root: &FsPath, case_path: &str) -> Result<PathBuf, ApiError> {
 }
 
 fn count_state_nodes(path: &FsPath) -> Result<usize, ApiError> {
-    if !path.exists() {
-        return Ok(0);
-    }
-    let content = fs::read_to_string(path).map_err(ApiError::io)?;
-    Ok(content
-        .lines()
-        .filter(|line| {
-            let t = line.trim_start();
-            t.chars().next().is_some_and(|c| c.is_ascii_digit()) && t.contains('[')
-        })
-        .count())
+    count_dot_lines(path, |line| {
+        let t = line.trim_start();
+        t.chars().next().is_some_and(|c| c.is_ascii_digit()) && t.contains('[')
+    })
 }
 
 fn count_prefix_nodes(path: &FsPath, prefix: &str) -> Result<usize, ApiError> {
-    if !path.exists() {
-        return Ok(0);
-    }
-    let content = fs::read_to_string(path).map_err(ApiError::io)?;
-    Ok(content
-        .lines()
-        .filter(|line| line.trim_start().starts_with(prefix) && line.contains('['))
-        .count())
+    count_dot_lines(path, |line| {
+        line.trim_start().starts_with(prefix) && line.contains('[')
+    })
 }
 
 fn count_state_edges(path: &FsPath) -> Result<usize, ApiError> {
-    if !path.exists() {
-        return Ok(0);
+    count_dot_lines(path, |line| line.contains("->"))
+}
+
+fn count_dot_lines(path: &FsPath, predicate: impl Fn(&str) -> bool) -> Result<usize, ApiError> {
+    use std::io::BufRead;
+
+    match fs::File::open(path) {
+        Ok(file) => Ok(std::io::BufReader::new(file)
+            .lines()
+            .map_while(Result::ok)
+            .filter(|line| predicate(line))
+            .count()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(err) => Err(ApiError::io(err)),
     }
-    let content = fs::read_to_string(path).map_err(ApiError::io)?;
-    Ok(content.lines().filter(|line| line.contains("->")).count())
 }
 
 #[derive(Debug)]

@@ -1,5 +1,7 @@
 use std::array;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
+
+use rustc_data_structures::fx::FxHashSet;
 
 use crate::concurrency::atomic::AtomicOrdering;
 use crate::memory::pointsto::AliasId;
@@ -207,7 +209,7 @@ pub fn detect_atomicity_violations(
 
     let mut witnesses = Vec::new();
     let mut seen: BTreeSet<(usize, TransitionId, TransitionId, TransitionId)> = BTreeSet::new();
-    let mut visited: HashSet<StateFingerprint> = HashSet::new();
+    let mut visited: FxHashSet<StateFingerprint> = FxHashSet::default();
 
     let mut stack = vec![Frame::new(init.clone())];
 

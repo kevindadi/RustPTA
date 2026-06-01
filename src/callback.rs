@@ -2,6 +2,7 @@ extern crate rustc_driver;
 extern crate rustc_hir;
 
 use crate::analysis::reachability::{StateGraph, StateGraphConfig};
+use crate::config::ReportLevel;
 #[cfg(feature = "atomic-violation")]
 use crate::detect::atomic_violation_detector::{
     Witness, detect_atomicity_violations, marking_from_places, print_witnesses,
@@ -22,12 +23,14 @@ use crate::util::mem_watcher::MemoryWatcher;
 use log::{debug, error, info};
 use rayon::join;
 use rustc_driver::Compilation;
+use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{Instance, TyCtxt};
 use serde::Serialize;
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
+use std::time::Instant;
 #[cfg(feature = "atomic-violation")]
 use std::time::Instant;
 
@@ -40,15 +43,7 @@ pub struct PTACallbacks {
 
 impl PTACallbacks {
     pub fn new(options: Options) -> Self {
-        let diagnostics_output = if let Some(output) = options.output.clone() {
-            let mut path = PathBuf::from(output);
-            path.push(&options.crate_name);
-            path
-        } else {
-            let mut path = PathBuf::from("/Users/kevin/local-repos/RustPTA/tmp");
-            path.push(&options.crate_name);
-            path
-        };
+        let diagnostics_output = options.analysis_output_dir();
 
         std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
             log::debug!("Warning: Failed to create output directory: {}", e);
@@ -59,6 +54,10 @@ impl PTACallbacks {
             output_directory: diagnostics_output,
             test_run: false,
         }
+    }
+
+    fn is_research_report(&self) -> bool {
+        self.options.config.report_level == ReportLevel::Research
     }
 }
 
@@ -117,40 +116,6 @@ impl rustc_driver::Callbacks for PTACallbacks {
 }
 
 impl PTACallbacks {
-    fn write_cir_yaml(pn: &PetriNet<'_, '_>, dir: &PathBuf) {
-        let artifact = if !pn.cir_functions.is_empty() {
-            crate::cir::pipeline::build_cir_artifact_from_mir_emission(pn)
-        } else {
-            let mut a = match crate::cir::CirExtractor::new(&pn.net).extract() {
-                Ok(a) => a,
-                Err(errs) => {
-                    for e in errs {
-                        log::warn!("CIR extraction: {e}");
-                    }
-                    return;
-                }
-            };
-            crate::cir::pipeline::merge_calls_and_stubs(
-                pn.tcx(),
-                pn.options(),
-                pn.callgraph(),
-                &mut a,
-            );
-            a
-        };
-        let path = dir.join("cir.yaml");
-        match artifact.to_yaml() {
-            Ok(yaml) => {
-                if let Err(err) = std::fs::write(&path, yaml) {
-                    error!("failed to write CIR YAML to {:?}: {err}", path);
-                } else {
-                    info!("CIR YAML written to {:?}", path);
-                }
-            }
-            Err(err) => error!("failed to serialize CIR YAML: {err}"),
-        }
-    }
-
     fn analyze_with_pta<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
         let mut mem_watcher = MemoryWatcher::new();
         mem_watcher.start();
@@ -158,6 +123,8 @@ impl PTACallbacks {
         if tcx.sess.opts.unstable_opts.no_codegen || !tcx.sess.opts.output_types.should_codegen() {
             return;
         }
+
+        let current_crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
 
         let cgus = tcx.collect_and_partition_mono_items(()).codegen_units;
         let instances: Vec<Instance<'tcx>> = cgus
@@ -188,12 +155,20 @@ impl PTACallbacks {
             return;
         }
 
-        let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
-        pn.construct();
-
-        if self.options.dump_options.dump_cir {
-            Self::write_cir_yaml(&pn, &self.output_directory);
+        if !self.options.targets_current_crate(&current_crate_name) {
+            debug!(
+                "skip Petri net construction for crate {} (target crate: {})",
+                current_crate_name,
+                self.options.crate_name
+            );
+            return;
         }
+
+        let mut pn = PetriNet::new(self.options.clone(), tcx, &callgraph);
+        let net_construct_start = Instant::now();
+        pn.construct();
+        let net_construct_time = net_construct_start.elapsed();
+        log::info!("Petri net constructed in {:?}", net_construct_time);
 
         let mut reduced_stage_written = false;
         if self.options.dump_options.dump_petri_net {
@@ -207,12 +182,16 @@ impl PTACallbacks {
             }
         }
 
+        let mut net_reduce_time = None::<std::time::Duration>;
         if self.options.config.reduce_net {
             use crate::net::reduce::{ReductionOptions, reduce_in_place};
+            let reduce_start = Instant::now();
             match reduce_in_place(&mut pn.net, ReductionOptions::default()) {
                 Ok(result) => {
+                    net_reduce_time = Some(reduce_start.elapsed());
                     log::info!(
-                        "Petri net reduced: {} steps (loops/sequences/intermediate)",
+                        "Petri net reduced in {:?}: {} steps (loops/sequences/intermediate)",
+                        net_reduce_time,
                         result.steps.len()
                     );
                     if self.options.dump_options.dump_petri_net {
@@ -264,11 +243,11 @@ impl PTACallbacks {
             }
         }
 
-        // Run connectivity diagnostics before building the state graph.
-        pn.net.log_diagnostics();
+        if self.is_research_report() {
+            pn.net.log_diagnostics();
+        }
 
-        // Optionally persist diagnostics when exporting the Petri net.
-        if self.options.dump_options.dump_petri_net {
+        if self.is_research_report() && self.options.dump_options.dump_petri_net {
             let report = pn.net.diagnose_connectivity();
             if report.has_issues() {
                 let report_path = self.output_directory.join("petri_net_diagnostics.txt");
@@ -288,9 +267,14 @@ impl PTACallbacks {
                 include_zero_tokens: false,
                 use_por: self.options.config.por_enabled,
             };
+            let sg_build_start = Instant::now();
             let sg = StateGraph::with_config(&pn.net, sg_config);
+            let sg_build_time = sg_build_start.elapsed();
+            log::info!("State graph built in {:?}", sg_build_time);
             self.handle_visualizations(&callgraph, &pn, &sg, &instances);
-            self.write_summary(&callgraph, &pn, &sg);
+            if self.is_research_report() {
+                self.write_summary(&callgraph, &pn, &sg, net_construct_time, net_reduce_time, sg_build_time);
+            }
             return;
         }
 
@@ -299,7 +283,10 @@ impl PTACallbacks {
             include_zero_tokens: false,
             use_por: self.options.config.por_enabled,
         };
+        let sg_build_start = Instant::now();
         let state_graph = StateGraph::with_config(&pn.net, sg_config);
+        let sg_build_time = sg_build_start.elapsed();
+        log::info!("State graph built in {:?}", sg_build_time);
         if state_graph.truncated {
             log::warn!(
                 "State space truncated (limit={:?}); results may be incomplete",
@@ -311,12 +298,16 @@ impl PTACallbacks {
         if self.options.stop_after == StopAfter::AfterStateGraph {
             log::info!("Stopping analysis after state graph construction");
             self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
-            self.write_summary(&callgraph, &pn, &state_graph);
+            if self.is_research_report() {
+                self.write_summary(&callgraph, &pn, &state_graph, net_construct_time, net_reduce_time, sg_build_time);
+            }
             return;
         }
 
         self.handle_visualizations(&callgraph, &pn, &state_graph, &instances);
-        self.write_summary(&callgraph, &pn, &state_graph);
+        if self.is_research_report() {
+            self.write_summary(&callgraph, &pn, &state_graph, net_construct_time, net_reduce_time, sg_build_time);
+        }
         #[cfg(feature = "atomic-violation")]
         self.run_detectors(&pn, &state_graph);
         #[cfg(not(feature = "atomic-violation"))]
@@ -550,6 +541,9 @@ impl PTACallbacks {
         callgraph: &CallGraph<'tcx>,
         pn: &PetriNet<'analysis, 'tcx>,
         state_graph: &StateGraph,
+        net_construct_time: std::time::Duration,
+        net_reduce_time: Option<std::time::Duration>,
+        sg_build_time: std::time::Duration,
     ) {
         #[derive(Serialize)]
         struct SummaryMetrics {
@@ -560,6 +554,9 @@ impl PTACallbacks {
             state_edges: usize,
             deadlock_states: usize,
             truncated: bool,
+            net_construct_time_ms: u64,
+            net_reduce_time_ms: Option<u64>,
+            state_graph_build_time_ms: u64,
         }
 
         #[derive(Serialize)]
@@ -571,9 +568,9 @@ impl PTACallbacks {
             petrinet_reduce_2_sequence_dot: &'static str,
             petrinet_reduce_3_intermediate_dot: &'static str,
             stategraph_dot: &'static str,
-            deadlock_report_json: &'static str,
-            datarace_report_json: &'static str,
-            atomicity_report_json: &'static str,
+            deadlock_report: &'static str,
+            datarace_report: &'static str,
+            atomicity_report: &'static str,
             points_to_report: &'static str,
         }
 
@@ -608,6 +605,9 @@ impl PTACallbacks {
                 state_edges: stats.edge_count,
                 deadlock_states: stats.deadlock_count,
                 truncated: stats.truncated,
+                net_construct_time_ms: net_construct_time.as_millis() as u64,
+                net_reduce_time_ms: net_reduce_time.map(|t| t.as_millis() as u64),
+                state_graph_build_time_ms: sg_build_time.as_millis() as u64,
             },
             artifacts: SummaryArtifacts {
                 callgraph_dot: "callgraph.dot",
@@ -617,9 +617,9 @@ impl PTACallbacks {
                 petrinet_reduce_2_sequence_dot: "petrinet_reduce_2_sequence.dot",
                 petrinet_reduce_3_intermediate_dot: "petrinet_reduce_3_intermediate.dot",
                 stategraph_dot: "stategraph.dot",
-                deadlock_report_json: "deadlock_report.txt.json",
-                datarace_report_json: "datarace_report.txt.json",
-                atomicity_report_json: "atomicity_report.txt.json",
+                deadlock_report: "deadlock_report.txt",
+                datarace_report: "datarace_report.txt",
+                atomicity_report: "atomicity_report.txt",
                 points_to_report: "points_to_report.txt",
             },
         };

@@ -55,6 +55,17 @@ pub enum AtomicApi {
     ReadWrite,
 }
 
+pub fn atomic_api_from_name(fn_name: &str) -> Option<AtomicApi> {
+    let last_segment = fn_name.rsplit("::").next().unwrap_or(fn_name);
+    match last_segment {
+        "load" => Some(AtomicApi::Read),
+        "store" => Some(AtomicApi::Write),
+        "compare_exchange" | "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor"
+        | "swap" => Some(AtomicApi::ReadWrite),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum AtomicOrdering {
     Relaxed,
@@ -231,22 +242,7 @@ impl<'a, 'tcx> Visitor<'tcx> for AtomicVisitor<'a, 'tcx> {
             if let TyKind::FnDef(def_id, _) = func_ty.kind() {
                 let fn_name = self.tcx.def_path_str(*def_id);
 
-                let api = if fn_name.contains("::load") {
-                    Some(AtomicApi::Read)
-                } else if fn_name.contains("::store") {
-                    Some(AtomicApi::Write)
-                } else if fn_name.contains("::compare_exchange")
-                    || fn_name.contains("::fetch_add")
-                    || fn_name.contains("::fetch_sub")
-                    || fn_name.contains("::fetch_and")
-                    || fn_name.contains("::fetch_or")
-                    || fn_name.contains("::fetch_xor")
-                    || fn_name.contains("::swap")
-                {
-                    Some(AtomicApi::ReadWrite)
-                } else {
-                    None
-                };
+                let api = atomic_api_from_name(&fn_name);
 
                 if let Some(api) = api {
                     log::debug!("Found atomic operation: {:?} in {}", api, fn_name);

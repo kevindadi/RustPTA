@@ -1,13 +1,13 @@
 //! `BasicBlockGraph` and `SegState`: CFG shape and atomic-order segment state.
 
 use crate::net::PlaceId;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::mir::BasicBlock;
-use std::collections::HashMap;
 
 #[derive(Default)]
 pub(super) struct BasicBlockGraph {
-    pub start_places: HashMap<BasicBlock, PlaceId>,
-    pub sequences: HashMap<BasicBlock, Vec<PlaceId>>,
+    pub start_places: FxHashMap<BasicBlock, PlaceId>,
+    pub sequences: FxHashMap<BasicBlock, Vec<PlaceId>>,
 }
 
 impl BasicBlockGraph {
@@ -43,8 +43,8 @@ impl BasicBlockGraph {
 #[cfg(feature = "atomic-violation")]
 #[derive(Default)]
 pub(super) struct SegState {
-    pub seg_index: HashMap<usize, usize>,
-    pub seg_place_of: HashMap<(usize, usize), PlaceId>,
+    pub seg_index: FxHashMap<usize, usize>,
+    pub seg_place_of: FxHashMap<(usize, usize), PlaceId>,
     pub seqcst_place: Option<PlaceId>,
 }
 

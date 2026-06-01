@@ -1,13 +1,15 @@
 //! Concurrency primitives: locks, condvars, channels, atomics.
 
 use super::BodyToPetriNet;
+#[cfg(feature = "atomic-violation")]
+use crate::net::{Place, structure::PlaceType};
 use crate::{
     concurrency::atomic::AtomicOrdering,
     memory::pointsto::AliasId,
-    net::{PlaceId, Transition, TransitionId, TransitionType},
+    net::{PlaceId, TransitionId, TransitionType},
 };
-#[cfg(feature = "atomic-violation")]
-use crate::net::{structure::PlaceType, Place};
+#[cfg(not(feature = "atomic-violation"))]
+use crate::net::Transition;
 use rustc_middle::mir::BasicBlock;
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
@@ -22,7 +24,9 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 .may_alias(self.alias_unknown_policy)
             {
                 for &place_id in place_ids {
-                    matches.push((*alias_id, place_id));
+                    if !matches.iter().any(|(_, matched)| *matched == place_id) {
+                        matches.push((*alias_id, place_id));
+                    }
                 }
             }
         }

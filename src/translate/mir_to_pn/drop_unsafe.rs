@@ -5,8 +5,9 @@ use crate::{
     concurrency::blocking::{LockGuardId, LockGuardTy},
     memory::pointsto::AliasId,
     net::{Idx, PlaceId, Transition, TransitionType},
+    translate::mir_utils::rvalue_read_places,
 };
-use rustc_middle::mir::{BasicBlock, BasicBlockData, Operand, Rvalue};
+use rustc_middle::mir::{BasicBlock, BasicBlockData, Rvalue};
 
 impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     pub(super) fn handle_drop(
@@ -79,6 +80,26 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         (false, PlaceId::new(0), None)
     }
 
+    fn wire_unsafe_transition(
+        &mut self,
+        bb_idx: BasicBlock,
+        transition: Transition,
+        unsafe_place: PlaceId,
+        transition_name: &str,
+        ready_suffix: &str,
+        span_str: &str,
+    ) {
+        let transition_id = self.net.add_transition(transition);
+        let last_node = self.bb_graph.last(bb_idx);
+        self.net.add_input_arc(last_node, transition_id, 1);
+        self.net.add_output_arc(unsafe_place, transition_id, 1);
+        self.net.add_input_arc(unsafe_place, transition_id, 1);
+        let place_name = format!("{transition_name}_{ready_suffix}");
+        let temp_place_node = crate::bb_place!(self.net, place_name, span_str.to_string());
+        self.net.add_output_arc(temp_place_node, transition_id, 1);
+        self.bb_graph.push(bb_idx, temp_place_node);
+    }
+
     pub(super) fn process_rvalue_reads(
         &mut self,
         rvalue: &Rvalue<'tcx>,
@@ -86,36 +107,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         bb_idx: BasicBlock,
         span_str: &str,
     ) {
-        let places = match rvalue {
-            Rvalue::Use(operand) => match operand {
-                Operand::Move(place) | Operand::Copy(place) => vec![place],
-                Operand::Constant(_) => vec![],
-                Operand::RuntimeChecks(_) => {
-                    todo!("Handle RuntimeChecks operand if needed");
-                }
-            },
-            Rvalue::BinaryOp(_, box (op1, op2)) => {
-                let mut places = Vec::new();
-                if let Operand::Move(place) | Operand::Copy(place) = op1 {
-                    places.push(place);
-                }
-                if let Operand::Move(place) | Operand::Copy(place) = op2 {
-                    places.push(place);
-                }
-                places
-            }
-            Rvalue::Ref(_, _, place) => vec![place],
-            Rvalue::Discriminant(place) => vec![place],
-            Rvalue::Aggregate(_, operands) => operands
-                .iter()
-                .filter_map(|op| match op {
-                    Operand::Move(place) | Operand::Copy(place) => Some(place),
-                    _ => None,
-                })
-                .collect(),
-
-            _ => vec![],
-        };
+        let places = rvalue_read_places(rvalue);
 
         for place in places {
             let place_id = AliasId::new(self.instance_id, place.local);
@@ -134,20 +126,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         place_ty,
                     ),
                 );
-                let unsafe_read_t = self.net.add_transition(read_t);
-
-                let last_node = self.bb_graph.last(bb_idx);
-                self.net.add_input_arc(last_node, unsafe_read_t, 1);
-
-                let unsafe_place = alias_result.1;
-                self.net.add_output_arc(unsafe_place, unsafe_read_t, 1);
-                self.net.add_input_arc(unsafe_place, unsafe_read_t, 1);
-
-                let place_name = format!("{}_rready", &transition_name.as_str());
-                let temp_place_node = crate::bb_place!(self.net, place_name, span_str.to_string());
-                self.net.add_output_arc(temp_place_node, unsafe_read_t, 1);
-
-                self.bb_graph.push(bb_idx, temp_place_node);
+                self.wire_unsafe_transition(
+                    bb_idx,
+                    read_t,
+                    alias_result.1,
+                    &transition_name,
+                    "rready",
+                    span_str,
+                );
             }
         }
     }
@@ -174,20 +160,14 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     place_ty,
                 ),
             );
-            let unsafe_write_t = self.net.add_transition(write_t);
-
-            let last_node = self.bb_graph.last(bb_idx);
-            self.net.add_input_arc(last_node, unsafe_write_t, 1);
-
-            let unsafe_place = alias_result.1;
-            self.net.add_output_arc(unsafe_place, unsafe_write_t, 1);
-            self.net.add_input_arc(unsafe_place, unsafe_write_t, 1);
-
-            let place_name = format!("{}_wready", &transition_name.as_str());
-            let temp_place_node = crate::bb_place!(self.net, place_name, span_str.to_string());
-            self.net.add_output_arc(temp_place_node, unsafe_write_t, 1);
-
-            self.bb_graph.push(bb_idx, temp_place_node);
+            self.wire_unsafe_transition(
+                bb_idx,
+                write_t,
+                alias_result.1,
+                &transition_name,
+                "wready",
+                span_str,
+            );
         }
     }
 }

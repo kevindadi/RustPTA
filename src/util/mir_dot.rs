@@ -14,35 +14,31 @@ pub fn write_mir_dot<'tcx, P: AsRef<Path>>(
     if let Some(parent) = path.as_ref().parent() {
         fs::create_dir_all(parent)?;
     }
-    
+
     let dot = generate_mir_dot(tcx, def_id, body);
     fs::write(path, dot)?;
     Ok(())
 }
 
 /// Emit a Graphviz DOT representation of MIR.
-fn generate_mir_dot<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    body: &Body<'tcx>,
-) -> String {
+fn generate_mir_dot<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, body: &Body<'tcx>) -> String {
     let fn_name = tcx.def_path_str(def_id);
     let mut dot = String::new();
-    
+
     let _ = writeln!(&mut dot, "digraph MIR_{} {{", sanitize_name(&fn_name));
     let _ = writeln!(&mut dot, "    rankdir=TB;");
     let _ = writeln!(&mut dot, "    node [fontname=\"Helvetica\", fontsize=10];");
     let _ = writeln!(&mut dot, "    edge [fontname=\"Helvetica\", fontsize=9];");
-    
+
     // Emit basic-block nodes.
     for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
         if bb.is_cleanup || bb.is_empty_unreachable() {
             continue;
         }
-        
+
         let node_id = format!("bb{}", bb_idx.index());
         let mut label = format!("BB{}", bb_idx.index());
-        
+
         if !bb.statements.is_empty() {
             label.push_str("\\n");
             for (idx, stmt) in bb.statements.iter().enumerate() {
@@ -55,37 +51,36 @@ fn generate_mir_dot<'tcx>(
                 }
             }
         }
-        
+
         if let Some(term) = &bb.terminator {
             label.push_str(&format!("\\n---\\n{}", format_terminator(term)));
         }
-        
+
         let shape = if bb_idx.index() == 0 {
             "ellipse"
         } else {
             "box"
         };
-        
-        let fillcolor = if bb.is_cleanup {
-            "#ffcccc"
-        } else {
-            "#e3f2fd"
-        };
-        
+
+        let fillcolor = if bb.is_cleanup { "#ffcccc" } else { "#e3f2fd" };
+
         let _ = writeln!(
             &mut dot,
             "    {} [label=\"{}\", shape={}, style=filled, fillcolor=\"{}\"];",
-            node_id, escape_label(&label), shape, fillcolor
+            node_id,
+            escape_label(&label),
+            shape,
+            fillcolor
         );
     }
-    
+
     for (bb_idx, bb) in body.basic_blocks.iter_enumerated() {
         if bb.is_cleanup || bb.is_empty_unreachable() {
             continue;
         }
-        
+
         let from_id = format!("bb{}", bb_idx.index());
-        
+
         if let Some(term) = &bb.terminator {
             match &term.kind {
                 TerminatorKind::Goto { target } => {
@@ -99,14 +94,17 @@ fn generate_mir_dot<'tcx>(
                         let _ = writeln!(
                             &mut dot,
                             "    {} -> {} [label=\"{}\"];",
-                            from_id, to_id, escape_label(&label)
+                            from_id,
+                            to_id,
+                            escape_label(&label)
                         );
                     }
                 }
                 TerminatorKind::Call { target, .. } => {
                     if let Some(target_bb) = target {
                         let to_id = format!("bb{}", target_bb.index());
-                        let _ = writeln!(&mut dot, "    {} -> {} [label=\"call\"];", from_id, to_id);
+                        let _ =
+                            writeln!(&mut dot, "    {} -> {} [label=\"call\"];", from_id, to_id);
                     }
                 }
                 TerminatorKind::Return => {
@@ -117,12 +115,18 @@ fn generate_mir_dot<'tcx>(
                     let _ = writeln!(&mut dot, "    {} -> {} [label=\"assert\"];", from_id, to_id);
                 }
                 _ => {
-                    let _ = writeln!(&mut dot, "    {} -> end_{} [label=\"{:?}\"];", from_id, bb_idx.index(), term.kind);
+                    let _ = writeln!(
+                        &mut dot,
+                        "    {} -> end_{} [label=\"{:?}\"];",
+                        from_id,
+                        bb_idx.index(),
+                        term.kind
+                    );
                 }
             }
         }
     }
-    
+
     let _ = writeln!(&mut dot, "}}");
     dot
 }
@@ -136,7 +140,7 @@ fn format_statement(stmt: &Statement<'_>) -> String {
         rustc_middle::mir::StatementKind::SetDiscriminant { .. } => "SetDiscriminant".to_string(),
         rustc_middle::mir::StatementKind::StorageLive(..) => "StorageLive".to_string(),
         rustc_middle::mir::StatementKind::StorageDead(..) => "StorageDead".to_string(),
-        rustc_middle::mir::StatementKind::Retag(..) => "Retag".to_string(),
+        // rustc_middle::mir::StatementKind::Retag(.., _) => "Retag".to_string(),
         rustc_middle::mir::StatementKind::PlaceMention(..) => "PlaceMention".to_string(),
         rustc_middle::mir::StatementKind::AscribeUserType(..) => "AscribeUserType".to_string(),
         rustc_middle::mir::StatementKind::Coverage(..) => "Coverage".to_string(),

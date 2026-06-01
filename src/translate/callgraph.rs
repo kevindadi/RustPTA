@@ -5,7 +5,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::Bfs;
 use petgraph::{Directed, Graph};
 
-use std::collections::hash_map::RandomState;
+use std::collections::{VecDeque, hash_map::RandomState};
 use std::fs;
 use std::path::Path;
 
@@ -29,10 +29,6 @@ pub enum ThreadControlKind {
     ScopeSpawn,
     ScopeJoin,
     RayonJoin,
-    /// `tokio::spawn` — cooperative task, not an OS thread.
-    AsyncSpawn,
-    /// `JoinHandle.await` — wait for task completion.
-    AsyncJoin,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -61,8 +57,7 @@ impl CallSiteLocation {
                 destination: Some(destination),
                 kind:
                     ThreadControlKind::Spawn
-                    | ThreadControlKind::ScopeSpawn
-                    | ThreadControlKind::AsyncSpawn,
+                    | ThreadControlKind::ScopeSpawn,
                 ..
             } => Some(*destination),
             _ => None,
@@ -174,14 +169,16 @@ impl<'tcx> CallGraph<'tcx> {
         tcx: TyCtxt<'tcx>,
         key_api_regex: &KeyApiRegex,
     ) {
-        let idx_insts = instances
+        let mut scheduled = FxHashSet::default();
+        let mut pending = instances
             .into_iter()
-            .map(|inst| {
+            .filter_map(|inst| {
                 let idx = self.insert_instance(CallGraphNode::WithBody(inst));
-                (idx, inst)
+                scheduled.insert(inst).then_some((idx, inst))
             })
-            .collect::<Vec<_>>();
-        for (caller_idx, caller) in idx_insts {
+            .collect::<VecDeque<_>>();
+
+        while let Some((caller_idx, caller)) = pending.pop_front() {
             let body = tcx.instance_mir(caller.def);
 
             if body.source.promoted.is_some() {
@@ -191,13 +188,19 @@ impl<'tcx> CallGraph<'tcx> {
                 CallSiteCollector::new(caller, caller_idx, body, tcx, key_api_regex);
             collector.visit_body(body);
             for (callee, location) in collector.finish() {
-                let callee_idx = self.insert_instance(CallGraphNode::WithoutBody(callee));
+                let expand_callee = callee.def_id().is_local() && tcx.is_mir_available(callee.def_id());
+                let callee_idx = self.insert_instance(if expand_callee {
+                    CallGraphNode::WithBody(callee)
+                } else {
+                    CallGraphNode::WithoutBody(callee)
+                });
+
+                if expand_callee && scheduled.insert(callee) {
+                    pending.push_back((callee_idx, callee));
+                }
 
                 if let CallSiteLocation::ThreadControl {
-                    kind:
-                        ThreadControlKind::Spawn
-                        | ThreadControlKind::ScopeSpawn
-                        | ThreadControlKind::AsyncSpawn,
+                    kind: ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn,
                     destination: Some(alias_id),
                     ..
                 } = location
@@ -404,9 +407,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                     classify_thread_control(self.tcx, def_id, &fn_path, self.key_api_regex)
                 {
                     match control_kind {
-                        ThreadControlKind::Spawn
-                        | ThreadControlKind::ScopeSpawn
-                        | ThreadControlKind::AsyncSpawn => {
+                        ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn => {
                             if self.handle_spawn_call(
                                 args.as_ref(),
                                 destination,
@@ -422,9 +423,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                                 return;
                             }
                         }
-                        ThreadControlKind::Join
-                        | ThreadControlKind::ScopeJoin
-                        | ThreadControlKind::AsyncJoin => {
+                        ThreadControlKind::Join | ThreadControlKind::ScopeJoin => {
                             if let Some(callee) = self.resolve_instance(def_id, substs) {
                                 let alias_id =
                                     AliasId::from_place(self.caller_idx, destination.as_ref());
@@ -510,17 +509,6 @@ pub fn classify_thread_control(
 
     if key_api_regex.scope_join.is_match(fn_path) {
         return Some(ThreadControlKind::ScopeJoin);
-    }
-
-    // Prefer tokio async edges over std::thread when both match.
-    if fn_path.contains("tokio::task::spawn") || fn_path.contains("tokio::runtime::Runtime::spawn")
-    {
-        return Some(ThreadControlKind::AsyncSpawn);
-    }
-    if fn_path.contains("tokio::task::JoinHandle")
-        && (fn_path.contains("await") || fn_path.contains("blocking_on"))
-    {
-        return Some(ThreadControlKind::AsyncJoin);
     }
 
     if key_api_regex.thread_spawn.is_match(fn_path) {

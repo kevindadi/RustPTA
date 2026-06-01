@@ -1,15 +1,13 @@
+target/
+debug/
+release/
+rls/
+*.o
+.vscode/
+AGENTS.md
+
 Cargo.lock
-target
 toys
+tools
+bench
 tmp
-
-.vscode
-.cursor
-.claude
-mir_dump/
-
-# rustc single-file and no-link intermediates
-*.rcgu.o
-*.rlink
-*.rlib
-*.dSYM/

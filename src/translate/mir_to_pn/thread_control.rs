@@ -148,14 +148,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     self.handle_spawn(callee_func_name, args, destination, target, *bb_idx, bb_end);
                     return true;
                 }
-                ThreadControlKind::AsyncSpawn => {
-                    self.handle_async_spawn(callee_func_name, args, target, *bb_idx, bb_end);
-                    return true;
-                }
-                ThreadControlKind::AsyncJoin => {
-                    self.handle_async_join(callee_func_name, args, target, *bb_idx, bb_end);
-                    return true;
-                }
                 ThreadControlKind::ScopeSpawn => {
                     self.handle_scope_spawn(callee_func_name, bb_idx, args, target, bb_end);
                     return true;
@@ -229,8 +221,8 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
 
         if let Some((closure_start, closure_end)) = self.resolve_closure_places_at(args, 1) {
             self.net.add_output_arc(closure_start, bb_end, 1);
-        self.net
-            .add_input_arc(closure_end, self.return_transition, 1);
+            self.net
+                .add_input_arc(closure_end, self.return_transition, 1);
         }
         self.connect_to_target(*bb_idx, bb_end, target);
     }

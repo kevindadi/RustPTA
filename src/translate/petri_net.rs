@@ -13,22 +13,16 @@ use petgraph::visit::IntoNodeReferences;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
-use crate::cir::mir_emitter::CirMirEmitter;
-use crate::cir::resource_table::ResourceTable;
-use crate::cir::types::FunctionKind;
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::AliasAnalysis;
 use crate::net::{Net, Place, PlaceId};
-use crate::translate::mir_to_cir::BodyToCir;
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
-fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
+fn find(union_find: &FxHashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> LockGuardId {
     let mut current = x;
     while union_find[current] != *current {
         current = &union_find[current];
@@ -36,7 +30,7 @@ fn find(union_find: &HashMap<LockGuardId, LockGuardId>, x: &LockGuardId) -> Lock
     current.clone()
 }
 
-fn union(union_find: &mut HashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
+fn union(union_find: &mut FxHashMap<LockGuardId, LockGuardId>, x: &LockGuardId, y: &LockGuardId) {
     let root_x = find(union_find, x);
     let root_y = find(union_find, y);
     if root_x != root_y {
@@ -54,13 +48,6 @@ pub struct PetriNet<'analysis, 'tcx> {
     lock_info: Arc<LockGuardMap<'tcx>>,
     resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
-    /// Async task scheduling context (`tokio::spawn` / `JoinHandle.await`).
-    pub async_ctx: AsyncTranslateContext,
-    /// MIR→CIR-only async context (separate from `async_ctx` to avoid task-id clashes with the Petri net).
-    pub async_ctx_cir: AsyncTranslateContext,
-    pub cir_resource_table: ResourceTable,
-    pub cir_spawn_targets: BTreeSet<String>,
-    pub cir_functions: BTreeMap<String, crate::cir::types::CirFunction>,
 }
 
 impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
@@ -100,14 +87,9 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             callgraph,
             alias,
             functions: FunctionRegistry::new(),
-            lock_info: Arc::new(HashMap::default()),
+            lock_info: Arc::new(FxHashMap::default()),
             resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
-            async_ctx: AsyncTranslateContext::new(1),
-            async_ctx_cir: AsyncTranslateContext::new(1),
-            cir_resource_table: ResourceTable::from_transitions(std::iter::empty()),
-            cir_spawn_targets: BTreeSet::new(),
-            cir_functions: BTreeMap::new(),
         }
     }
 
@@ -117,7 +99,8 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         channel_collector.analyze();
         channel_collector.to_json_pretty().unwrap();
 
-        let mut span_groups: HashMap<String, Vec<(AliasId, ChannelInfo<'tcx>)>> = HashMap::new();
+        let mut span_groups: FxHashMap<String, Vec<(AliasId, ChannelInfo<'tcx>)>> =
+            FxHashMap::default();
 
         for (id, info) in channel_collector.channels {
             let key_string = format!("{:?}", info.span)
@@ -211,7 +194,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             } else {
                 place_ids
                     .into_iter()
-                    .collect::<HashSet<_>>()
+                    .collect::<FxHashSet<_>>()
                     .into_iter()
                     .collect()
             };
@@ -231,21 +214,8 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             return;
         }
 
-        // unsafe_info.iter().for_each(|(def_id, info)| {
-        //     log::debug!(
-        //         "{}:\n{}",
-        //         format_name(*def_id),
-        //         serde_json::to_string_pretty(&json!({
-        //             "unsafe_fn": info.is_unsafe_fn,
-        //             "unsafe_blocks": info.unsafe_blocks,
-        //             "unsafe_places": info.unsafe_places
-        //         }))
-        //         .unwrap()
-        //     )
-        // });
-
         let mut next_alias_id: u32 = 0;
-        let mut alias_groups: HashMap<u32, Vec<(AliasId, String)>> = HashMap::new();
+        let mut alias_groups: FxHashMap<u32, Vec<(AliasId, String)>> = FxHashMap::default();
         let places_data: Vec<_> = unsafe_data
             .unsafe_places
             .iter()
@@ -328,7 +298,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
 
     fn translate_all_functions(&mut self, key_api_regex: &KeyApiRegex) {
         let reachable = self.reachable_instance_ids();
-        let mut visited_func_id = HashSet::<DefId>::new();
+        let mut visited_func_id = FxHashSet::<DefId>::default();
         for (node, caller) in self.callgraph.graph.node_references() {
             if let Some(ref set) = reachable {
                 if !set.contains(&node) {
@@ -380,45 +350,10 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             &self.resources,
             self.entry_exit,
             key_api_regex,
-            &mut self.async_ctx,
             self.options.config.alias_unknown_policy,
             self.options.config.break_cfg_cycles,
         );
         func_body.translate();
-
-        let fname = format_name(caller.instance().def_id());
-        let def_id = caller.instance().def_id();
-        let kind = if self.tcx.is_closure_like(def_id) {
-            FunctionKind::Closure
-        } else if body.coroutine_kind().is_some() {
-            FunctionKind::Async
-        } else {
-            FunctionKind::Normal
-        };
-        let mut emitter = CirMirEmitter::new(
-            &fname,
-            &mut self.cir_resource_table,
-            &mut self.cir_spawn_targets,
-        );
-        let mut cir_body = BodyToCir::new(
-            node,
-            caller.instance(),
-            body,
-            self.tcx,
-            self.callgraph,
-            &mut self.alias,
-            Arc::clone(&self.lock_info),
-            &self.functions,
-            &self.resources,
-            key_api_regex,
-            &mut self.async_ctx_cir,
-            self.options.config.alias_unknown_policy,
-            self.options.config.break_cfg_cycles,
-            &mut emitter,
-            &self.options,
-        );
-        cir_body.translate();
-        self.cir_functions.insert(fname, emitter.finish(kind));
     }
 
     pub fn construct_func(&mut self) {
@@ -620,7 +555,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             info.extend(map);
         }
 
-        let mut union_find: HashMap<LockGuardId, LockGuardId> = HashMap::new();
+        let mut union_find: FxHashMap<LockGuardId, LockGuardId> = FxHashMap::default();
         let lockid_vec: Vec<LockGuardId> = info.clone().into_keys().collect();
 
         for lock_id in &lockid_vec {
@@ -646,7 +581,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             }
         }
 
-        let mut temp_groups: HashMap<LockGuardId, Vec<LockGuardId>> = HashMap::new();
+        let mut temp_groups: FxHashMap<LockGuardId, Vec<LockGuardId>> = FxHashMap::default();
         for lock_id in &lockid_vec {
             let root = find(&union_find, lock_id);
             temp_groups.entry(root).or_default().push(lock_id.clone());
@@ -753,11 +688,11 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         })
     }
 
-    pub fn unsafe_places(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn unsafe_places(&self) -> &FxHashMap<AliasId, PlaceId> {
         self.resources.unsafe_places()
     }
 
-    pub fn channel_places(&self) -> &HashMap<AliasId, PlaceId> {
+    pub fn channel_places(&self) -> &FxHashMap<AliasId, PlaceId> {
         self.resources.channel_places()
     }
 }

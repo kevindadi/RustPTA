@@ -4,6 +4,7 @@ pub mod mir_dot;
 use std::io::Write;
 use std::rc::Rc;
 
+use rustc_hir::attrs::HasAttrs;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty;
 use rustc_middle::ty::TyCtxt;
@@ -60,8 +61,8 @@ pub fn def_id_as_qualified_name_str(tcx: TyCtxt<'_>, def_id: DefId) -> Rc<str> {
 }
 
 pub fn has_pn_attribute(tcx: TyCtxt<'_>, def_id: DefId, attr_stem: &str) -> bool {
-    let mut attrs = tcx.get_attrs(def_id, rustc_span::symbol::Symbol::intern(attr_stem));
-    attrs.next().is_some()
+    let name = rustc_span::symbol::Symbol::intern(attr_stem);
+    def_id.get_attrs(&tcx).iter().any(|attr| attr.has_name(name))
 }
 
 pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
@@ -71,7 +72,7 @@ pub fn pretty_print_mir(tcx: TyCtxt<'_>, def_id: DefId) {
     ) {
         let mut stdout = std::io::stdout();
         stdout.write_fmt(format_args!("{:?}", def_id)).unwrap();
-        rustc_middle::mir::write_mir_pretty(tcx, Some(def_id), &mut stdout).unwrap();
+        rustc_middle::mir::write_mir_pretty(tcx, &mut stdout).unwrap();
         let _ = stdout.flush();
     }
 }
