@@ -5,8 +5,8 @@
 //! Executor:
 //! - `p_worker` (`k` tokens, configurable)
 
-use crate::net::structure::{Place, PlaceType};
-use crate::net::{Net, PlaceId};
+use rust_petri_net_analysis::net::structure::{Place, PlaceType};
+use rust_petri_net_analysis::net::{Net, PlaceId};
 
 use super::ids::{EventId, TaskId};
 

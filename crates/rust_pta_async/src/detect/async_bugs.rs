@@ -3,22 +3,17 @@
 //! A) holding-lock-across-await — paths where `lock(m)` happens before `unlock(m)` but cross `await_pending`.
 //! B) cancel-safety leaks — after abort, resource places fail to return to their idle marking.
 
-use crate::net::structure::TransitionType;
+use crate::transition::AsyncTransitionKind;
 
 /// Placeholder: detect locks held across `.await`.
-///
-/// Full implementation needs per-task lock tracking at each `await_pending`.
 #[allow(dead_code)]
 pub fn detect_holding_lock_across_await(
-    _transition_types: &[TransitionType],
+    _kinds: &[AsyncTransitionKind],
 ) -> Option<Vec<(usize, usize)>> {
-    // None ⇒ not detected yet.
     None
 }
 
 /// Placeholder: resource leaks after cancellation.
-///
-/// Full implementation should inspect resource places after simulated abort.
 #[allow(dead_code)]
 pub fn detect_cancel_safety_resource_leak(
     _abort_task_id: usize,

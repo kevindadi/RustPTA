@@ -29,10 +29,6 @@ pub enum ThreadControlKind {
     ScopeSpawn,
     ScopeJoin,
     RayonJoin,
-    /// `tokio::spawn` — cooperative task, not an OS thread.
-    AsyncSpawn,
-    /// `JoinHandle.await` — wait for task completion.
-    AsyncJoin,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -61,8 +57,7 @@ impl CallSiteLocation {
                 destination: Some(destination),
                 kind:
                     ThreadControlKind::Spawn
-                    | ThreadControlKind::ScopeSpawn
-                    | ThreadControlKind::AsyncSpawn,
+                    | ThreadControlKind::ScopeSpawn,
                 ..
             } => Some(*destination),
             _ => None,
@@ -205,10 +200,7 @@ impl<'tcx> CallGraph<'tcx> {
                 }
 
                 if let CallSiteLocation::ThreadControl {
-                    kind:
-                        ThreadControlKind::Spawn
-                        | ThreadControlKind::ScopeSpawn
-                        | ThreadControlKind::AsyncSpawn,
+                    kind: ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn,
                     destination: Some(alias_id),
                     ..
                 } = location
@@ -415,9 +407,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                     classify_thread_control(self.tcx, def_id, &fn_path, self.key_api_regex)
                 {
                     match control_kind {
-                        ThreadControlKind::Spawn
-                        | ThreadControlKind::ScopeSpawn
-                        | ThreadControlKind::AsyncSpawn => {
+                        ThreadControlKind::Spawn | ThreadControlKind::ScopeSpawn => {
                             if self.handle_spawn_call(
                                 args.as_ref(),
                                 destination,
@@ -433,9 +423,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CallSiteCollector<'a, 'tcx> {
                                 return;
                             }
                         }
-                        ThreadControlKind::Join
-                        | ThreadControlKind::ScopeJoin
-                        | ThreadControlKind::AsyncJoin => {
+                        ThreadControlKind::Join | ThreadControlKind::ScopeJoin => {
                             if let Some(callee) = self.resolve_instance(def_id, substs) {
                                 let alias_id =
                                     AliasId::from_place(self.caller_idx, destination.as_ref());
@@ -521,17 +509,6 @@ pub fn classify_thread_control(
 
     if key_api_regex.scope_join.is_match(fn_path) {
         return Some(ThreadControlKind::ScopeJoin);
-    }
-
-    // Prefer tokio async edges over std::thread when both match.
-    if fn_path.contains("tokio::task::spawn") || fn_path.contains("tokio::runtime::Runtime::spawn")
-    {
-        return Some(ThreadControlKind::AsyncSpawn);
-    }
-    if fn_path.contains("tokio::task::JoinHandle")
-        && (fn_path.contains("await") || fn_path.contains("blocking_on"))
-    {
-        return Some(ThreadControlKind::AsyncJoin);
     }
 
     if key_api_regex.thread_spawn.is_match(fn_path) {

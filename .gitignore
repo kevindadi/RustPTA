@@ -4,6 +4,7 @@ release/
 rls/
 *.o
 .vscode/
+AGENTS.md
 
 Cargo.lock
 toys

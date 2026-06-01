@@ -2,8 +2,8 @@
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
+use rust_petri_net_analysis::net::{Net, PlaceId};
 
-use crate::net::PlaceId;
 use crate::translate::async_ppn::TaskLifecyclePlaces;
 use crate::translate::async_ppn::{TaskId, add_task_lifecycle_places, add_worker_place};
 
@@ -42,7 +42,7 @@ impl AsyncTranslateContext {
         self.spawn_to_task.get(&spawn_def_id).copied()
     }
 
-    pub fn ensure_worker_place(&mut self, net: &mut crate::net::Net) -> PlaceId {
+    pub fn ensure_worker_place(&mut self, net: &mut Net) -> PlaceId {
         if let Some(p) = self.worker_place {
             return p;
         }
@@ -52,11 +52,7 @@ impl AsyncTranslateContext {
     }
 
     /// Register lifecycle places for a task without await sites.
-    pub fn add_task_simple(
-        &mut self,
-        net: &mut crate::net::Net,
-        task_id: TaskId,
-    ) -> TaskLifecyclePlaces {
+    pub fn add_task_simple(&mut self, net: &mut Net, task_id: TaskId) -> TaskLifecyclePlaces {
         let tp = add_task_lifecycle_places(net, task_id, &[], false);
         self.task_lifecycle.insert(task_id.index(), tp.clone());
         tp
