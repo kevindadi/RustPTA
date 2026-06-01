@@ -128,11 +128,6 @@ fn default_reduce_net() -> bool {
 fn default_thread_spawn() -> Vec<String> {
     vec![
         r"std::thread[:a-zA-Z0-9_#\{\}]*::spawn".to_string(),
-        r"tokio::task::spawn".to_string(),
-        r"tokio::runtime::Runtime::spawn".to_string(),
-        r"async_std::task::spawn".to_string(),
-        r"smol::Task::spawn".to_string(),
-        r"smol::spawn".to_string(),
         r"rayon::spawn".to_string(),
     ]
 }
@@ -141,8 +136,6 @@ fn default_thread_join() -> Vec<String> {
     vec![
         r"std::thread[:a-zA-Z0-9_#\{\}]*::join".to_string(),
         r"std::thread::JoinHandle::try_join".to_string(),
-        r"tokio::task::JoinHandle::await".to_string(),
-        r"tokio::task::JoinHandle::blocking_on".to_string(),
     ]
 }
 

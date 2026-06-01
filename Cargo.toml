@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/rust_pta_async"]
+resolver = "2"
+
 [package]
 name = "rust_petri_net_analysis"
 version = "0.1.0"

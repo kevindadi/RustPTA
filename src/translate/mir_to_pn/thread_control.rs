@@ -148,14 +148,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                     self.handle_spawn(callee_func_name, args, destination, target, *bb_idx, bb_end);
                     return true;
                 }
-                ThreadControlKind::AsyncSpawn => {
-                    self.handle_async_spawn(callee_func_name, args, target, *bb_idx, bb_end);
-                    return true;
-                }
-                ThreadControlKind::AsyncJoin => {
-                    self.handle_async_join(callee_func_name, args, target, *bb_idx, bb_end);
-                    return true;
-                }
                 ThreadControlKind::ScopeSpawn => {
                     self.handle_scope_spawn(callee_func_name, bb_idx, args, target, bb_end);
                     return true;

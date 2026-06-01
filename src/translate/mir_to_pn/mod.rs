@@ -1,6 +1,5 @@
 //! MIR → Petri net translation (main module).
 
-mod async_control;
 mod bb_graph;
 mod calls;
 mod cfg_utils;
@@ -10,7 +9,6 @@ mod drop_unsafe;
 mod terminator;
 mod thread_control;
 
-use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, InstanceId};
 use crate::{
     concurrency::blocking::LockGuardMap,
@@ -51,7 +49,6 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     return_transition: TransitionId,
     entry_exit: (PlaceId, PlaceId),
     key_api_regex: &'translate KeyApiRegex,
-    async_ctx: &'translate mut AsyncTranslateContext,
     alias_unknown_policy: crate::config::AliasUnknownPolicy,
     ordered_spawn_ends: VecDeque<PlaceId>,
     spawn_handle_end: FxHashMap<Local, PlaceId>,
@@ -110,7 +107,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         resources: &'translate ResourceRegistry,
         entry_exit: (PlaceId, PlaceId),
         key_api_regex: &'translate KeyApiRegex,
-        async_ctx: &'translate mut AsyncTranslateContext,
         alias_unknown_policy: crate::config::AliasUnknownPolicy,
         break_cfg_cycles: bool,
     ) -> Self {
@@ -146,7 +142,6 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
             return_transition: TransitionId::new(0),
             entry_exit,
             key_api_regex,
-            async_ctx,
             alias_unknown_policy,
             ordered_spawn_ends: VecDeque::new(),
             spawn_handle_end: FxHashMap::default(),

@@ -16,7 +16,6 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::async_context::AsyncTranslateContext;
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
 use crate::memory::pointsto::AliasAnalysis;
@@ -49,10 +48,6 @@ pub struct PetriNet<'analysis, 'tcx> {
     lock_info: Arc<LockGuardMap<'tcx>>,
     resources: ResourceRegistry,
     pub entry_exit: (PlaceId, PlaceId),
-    /// Async task scheduling context (`tokio::spawn` / `JoinHandle.await`).
-    pub async_ctx: AsyncTranslateContext,
-    /// MIR→CIR-only async context (separate from `async_ctx` to avoid task-id clashes with the Petri net).
-    pub async_ctx_cir: AsyncTranslateContext,
 }
 
 impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
@@ -95,8 +90,6 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             lock_info: Arc::new(FxHashMap::default()),
             resources: ResourceRegistry::new(),
             entry_exit: (PlaceId::new(0), PlaceId::new(0)),
-            async_ctx: AsyncTranslateContext::new(1),
-            async_ctx_cir: AsyncTranslateContext::new(1),
         }
     }
 
@@ -357,7 +350,6 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             &self.resources,
             self.entry_exit,
             key_api_regex,
-            &mut self.async_ctx,
             self.options.config.alias_unknown_policy,
             self.options.config.break_cfg_cycles,
         );

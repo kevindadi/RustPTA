@@ -1,4 +1,3 @@
-pub mod async_bugs;
 #[cfg(feature = "atomic-violation")]
 pub mod atomic_violation_detector;
 #[cfg(feature = "atomic-violation")]
