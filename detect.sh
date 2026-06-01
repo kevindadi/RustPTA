@@ -28,17 +28,10 @@ export RUST_BACKTRACE=full
 export PN_LOG=info
 
 # Analysis mode and options (passed to pn via PN_FLAGS; -p is set per crate below)
-# To only detect deadlock
-# export PN_FLAGS_BASE="-m deadlock"
-# To only detect datarace
-# export PN_FLAGS_BASE="-m datarace"
-# To only detect atomicity violation (requires atomic-violation feature at build time)
-# export PN_FLAGS_BASE="-m atomic"
-# To analyze only specific crates
-# export PN_FLAGS_BASE="-m all --crate-whitelist inter,intra"
-# To skip specific crates
-# export PN_FLAGS_BASE="-m all --crate-blacklist inter,intra"
-PN_FLAGS_BASE="${PN_FLAGS_BASE:--m all --pn-analysis-dir=${DIR}/tmp}"
+# Default mode is deadlock. Override examples:
+# export PN_FLAGS_BASE="-m datarace --pn-analysis-dir=tmp"
+# export PN_FLAGS_BASE="-m atomic --pn-analysis-dir=tmp"  # requires atomic-violation feature at build time
+PN_FLAGS_BASE="${PN_FLAGS_BASE:--m deadlock --pn-analysis-dir=${DIR}/tmp}"
 
 # Find all Cargo.tomls recursively under the detecting directory
 # and record them in cargo_dir.txt
@@ -51,7 +44,7 @@ cargo clean
 cargo_tomls=$(find . -name "Cargo.toml")
 for cargo_toml in ${cargo_tomls[@]}
 do
-	echo $(dirname "$cargo_toml") >> "$cargo_dir_file"
+	echo "$(cd "$(dirname "$cargo_toml")" && pwd)" >> "$cargo_dir_file"
 done
 
 IFS=$'\n' read -d '' -r -a lines < "$cargo_dir_file"
