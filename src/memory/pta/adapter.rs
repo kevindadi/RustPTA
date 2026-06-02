@@ -60,7 +60,12 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
     }
 
     fn instance_of(&self, aid: AliasId) -> Option<Instance<'tcx>> {
-        Some(*self.callgraph.index_to_instance(aid.instance_id)?.instance())
+        Some(
+            *self
+                .callgraph
+                .index_to_instance(aid.instance_id)?
+                .instance(),
+        )
     }
 
     /// Check if two locals may alias via the type-parameter heuristic: if both

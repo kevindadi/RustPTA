@@ -361,7 +361,14 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
         let lhs_local = place.local.as_u32();
         match rvalue {
             Rvalue::Aggregate(box kind, fields) => {
-                self.assign_aggregate(lhs_local, &lhs_proj, kind, fields);
+                match kind {
+                    AggregateKind::Closure(def_id, substs) => {
+                        self.process_closure_aggregate(lhs_local, *def_id, substs, fields);
+                    }
+                    _ => {
+                        self.assign_aggregate(lhs_local, &lhs_proj, kind, fields);
+                    }
+                }
             }
             Rvalue::Ref(_, _, src) | Rvalue::RawPtr(_, src) => {
                 if src.projection.is_empty() {
@@ -421,6 +428,61 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             proj.push(ProjKind::Field(i.as_u32()));
             self.store_value(&proj, dst_local, value);
         }
+    }
+
+    fn process_closure_aggregate(
+        &mut self,
+        dst_local: u32,
+        _def_id: DefId,
+        _substs: GenericArgsRef<'tcx>,
+        fields: &rustc_index::IndexVec<rustc_abi::FieldIdx, Operand<'tcx>>,
+    ) {
+        // 获取闭包的 upvar 类型信息
+        let upvar_tys = _substs.as_closure().upvar_tys();
+        let empty = self.arena.empty_path();
+
+        // 为闭包环境创建一个 heap
+        self.call_counter += 1;
+        let clo_heap = self.arena.heap(
+            AllocSite {
+                func: self.func,
+                bb: 0, // 闭包定义不是 call site，用 0
+                idx: self.call_counter,
+            },
+            empty,
+        );
+
+        // 字段级 Copy: clo_heap.field_i ⊇ upvar_value_i
+        for (i, op) in fields.iter_enumerated() {
+            let Some(value) = self.operand_value(op) else {
+                continue;
+            };
+            let field_path = self.arena.extend_path(empty, ProjElem::Field(i.as_u32()));
+            if let Some(dst) = self.arena.project(clo_heap, field_path) {
+                self.constraints.add(Constraint::Copy { dst, src: value });
+            }
+            // 如果 upvar 是引用类型，还需要 AddressOf
+            let upvar_ty = upvar_tys.get(i.as_usize());
+            if let Some(upvar_ty) = upvar_ty {
+                if upvar_ty.is_ref() {
+                    let addr = {
+                        let mut w = self.walk();
+                        w.fresh()
+                    };
+                    self.constraints.add(Constraint::AddressOf { dst: addr, obj: value });
+                    if let Some(dst) = self.arena.project(clo_heap, field_path) {
+                        self.constraints.add(Constraint::Copy { dst, src: addr });
+                    }
+                }
+            }
+        }
+
+        // 将 dst_local (闭包变量) 指向这个 heap
+        let dst_slot = self.arena.var_ctx(self.ctx.clone(), self.func, dst_local, empty);
+        self.constraints.add(Constraint::AddressOf {
+            dst: dst_slot,
+            obj: clo_heap,
+        });
     }
 
     fn process_call(
@@ -496,12 +558,15 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
                     self.arena
                         .var_ctx(self.ctx.clone(), self.func, u32::MAX - i as u32, empty);
 
-                // Store the captured value into the heap's first field (environment slot)
-                let clo_heap_env = self.arena.project(clo_heap, empty).unwrap_or(clo_heap);
-                self.constraints.add(Constraint::Store {
-                    dst: clo_heap_env,
-                    src: clo_obj,
-                });
+                // 字段级 Copy: clo_heap.field_j ⊇ upvar_value_j
+                for (j, upvar_loc) in arg_nodes.iter().enumerate() {
+                    if let Some(upvar_loc) = upvar_loc {
+                        let field_path = self.arena.extend_path(empty, ProjElem::Field(j as u32));
+                        if let Some(dst) = self.arena.project(clo_heap, field_path) {
+                            self.constraints.add(Constraint::Copy { dst, src: *upvar_loc });
+                        }
+                    }
+                }
 
                 // Point the closure destination at the heap
                 self.constraints.add(Constraint::AddressOf {
@@ -592,49 +657,6 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
                 fresh_heap,
             });
         }
-    }
-
-    /// Seed a fresh object for each address-taken local (`r = &local`). The
-    /// local's storage slot gains a concrete object so dereferencing pointers to
-    /// it yields something (restores lock-behind-stack-pointer detection without
-    /// the blanket per-place seeding that over-split struct fields).
-    fn seed_addr_taken(&mut self) {
-        let locals: Vec<u32> = self.addr_taken.iter().copied().collect();
-        let empty = self.arena.empty_path();
-        for base in locals {
-            if !self.should_seed_addr_taken(base) {
-                continue;
-            }
-            let slot = self.arena.var_ctx(self.ctx.clone(), self.func, base, empty);
-            let obj = self.arena.heap(
-                AllocSite {
-                    func: self.func,
-                    bb: u32::MAX,
-                    idx: base,
-                },
-                empty,
-            );
-            self.constraints
-                .add(Constraint::AddressOf { dst: slot, obj });
-        }
-    }
-
-    /// Stack locals whose address is taken only for smart-pointer APIs (`&arc`
-    /// passed to `Arc::clone`) must not receive a fresh seed — they already
-    /// point at heap via `emit_boxed_value`. Seeding them duplicates the
-    /// boxed object and splits lock resources.
-    fn should_seed_addr_taken(&self, base: u32) -> bool {
-        use rustc_middle::mir::Local;
-        let local = Local::from_u32(base);
-        if local.as_usize() >= self.body.local_decls.len() {
-            return false;
-        }
-        let ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
-            self.tcx,
-            self.typing_env,
-            ty::EarlyBinder::bind(self.body.local_decls[local].ty),
-        );
-        !ownership::is_smart_pointer_ty(ty, self.tcx)
     }
 }
 
