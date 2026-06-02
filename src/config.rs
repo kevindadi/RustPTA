@@ -173,11 +173,11 @@ fn default_scope_join() -> Vec<String> {
 }
 
 fn default_condvar_notify() -> Vec<String> {
-    vec![r"condvar[:a-zA-Z0-9_#\{\}]*::notify".to_string()]
+    vec![r"std::sync::Condvar[:a-zA-Z0-9_#\{\}]*::notify".to_string()]
 }
 
 fn default_condvar_wait() -> Vec<String> {
-    vec![r"condvar[:a-zA-Z0-9_#\{\}]*::wait".to_string()]
+    vec![r"std::sync::Condvar[:a-zA-Z0-9_#\{\}]*::wait".to_string()]
 }
 
 fn default_channel_send() -> Vec<String> {

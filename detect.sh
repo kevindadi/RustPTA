@@ -42,20 +42,27 @@ else
 	PN_ARGS=("-m" "deadlock" "--pn-analysis-dir=${DIR}/tmp")
 fi
 
-# Build pn (rustc driver wrapper)
+# Build & install pn (rustc driver wrapper) into ~/.cargo/bin.
+# `cargo install` replaces any existing pn; --force is required because the
+# crate version is stable (0.1.0) and cargo would otherwise skip reinstalling.
 pushd "$DIR" > /dev/null
-# For development use debug build
-cargo build --bin pn
-# For usage use release
-# cargo build --release --bin pn
+cargo install --path . --bin pn --force
 # Enable atomicity-violation detection:
-# cargo build --features atomic-violation --bin pn
+# cargo install --path . --bin pn --features atomic-violation --force
 popd > /dev/null
 
-# For development of pn use debug
-export RUSTC_WRAPPER=${DIR}/target/debug/pn
-# For usage use release
-# export RUSTC_WRAPPER=${DIR}/target/release/pn
+# Use the installed pn as the rustc wrapper (falls back to the cargo bin dir
+# if it is not on PATH).
+PN_BIN="$(command -v pn || true)"
+if [[ -z "$PN_BIN" ]]; then
+	PN_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/pn"
+fi
+export RUSTC_WRAPPER="$PN_BIN"
+
+# pn links dynamically against the active toolchain's librustc_driver; expose
+# its lib directory so the wrapper can load when invoked by cargo.
+RUSTC_SYSROOT="$(rustc --print sysroot)"
+export LD_LIBRARY_PATH="${RUSTC_SYSROOT}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 export RUST_BACKTRACE=full
 export PN_LOG="${PN_LOG:-info}"
