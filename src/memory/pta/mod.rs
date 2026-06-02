@@ -7,6 +7,7 @@
 //!
 //! See `docs/superpowers/specs/2026-06-02-pointer-analysis-refactor-design.md`.
 
+pub mod builder;
 pub mod constraint;
 pub mod context;
 pub mod intern;
@@ -14,6 +15,7 @@ pub mod loc;
 pub mod result;
 pub mod solver;
 
+pub use builder::{assignment_edges, build_body, EdgeKind, Form, Kind};
 pub use constraint::{Constraint, ConstraintSet};
 pub use context::{CallSite, Context, ContextPolicy, KCallSite};
 pub use loc::{AbstractLoc, AllocSite, FieldPath, LocArena, LocId, ProjElem};
