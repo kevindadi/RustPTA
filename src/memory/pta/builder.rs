@@ -56,17 +56,25 @@ pub struct PlaceWalk<'a> {
     cs: &'a mut ConstraintSet,
     func: u32,
     ctx: Context,
-    next_temp: u32,
+    /// Shared monotonic temp counter owned by the builder, so every fresh temp
+    /// in a function body is distinct across statements (no cross-statement
+    /// node collisions / spurious aliasing).
+    next_temp: &'a mut u32,
 }
 
 impl<'a> PlaceWalk<'a> {
-    pub fn new(arena: &'a mut LocArena, cs: &'a mut ConstraintSet, func: u32) -> Self {
+    pub fn new(
+        arena: &'a mut LocArena,
+        cs: &'a mut ConstraintSet,
+        func: u32,
+        next_temp: &'a mut u32,
+    ) -> Self {
         Self {
             arena,
             cs,
             func,
             ctx: Context::empty(),
-            next_temp: 1_000_000,
+            next_temp,
         }
     }
 
@@ -75,13 +83,14 @@ impl<'a> PlaceWalk<'a> {
         cs: &'a mut ConstraintSet,
         func: u32,
         ctx: Context,
+        next_temp: &'a mut u32,
     ) -> Self {
         Self {
             arena,
             cs,
             func,
             ctx,
-            next_temp: 1_000_000,
+            next_temp,
         }
     }
 
@@ -94,8 +103,8 @@ impl<'a> PlaceWalk<'a> {
     }
 
     fn fresh(&mut self) -> LocId {
-        let id = self.next_temp;
-        self.next_temp += 1;
+        let id = *self.next_temp;
+        *self.next_temp += 1;
         let empty = self.empty();
         self.slot(id, empty)
     }
@@ -188,6 +197,7 @@ pub fn build_body<'a, 'tcx>(
         constraints,
         pending: Vec::new(),
         call_counter: 0,
+        next_temp: 1_000_000,
     };
     for (bb, data) in body.basic_blocks.iter_enumerated() {
         for stmt in &data.statements {
@@ -225,6 +235,10 @@ struct ConstraintBuilder<'a, 'tcx> {
     pending: Vec<PendingCall<'tcx>>,
     /// Monotonic counter giving each call site a distinct fresh heap object.
     call_counter: u32,
+    /// Shared monotonic counter for place-walk temp nodes, threaded into every
+    /// `PlaceWalk` so temps are distinct across all statements in this body.
+    /// Based at `1_000_000` to stay clear of real (small-index) MIR locals.
+    next_temp: u32,
 }
 
 impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
@@ -248,7 +262,13 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
     /// MUST be scoped in its own block and dropped before any other `self.*`
     /// access.
     fn walk(&mut self) -> PlaceWalk<'_> {
-        PlaceWalk::with_ctx(self.arena, self.constraints, self.func, self.ctx.clone())
+        PlaceWalk::with_ctx(
+            self.arena,
+            self.constraints,
+            self.func,
+            self.ctx.clone(),
+            &mut self.next_temp,
+        )
     }
 
     /// Value node for a Move/Copy operand; `None` for constants.
@@ -442,8 +462,12 @@ mod place_tests {
     use crate::memory::pta::loc::{LocArena, ProjElem};
     use crate::memory::pta::solver::Solver;
 
-    fn mk<'a>(arena: &'a mut LocArena, cs: &'a mut ConstraintSet) -> PlaceWalk<'a> {
-        PlaceWalk::new(arena, cs, /*func*/ 0)
+    fn mk<'a>(
+        arena: &'a mut LocArena,
+        cs: &'a mut ConstraintSet,
+        next_temp: &'a mut u32,
+    ) -> PlaceWalk<'a> {
+        PlaceWalk::new(arena, cs, /*func*/ 0, next_temp)
     }
 
     #[test]
@@ -460,8 +484,9 @@ mod place_tests {
         let v1 = arena.var_ctx(crate::memory::pta::context::Context::empty(), 0, 1, empty);
         cs.add(Constraint::AddressOf { dst: v1, obj: o }); // self = &O
 
+        let mut next_temp = 1_000_000u32;
         let r = {
-            let mut w = mk(&mut arena, &mut cs);
+            let mut w = mk(&mut arena, &mut cs, &mut next_temp);
             w.place_addr(1, &[ProjKind::Deref, ProjKind::Field(0)])
         };
 

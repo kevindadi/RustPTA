@@ -302,4 +302,40 @@ mod tests {
         // destinations cross-contaminate (sound but imprecise).
         assert!(!dests_disjoint_under_k(0));
     }
+
+    /// Field-sensitivity regression for the `conflict`/`tikv_wrapper` pattern:
+    /// the *same* struct field accessed via `self` in two different functions
+    /// must resolve to the *same* object field when both `self`s point to the
+    /// same object — the property the old syntactic place model violated.
+    #[test]
+    fn cross_function_self_field_aliases_same_object() {
+        use super::super::loc::{AllocSite, ProjElem};
+        let mut a = LocArena::default();
+        let empty = a.empty_path();
+        let f0 = a.extend_path(empty, ProjElem::Field(0));
+        let o = a.heap(AllocSite { func: 9, bb: 0, idx: 0 }, empty); // shared object
+        let o_f0 = a.heap(AllocSite { func: 9, bb: 0, idx: 0 }, f0);
+
+        // func A: selfA = &O ; rA = &(*selfA).0
+        let self_a = a.var(1, 1, empty);
+        let deref_a = a.var(1, 50, empty);
+        let r_a = a.var(1, 51, empty);
+        // func B: selfB = &O ; rB = &(*selfB).0
+        let self_b = a.var(2, 1, empty);
+        let deref_b = a.var(2, 50, empty);
+        let r_b = a.var(2, 51, empty);
+
+        let mut cs = ConstraintSet::default();
+        for (s, d, r) in [(self_a, deref_a, r_a), (self_b, deref_b, r_b)] {
+            cs.add(Constraint::AddressOf { dst: s, obj: o });
+            cs.add(Constraint::Copy { dst: d, src: s }); // *self value = pts(self)
+            cs.add(Constraint::Offset { dst: r, src: d, suffix: f0 });
+        }
+        let pts = Solver::new(0).solve(&cs, &mut a);
+        // Both receivers must contain the SAME object field O·0.
+        assert!(pts.points_to(r_a).contains(&o_f0));
+        assert!(pts.points_to(r_b).contains(&o_f0));
+        // And therefore share a pointee (the alias-query basis).
+        assert!(!pts.points_to(r_a).is_disjoint(pts.points_to(r_b)));
+    }
 }
