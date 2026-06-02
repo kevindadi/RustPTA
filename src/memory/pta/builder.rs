@@ -11,11 +11,14 @@ use smallvec::SmallVec;
 
 use rustc_middle::mir::{
     AggregateKind, Body, Local, Operand, Place, PlaceElem, ProjectionElem, Rvalue, StatementKind,
+    TerminatorKind,
 };
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{TyCtxt, TyKind};
+use rustc_span::Spanned;
 
 use super::constraint::{Constraint, ConstraintSet};
 use super::loc::{AllocSite, FieldPath, LocArena, LocId, ProjElem};
+use super::model::{CallNodes, ModelRegistry};
 
 /// Whether the left-hand side of an assignment is a direct place (`x`) or an
 /// indirect store through a pointer (`*x`, with the leading `Deref` stripped).
@@ -66,40 +69,59 @@ pub fn assignment_edges(lhs: Form, rhs: Kind) -> SmallVec<[EdgeKind; 2]> {
 }
 
 /// Translate a single MIR `Body` into inclusion constraints.
-pub fn build_body<'tcx>(
+///
+/// Call terminators are dispatched through `registry`: a matching library
+/// model is applied, otherwise the conservative unknown-callee model is used.
+/// Interprocedural binding for analyzable callees is performed by the driver
+/// (it owns the cross-function `FuncMap`); see [`super::interproc`].
+pub fn build_body<'a, 'tcx>(
     tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
+    body: &'a Body<'tcx>,
     func: u32,
+    registry: &ModelRegistry,
     arena: &mut LocArena,
     constraints: &mut ConstraintSet,
 ) {
     let mut builder = ConstraintBuilder {
         tcx,
+        body,
         func,
         arena,
         constraints,
         vars: Vec::new(),
+        call_counter: 0,
     };
-    for data in body.basic_blocks.iter() {
+    for (bb, data) in body.basic_blocks.iter_enumerated() {
         for stmt in &data.statements {
             if let StatementKind::Assign(box (place, rvalue)) = &stmt.kind {
                 builder.process_assignment(place, rvalue);
             }
         }
-        // NOTE: call terminators (interprocedural binding + library models) are
-        // handled in a later task.
+        if let Some(term) = &data.terminator {
+            if let TerminatorKind::Call {
+                func: callee,
+                args,
+                destination,
+                ..
+            } = &term.kind
+            {
+                builder.process_call(bb.as_u32(), callee, args, destination, registry);
+            }
+        }
     }
     builder.seed_allocs();
 }
 
 struct ConstraintBuilder<'a, 'tcx> {
-    #[allow(dead_code)]
     tcx: TyCtxt<'tcx>,
+    body: &'a Body<'tcx>,
     func: u32,
     arena: &'a mut LocArena,
     constraints: &'a mut ConstraintSet,
     /// Distinct place nodes created, used to seed per-place allocation objects.
     vars: Vec<(LocId, u32, FieldPath)>,
+    /// Monotonic counter giving each call site a distinct fresh heap object.
+    call_counter: u32,
 }
 
 impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
@@ -216,6 +238,52 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
                 self.emit(edge, lhs_loc, rhs_loc);
             }
         }
+    }
+
+    fn process_call(
+        &mut self,
+        bb: u32,
+        callee: &Operand<'tcx>,
+        args: &[Spanned<Operand<'tcx>>],
+        destination: &Place<'tcx>,
+        registry: &ModelRegistry,
+    ) {
+        let dest = {
+            let pr = destination.as_ref();
+            self.place_node(pr.local, pr.projection)
+        };
+
+        let mut arg_nodes: SmallVec<[Option<LocId>; 4]> = SmallVec::new();
+        for a in args {
+            arg_nodes.push(self.process_operand(&a.node).map(|(loc, _)| loc));
+        }
+
+        self.call_counter += 1;
+        let empty = self.arena.empty_path();
+        let fresh_heap = self.arena.heap(
+            AllocSite {
+                func: self.func,
+                bb,
+                idx: self.call_counter,
+            },
+            empty,
+        );
+
+        let nodes = CallNodes {
+            dest,
+            args: arg_nodes,
+            fresh_heap,
+        };
+
+        let func_ty = callee.ty(self.body, self.tcx);
+        if let TyKind::FnDef(def_id, substs) = func_ty.kind() {
+            if registry.try_specialized(self.tcx, *def_id, *substs, &nodes, self.constraints) {
+                return;
+            }
+        }
+        // No specialized model (or indirect call): conservative fallback. The
+        // driver may additionally bind analyzable callees interprocedurally.
+        registry.apply_unknown(&nodes, self.constraints);
     }
 
     fn emit(&mut self, edge: EdgeKind, lhs: LocId, rhs: LocId) {
