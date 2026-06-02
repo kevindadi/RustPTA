@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
-use crate::memory::pointsto::AliasAnalysis;
+use crate::memory::alias_engine::AliasEngine;
 use crate::net::{Net, Place, PlaceId};
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
@@ -43,7 +43,7 @@ pub struct PetriNet<'analysis, 'tcx> {
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: Net,
     callgraph: &'analysis CallGraph<'tcx>,
-    pub alias: RefCell<AliasAnalysis<'analysis, 'tcx>>,
+    pub alias: RefCell<AliasEngine<'analysis, 'tcx>>,
     functions: FunctionRegistry,
     lock_info: Arc<LockGuardMap<'tcx>>,
     resources: ResourceRegistry,
@@ -79,7 +79,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         callgraph: &'analysis CallGraph<'tcx>,
     ) -> Self {
-        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
+        let alias = RefCell::new(AliasEngine::new(tcx, callgraph, &options.config));
         Self {
             options,
             tcx,

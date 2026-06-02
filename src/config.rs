@@ -58,6 +58,11 @@ pub struct PnConfig {
     /// `0` = context-insensitive; `1` (default) keeps the last call site.
     #[serde(default = "default_pta_k")]
     pub pta_k: usize,
+    /// Use the new field-sensitive/k-CFA pointer-analysis engine for Petri-net
+    /// alias queries. Default `false` keeps the legacy `AliasAnalysis` so the
+    /// new engine can be compared differentially before becoming the default.
+    #[serde(default)]
+    pub pta_engine: bool,
     #[serde(default)]
     pub report_level: ReportLevel,
 }
@@ -94,6 +99,7 @@ impl Default for PnConfig {
             atomic_store: default_atomic_store(),
             alias_unknown_policy: default_alias_unknown_policy(),
             pta_k: default_pta_k(),
+            pta_engine: false,
             report_level: ReportLevel::Developer,
         }
     }
