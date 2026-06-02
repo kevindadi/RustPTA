@@ -34,6 +34,61 @@ pub fn is_rc(arg_ty_name: &str) -> bool {
     arg_ty_name.starts_with("std::rc::Rc<")
 }
 
+/// Pure-string test: a `Box`/`Arc`/`Rc` inherent `::new`. Excludes lock
+/// constructors (`Mutex::new`/`RwLock::new`) whose heap *is* the lock object
+/// and is correctly produced by the conservative model.
+#[inline]
+pub fn is_box_arc_rc_new_path(path: &str) -> bool {
+    if !path.ends_with("::new") {
+        return false;
+    }
+    const PREFIXES: &[&str] = &[
+        "std::boxed::Box::",
+        "std::sync::Arc::",
+        "std::rc::Rc::",
+        "alloc::boxed::Box::",
+        "alloc::sync::Arc::",
+        "alloc::rc::Rc::",
+    ];
+    PREFIXES.iter().any(|p| path.starts_with(p))
+}
+
+/// `Box`/`Arc`/`Rc` constructor (`::new`). The boxed value must be stored into
+/// the heap the smart pointer points to.
+#[inline]
+pub fn is_box_arc_rc_new(def_id: DefId, tcx: TyCtxt<'_>) -> bool {
+    is_box_arc_rc_new_path(&tcx.def_path_str(def_id))
+}
+
+/// Pure-string test for the deref method names.
+#[inline]
+pub fn is_deref_method_name(method: &str) -> bool {
+    matches!(method, "deref" | "deref_mut")
+}
+
+/// `<Arc<T>/Rc<T> as Deref/DerefMut>::deref(&self) -> &T`. Modeled elsewhere as
+/// `dest ⊇ *arg` so the result points at the smart pointer's pointee (the boxed
+/// heap), not a fresh object. `Box` deref is built-in (a MIR `Deref`
+/// projection) and intentionally excluded here.
+#[inline]
+pub fn is_arc_rc_deref<'tcx>(
+    def_id: DefId,
+    substs: &List<GenericArg<'tcx>>,
+    tcx: TyCtxt<'tcx>,
+) -> bool {
+    let path = tcx.def_path_str(def_id);
+    let method = path.rsplit("::").next().unwrap_or("");
+    if !is_deref_method_name(method) {
+        return false;
+    }
+    // Self type is the first generic arg of the (Deref) method instance.
+    if let Some(arg0) = substs.iter().next() {
+        let n = format!("{:?}", arg0);
+        return is_arc(&n) || is_rc(&n);
+    }
+    false
+}
+
 #[inline]
 pub fn is_ptr_read(def_id: DefId, tcx: TyCtxt<'_>) -> bool {
     tcx.def_path_str(def_id).starts_with("std::ptr::read::<")
@@ -86,4 +141,29 @@ pub fn is_wrapper_extract(def_id: DefId, tcx: TyCtxt<'_>) -> bool {
             | "unwrap_or_default"
             | "unwrap_unchecked"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_path_matches_box_arc_rc_only() {
+        assert!(is_box_arc_rc_new_path("std::sync::Arc::<T>::new"));
+        assert!(is_box_arc_rc_new_path("std::rc::Rc::<T>::new"));
+        assert!(is_box_arc_rc_new_path("std::boxed::Box::<T>::new"));
+        assert!(is_box_arc_rc_new_path("alloc::sync::Arc::<T>::new"));
+        // Must NOT match lock constructors (their heap == the lock object, handled by UnknownModel).
+        assert!(!is_box_arc_rc_new_path("std::sync::Mutex::<T>::new"));
+        assert!(!is_box_arc_rc_new_path("std::sync::RwLock::<T>::new"));
+        assert!(!is_box_arc_rc_new_path("my_crate::Foo::new"));
+    }
+
+    #[test]
+    fn deref_method_name_detection() {
+        assert!(is_deref_method_name("deref"));
+        assert!(is_deref_method_name("deref_mut"));
+        assert!(!is_deref_method_name("clone"));
+        assert!(!is_deref_method_name("lock"));
+    }
 }
