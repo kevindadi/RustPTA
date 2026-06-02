@@ -16,10 +16,10 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::ty::{Instance, InstanceKind, TyCtxt, TypingEnv};
 use smallvec::SmallVec;
 
-use super::builder::{build_body, PendingCall};
+use super::builder::{PendingCall, build_body};
 use super::constraint::ConstraintSet;
 use super::context::{CallSite, Context, ContextPolicy, KCallSite};
-use super::interproc::{bind_call_edges, FuncMap};
+use super::interproc::{FuncMap, bind_call_edges};
 use super::loc::{AbstractLoc, CiKey, FieldPath, LocArena, LocId, ProjElem};
 use super::model::{CallNodes, ModelRegistry};
 use super::result::PointsToResult;

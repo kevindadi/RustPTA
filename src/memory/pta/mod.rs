@@ -19,6 +19,7 @@ pub mod loc;
 pub mod model;
 pub mod result;
 pub mod solver;
+mod typeutil;
 
 pub use adapter::PtaAliasAnalysis;
 pub use differential::{alias_pairs, alias_relation_is_superset, points_to_is_superset};
