@@ -16,7 +16,7 @@ use rustc_middle::ty::{Instance, TyCtxt, TypingEnv};
 use super::builder::{build_body, PendingCall};
 use super::constraint::ConstraintSet;
 use super::interproc::{bind_call_edges, FuncMap};
-use super::loc::{LocArena, LocId};
+use super::loc::{AbstractLoc, FieldPath, LocArena, LocId, ProjElem};
 use super::model::{CallNodes, ModelRegistry};
 use super::result::PointsToResult;
 use super::solver::Solver;
@@ -153,5 +153,65 @@ impl<'tcx> PointerAnalysis<'tcx> {
 
     pub fn constraints(&self) -> &ConstraintSet {
         &self.constraints
+    }
+
+    /// Render the solved points-to relation as a deterministic, human-readable
+    /// report. Used for differential comparison against the legacy engine.
+    pub fn format_report(&self) -> String {
+        let result = self.solve();
+        let mut entries: Vec<(LocId, Vec<LocId>)> = result
+            .raw()
+            .raw()
+            .iter()
+            .filter(|(_, set)| !set.is_empty())
+            .map(|(node, set)| {
+                let mut pointees: Vec<LocId> = set.iter().copied().collect();
+                pointees.sort_unstable();
+                (*node, pointees)
+            })
+            .collect();
+        entries.sort_unstable_by_key(|(node, _)| *node);
+
+        let mut out = String::from("=== PTA Points-To Report (new engine) ===\n");
+        out.push_str(&format!("nodes-with-pointees: {}\n", entries.len()));
+        for (node, pointees) in &entries {
+            let lhs = self.fmt_loc(*node);
+            let rhs: Vec<String> = pointees.iter().map(|p| self.fmt_loc(*p)).collect();
+            out.push_str(&format!("  {} -> {{ {} }}\n", lhs, rhs.join(", ")));
+        }
+        out.push_str("=== End ===\n");
+        out
+    }
+
+    fn fmt_loc(&self, id: LocId) -> String {
+        match self.arena.loc(id) {
+            AbstractLoc::Var { func, base, path, .. } => {
+                format!("f{}::_{}{}", func, base, self.fmt_path(*path))
+            }
+            AbstractLoc::Heap { site, path, .. } => {
+                format!(
+                    "Heap(f{}:bb{}#{}){}",
+                    site.func,
+                    site.bb,
+                    site.idx,
+                    self.fmt_path(*path)
+                )
+            }
+            AbstractLoc::Global { def_index, path } => {
+                format!("Global({}){}", def_index, self.fmt_path(*path))
+            }
+        }
+    }
+
+    fn fmt_path(&self, path: FieldPath) -> String {
+        let mut s = String::new();
+        for elem in self.arena.path(path) {
+            match elem {
+                ProjElem::Field(i) => s.push_str(&format!(".{}", i)),
+                ProjElem::Deref => s.push_str(".*"),
+                ProjElem::Index => s.push_str("[*]"),
+            }
+        }
+        s
     }
 }

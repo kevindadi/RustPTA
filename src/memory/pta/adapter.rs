@@ -78,6 +78,12 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
         self.alias(aid1, aid2)
     }
 
+    /// Human-readable dump of the solved points-to relation (for differential
+    /// comparison against the legacy engine). Call after [`Self::build`].
+    pub fn format_report(&self) -> String {
+        self.pta.format_report()
+    }
+
     /// May `pointer` point to `pointee`?
     pub fn points_to(&mut self, pointer: AliasId, pointee: AliasId) -> ApproximateAliasKind {
         let lp = self.loc(pointer);

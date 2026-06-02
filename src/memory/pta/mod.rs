@@ -12,6 +12,7 @@ pub mod analysis;
 pub mod builder;
 pub mod constraint;
 pub mod context;
+pub mod differential;
 pub mod intern;
 pub mod interproc;
 pub mod loc;
@@ -20,6 +21,7 @@ pub mod result;
 pub mod solver;
 
 pub use adapter::PtaAliasAnalysis;
+pub use differential::{alias_pairs, alias_relation_is_superset, points_to_is_superset};
 pub use analysis::PointerAnalysis;
 pub use builder::{assignment_edges, build_body, EdgeKind, Form, Kind, PendingCall};
 pub use constraint::{Constraint, ConstraintSet};

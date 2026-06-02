@@ -360,6 +360,19 @@ impl PTACallbacks {
             } else {
                 info!("points-to report exported to {:?}", path);
             }
+
+            // Differential side-channel: run the new field-sensitive engine over
+            // the same call graph and emit a parallel report. Read-only; does not
+            // affect Petri-net construction or any detector.
+            let mut pta = crate::memory::pta::PtaAliasAnalysis::new(pn.tcx(), callgraph);
+            pta.build();
+            let pta_report = pta.format_report();
+            let pta_path = self.output_directory.join("points_to_report_pta.txt");
+            if let Err(err) = std::fs::write(&pta_path, pta_report) {
+                error!("failed to write PTA points-to report to {:?}: {err}", pta_path);
+            } else {
+                info!("PTA points-to report exported to {:?}", pta_path);
+            }
         }
     }
 

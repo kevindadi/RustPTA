@@ -15,7 +15,7 @@ pub enum Constraint {
 }
 
 /// A deduplicated set of constraints.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ConstraintSet {
     set: FxHashSet<Constraint>,
 }
