@@ -7,6 +7,7 @@
 //!
 //! See `docs/superpowers/specs/2026-06-02-pointer-analysis-refactor-design.md`.
 
+pub mod analysis;
 pub mod builder;
 pub mod constraint;
 pub mod context;
@@ -17,7 +18,8 @@ pub mod model;
 pub mod result;
 pub mod solver;
 
-pub use builder::{assignment_edges, build_body, EdgeKind, Form, Kind};
+pub use analysis::PointerAnalysis;
+pub use builder::{assignment_edges, build_body, EdgeKind, Form, Kind, PendingCall};
 pub use constraint::{Constraint, ConstraintSet};
 pub use interproc::{bind_call_edges, FuncMap};
 pub use context::{CallSite, Context, ContextPolicy, KCallSite};

@@ -5,20 +5,34 @@
 //! rvalue handling from `crate::memory::pointsto`, emitting the new `Constraint`
 //! IR over interned `LocId`s. Call terminators are handled in a later task.
 
+extern crate rustc_hir;
 extern crate rustc_middle;
 
+use rustc_hir::def_id::DefId;
 use smallvec::SmallVec;
 
 use rustc_middle::mir::{
     AggregateKind, Body, Local, Operand, Place, PlaceElem, ProjectionElem, Rvalue, StatementKind,
     TerminatorKind,
 };
-use rustc_middle::ty::{TyCtxt, TyKind};
+use rustc_middle::ty::{self, GenericArgsRef, Instance, TyCtxt, TypingEnv};
 use rustc_span::Spanned;
 
 use super::constraint::{Constraint, ConstraintSet};
 use super::loc::{AllocSite, FieldPath, LocArena, LocId, ProjElem};
 use super::model::{CallNodes, ModelRegistry};
+
+/// A call site recorded during constraint building, to be resolved by the
+/// driver (which owns the cross-function `FuncMap`). For analyzable callees the
+/// driver emits interprocedural binding; otherwise the conservative model.
+pub struct PendingCall<'tcx> {
+    /// Monomorphized callee, if the call is a direct `FnDef`; `None` for
+    /// indirect calls (fn pointers / dynamic dispatch).
+    pub callee: Option<(DefId, GenericArgsRef<'tcx>)>,
+    pub dest: LocId,
+    pub args: SmallVec<[Option<LocId>; 4]>,
+    pub fresh_heap: LocId,
+}
 
 /// Whether the left-hand side of an assignment is a direct place (`x`) or an
 /// indirect store through a pointer (`*x`, with the leading `Deref` stripped).
@@ -78,17 +92,22 @@ pub fn build_body<'a, 'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
     func: u32,
+    caller: Instance<'tcx>,
     registry: &ModelRegistry,
     arena: &mut LocArena,
     constraints: &mut ConstraintSet,
-) {
+) -> Vec<PendingCall<'tcx>> {
+    let typing_env = TypingEnv::post_analysis(tcx, caller.def_id());
     let mut builder = ConstraintBuilder {
         tcx,
         body,
         func,
+        caller,
+        typing_env,
         arena,
         constraints,
         vars: Vec::new(),
+        pending: Vec::new(),
         call_counter: 0,
     };
     for (bb, data) in body.basic_blocks.iter_enumerated() {
@@ -110,16 +129,21 @@ pub fn build_body<'a, 'tcx>(
         }
     }
     builder.seed_allocs();
+    builder.pending
 }
 
 struct ConstraintBuilder<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
     func: u32,
+    caller: Instance<'tcx>,
+    typing_env: TypingEnv<'tcx>,
     arena: &'a mut LocArena,
     constraints: &'a mut ConstraintSet,
     /// Distinct place nodes created, used to seed per-place allocation objects.
     vars: Vec<(LocId, u32, FieldPath)>,
+    /// Call sites awaiting interprocedural resolution by the driver.
+    pending: Vec<PendingCall<'tcx>>,
     /// Monotonic counter giving each call site a distinct fresh heap object.
     call_counter: u32,
 }
@@ -269,21 +293,39 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             empty,
         );
 
-        let nodes = CallNodes {
-            dest,
-            args: arg_nodes,
-            fresh_heap,
-        };
+        // Monomorphize the callee type in the caller's context (mirrors the
+        // call-graph construction) so generic calls resolve correctly.
+        let func_ty = self.caller.instantiate_mir_and_normalize_erasing_regions(
+            self.tcx,
+            self.typing_env,
+            ty::EarlyBinder::bind(callee.ty(self.body, self.tcx)),
+        );
 
-        let func_ty = callee.ty(self.body, self.tcx);
-        if let TyKind::FnDef(def_id, substs) = func_ty.kind() {
-            if registry.try_specialized(self.tcx, *def_id, *substs, &nodes, self.constraints) {
+        if let ty::FnDef(def_id, substs) = *func_ty.kind() {
+            let nodes = CallNodes {
+                dest,
+                args: arg_nodes,
+                fresh_heap,
+            };
+            if registry.try_specialized(self.tcx, def_id, substs, &nodes, self.constraints) {
                 return;
             }
+            // Analyzable-or-not is decided by the driver; record for binding.
+            self.pending.push(PendingCall {
+                callee: Some((def_id, substs)),
+                dest: nodes.dest,
+                args: nodes.args,
+                fresh_heap: nodes.fresh_heap,
+            });
+        } else {
+            // Indirect call (fn pointer / dynamic dispatch).
+            self.pending.push(PendingCall {
+                callee: None,
+                dest,
+                args: arg_nodes,
+                fresh_heap,
+            });
         }
-        // No specialized model (or indirect call): conservative fallback. The
-        // driver may additionally bind analyzable callees interprocedurally.
-        registry.apply_unknown(&nodes, self.constraints);
     }
 
     fn emit(&mut self, edge: EdgeKind, lhs: LocId, rhs: LocId) {
