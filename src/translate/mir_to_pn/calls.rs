@@ -25,11 +25,31 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
     pub(super) fn handle_lock_call(
         &mut self,
         bb_idx: BasicBlock,
+        args: &Box<[Spanned<Operand<'tcx>>]>,
         destination: &rustc_middle::mir::Place<'tcx>,
         target: &Option<BasicBlock>,
         bb_end: TransitionId,
     ) -> Option<TransitionType> {
         if cfg!(feature = "atomic-violation") {
+            return None;
+        }
+
+        // A lock acquisition *creates* a guard from a non-guard source
+        // (`Mutex::lock(&mu)`, `Result::unwrap(result)`). Calls that merely
+        // forward an existing guard (e.g. `fn wait(g: MutexGuard) -> MutexGuard`)
+        // also have a guard-typed destination but must NOT acquire a second
+        // token. Distinguish them: if any argument is itself a lock guard, this
+        // is a pass-through, not an acquisition.
+        let arg_is_guard = args.iter().any(|a| {
+            a.node
+                .place()
+                .map(|p| {
+                    self.lockguards
+                        .contains_key(&LockGuardId::new(self.instance_id, p.local))
+                })
+                .unwrap_or(false)
+        });
+        if arg_is_guard {
             return None;
         }
 
@@ -397,7 +417,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         self.track_joinhandle_container_call(&callee_func_name, args, destination.local);
 
         if self
-            .handle_lock_call(bb_idx, destination, target, bb_end)
+            .handle_lock_call(bb_idx, args, destination, target, bb_end)
             .is_some()
         {
             log::debug!("callee_func_name with lock: {:?}", callee_func_name);
