@@ -59,17 +59,24 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                 return None;
             };
 
-            let call_type = match &guard.lockguard_ty {
+            // A write lock is exclusive: it must consume the RwLock's *full*
+            // capacity so no reader or other writer can proceed while it is
+            // held (the matching unlock returns the same amount). Reads and
+            // mutex locks take a single token.
+            let (call_type, weight) = match &guard.lockguard_ty {
                 LockGuardTy::StdMutex(_)
                 | LockGuardTy::ParkingLotMutex(_)
-                | LockGuardTy::SpinMutex(_) => TransitionType::Lock(lock_node.index()),
+                | LockGuardTy::SpinMutex(_) => (TransitionType::Lock(lock_node.index()), 1),
                 LockGuardTy::StdRwLockRead(_)
                 | LockGuardTy::ParkingLotRead(_)
-                | LockGuardTy::SpinRead(_) => TransitionType::RwLockRead(lock_node.index()),
-                _ => TransitionType::RwLockWrite(lock_node.index()),
+                | LockGuardTy::SpinRead(_) => (TransitionType::RwLockRead(lock_node.index()), 1),
+                _ => (
+                    TransitionType::RwLockWrite(lock_node.index()),
+                    crate::translate::structure::RWLOCK_CAPACITY,
+                ),
             };
 
-            self.update_lock_transition(bb_end, &lock_node);
+            self.update_lock_transition(bb_end, &lock_node, weight);
             self.connect_to_target(bb_idx, bb_end, target);
             Some(call_type)
         } else {
@@ -77,8 +84,13 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         }
     }
 
-    pub(super) fn update_lock_transition(&mut self, bb_end: TransitionId, lock_node: &PlaceId) {
-        self.net.add_input_arc(*lock_node, bb_end, 1);
+    pub(super) fn update_lock_transition(
+        &mut self,
+        bb_end: TransitionId,
+        lock_node: &PlaceId,
+        weight: u64,
+    ) {
+        self.net.add_input_arc(*lock_node, bb_end, weight);
     }
 
     pub(super) fn handle_normal_call(
@@ -470,7 +482,11 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
                         }
                     }
                     _ => {
-                        self.net.add_output_arc(lock_node, bb_end, 10);
+                        self.net.add_output_arc(
+                            lock_node,
+                            bb_end,
+                            crate::translate::structure::RWLOCK_CAPACITY,
+                        );
                         if let Some(transition) = self.net.get_transition_mut(bb_end) {
                             transition.transition_type = TransitionType::Unlock(lock_node.index());
                         }

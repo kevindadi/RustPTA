@@ -615,8 +615,9 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                 }
                 _ => {
                     let lock_name = format!("RwLock_{}", group_id);
+                    let cap = crate::translate::structure::RWLOCK_CAPACITY;
                     let lock_node =
-                        self.create_resource_place(lock_name.clone(), 10, 10, String::default());
+                        self.create_resource_place(lock_name.clone(), cap, cap, String::default());
                     log::debug!("Creating RwLock node: {}", lock_name);
                     for lock in group {
                         let alias_id = lock.get_alias_id();
