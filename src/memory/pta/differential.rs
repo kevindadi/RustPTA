@@ -64,7 +64,8 @@ mod tests {
     use super::*;
 
     fn solve(constraints: &ConstraintSet, loc_count: usize) -> PointsToResult {
-        PointsToResult::new(Solver::new(loc_count).solve(constraints))
+        let mut arena = crate::memory::pta::loc::LocArena::default();
+        PointsToResult::new(Solver::new(loc_count).solve(constraints, &mut arena))
     }
 
     #[test]
@@ -204,7 +205,8 @@ mod tests {
         cs.add(Constraint::AddressOf { dst: a, obj });
         cs.add(Constraint::Copy { dst: b, src: a });
         cs.add(Constraint::Copy { dst: c, src: b });
-        let pts = Solver::new(4).solve(&cs);
+        let mut arena = crate::memory::pta::loc::LocArena::default();
+        let pts = Solver::new(4).solve(&cs, &mut arena);
         assert!(pts.points_to(c).contains(&obj));
     }
 
@@ -230,11 +232,19 @@ mod tests {
         let dest1 = arena.var_ctx(Context::empty(), 9, 5, empty);
         let dest2 = arena.var_ctx(Context::empty(), 9, 6, empty);
         let ha = arena.heap(
-            super::super::loc::AllocSite { func: 9, bb: 0, idx: 1 },
+            super::super::loc::AllocSite {
+                func: 9,
+                bb: 0,
+                idx: 1,
+            },
             empty,
         );
         let hb = arena.heap(
-            super::super::loc::AllocSite { func: 9, bb: 0, idx: 2 },
+            super::super::loc::AllocSite {
+                func: 9,
+                bb: 0,
+                idx: 2,
+            },
             empty,
         );
 
@@ -245,16 +255,34 @@ mod tests {
         let r2 = arena.var_ctx(ctx2, 0, 0, empty);
 
         let mut cs = ConstraintSet::default();
-        cs.add(Constraint::AddressOf { dst: arg_a, obj: ha });
-        cs.add(Constraint::AddressOf { dst: arg_b, obj: hb });
+        cs.add(Constraint::AddressOf {
+            dst: arg_a,
+            obj: ha,
+        });
+        cs.add(Constraint::AddressOf {
+            dst: arg_b,
+            obj: hb,
+        });
         // Site 1 binding + callee body `return p`.
-        cs.add(Constraint::Copy { dst: p1, src: arg_a });
+        cs.add(Constraint::Copy {
+            dst: p1,
+            src: arg_a,
+        });
         cs.add(Constraint::Copy { dst: r1, src: p1 });
-        cs.add(Constraint::Copy { dst: dest1, src: r1 });
+        cs.add(Constraint::Copy {
+            dst: dest1,
+            src: r1,
+        });
         // Site 2 binding + callee body.
-        cs.add(Constraint::Copy { dst: p2, src: arg_b });
+        cs.add(Constraint::Copy {
+            dst: p2,
+            src: arg_b,
+        });
         cs.add(Constraint::Copy { dst: r2, src: p2 });
-        cs.add(Constraint::Copy { dst: dest2, src: r2 });
+        cs.add(Constraint::Copy {
+            dst: dest2,
+            src: r2,
+        });
 
         let result = solve(&cs, arena.loc_count());
         let s1 = result.points_to(dest1);
@@ -273,5 +301,41 @@ mod tests {
         // k=0: a single shared context merges both args into one param, so the
         // destinations cross-contaminate (sound but imprecise).
         assert!(!dests_disjoint_under_k(0));
+    }
+
+    /// Field-sensitivity regression for the `conflict`/`tikv_wrapper` pattern:
+    /// the *same* struct field accessed via `self` in two different functions
+    /// must resolve to the *same* object field when both `self`s point to the
+    /// same object — the property the old syntactic place model violated.
+    #[test]
+    fn cross_function_self_field_aliases_same_object() {
+        use super::super::loc::{AllocSite, ProjElem};
+        let mut a = LocArena::default();
+        let empty = a.empty_path();
+        let f0 = a.extend_path(empty, ProjElem::Field(0));
+        let o = a.heap(AllocSite { func: 9, bb: 0, idx: 0 }, empty); // shared object
+        let o_f0 = a.heap(AllocSite { func: 9, bb: 0, idx: 0 }, f0);
+
+        // func A: selfA = &O ; rA = &(*selfA).0
+        let self_a = a.var(1, 1, empty);
+        let deref_a = a.var(1, 50, empty);
+        let r_a = a.var(1, 51, empty);
+        // func B: selfB = &O ; rB = &(*selfB).0
+        let self_b = a.var(2, 1, empty);
+        let deref_b = a.var(2, 50, empty);
+        let r_b = a.var(2, 51, empty);
+
+        let mut cs = ConstraintSet::default();
+        for (s, d, r) in [(self_a, deref_a, r_a), (self_b, deref_b, r_b)] {
+            cs.add(Constraint::AddressOf { dst: s, obj: o });
+            cs.add(Constraint::Copy { dst: d, src: s }); // *self value = pts(self)
+            cs.add(Constraint::Offset { dst: r, src: d, suffix: f0 });
+        }
+        let pts = Solver::new(0).solve(&cs, &mut a);
+        // Both receivers must contain the SAME object field O·0.
+        assert!(pts.points_to(r_a).contains(&o_f0));
+        assert!(pts.points_to(r_b).contains(&o_f0));
+        // And therefore share a pointee (the alias-query basis).
+        assert!(!pts.points_to(r_a).is_disjoint(pts.points_to(r_b)));
     }
 }

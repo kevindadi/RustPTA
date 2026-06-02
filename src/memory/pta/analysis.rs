@@ -16,10 +16,10 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::ty::{Instance, InstanceKind, TyCtxt, TypingEnv};
 use smallvec::SmallVec;
 
-use super::builder::{build_body, PendingCall};
-use super::constraint::ConstraintSet;
+use super::builder::{PendingCall, build_body};
+use super::constraint::{Constraint, ConstraintSet};
 use super::context::{CallSite, Context, ContextPolicy, KCallSite};
-use super::interproc::{bind_call_edges, FuncMap};
+use super::interproc::FuncMap;
 use super::loc::{AbstractLoc, CiKey, FieldPath, LocArena, LocId, ProjElem};
 use super::model::{CallNodes, ModelRegistry};
 use super::result::PointsToResult;
@@ -108,6 +108,9 @@ impl<'tcx> PointerAnalysis<'tcx> {
         queue: &mut VecDeque<(Instance<'tcx>, Context)>,
     ) {
         if let Some((def_id, substs)) = pc.callee {
+            // Use the caller's typing environment to resolve the callee instance.
+            // For closures, substs contains captured upvars from the caller's scope,
+            // so we resolve them in the caller's environment.
             let typing_env = TypingEnv::post_analysis(self.tcx, caller.def_id());
             let resolved = Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                 .ok()
@@ -154,17 +157,53 @@ impl<'tcx> PointerAnalysis<'tcx> {
         pc: &PendingCall<'tcx>,
     ) {
         let callee_func = self.funcs.intern(callee);
+        let body = self.tcx.instance_mir(callee.def);
+        let typing_env = TypingEnv::post_analysis(self.tcx, callee.def_id());
         let empty = self.arena.empty_path();
-        let mut params: Vec<LocId> = Vec::with_capacity(arg_count);
+
+        // return: dest ⊇ callee._0
+        let ret = self
+            .arena
+            .var_ctx(callee_ctx.clone(), callee_func, 0, empty);
+        self.constraints
+            .add(Constraint::Copy { dst: pc.dest, src: ret });
+
+        // params: callee._i ⊇ arg_i, plus field-wise expansion for aggregate params.
         for i in 1..=arg_count {
-            params.push(
-                self.arena
-                    .var_ctx(callee_ctx.clone(), callee_func, i as u32, empty),
+            let Some(Some(arg)) = pc.args.get(i - 1).copied() else {
+                continue;
+            };
+            let param = self
+                .arena
+                .var_ctx(callee_ctx.clone(), callee_func, i as u32, empty);
+            self.constraints
+                .add(Constraint::Copy { dst: param, src: arg });
+
+            // Field expansion: for each leaf field path p of the param's type,
+            // param·p ⊇ arg·p. Only adds edges between *projected* slots; sound
+            // (the base Copy already covers the field-insensitive case).
+            let param_ty = body.local_decls[rustc_middle::mir::Local::from_usize(i)].ty;
+            let param_ty = callee.instantiate_mir_and_normalize_erasing_regions(
+                self.tcx,
+                typing_env,
+                rustc_middle::ty::EarlyBinder::bind(param_ty),
             );
-        }
-        let ret = self.arena.var_ctx(callee_ctx, callee_func, 0, empty);
-        for edge in bind_call_edges(&params, ret, &pc.args, pc.dest) {
-            self.constraints.add(edge);
+            let paths = crate::memory::pta::typeutil::leaf_field_paths(
+                self.tcx,
+                typing_env,
+                param_ty,
+                &mut self.arena,
+            );
+            for p in paths {
+                if self.arena.path(p).is_empty() {
+                    continue;
+                }
+                let pj = self.arena.project(param, p);
+                let aj = self.arena.project(arg, p);
+                if let (Some(pj), Some(aj)) = (pj, aj) {
+                    self.constraints.add(Constraint::Copy { dst: pj, src: aj });
+                }
+            }
         }
     }
 
@@ -178,8 +217,8 @@ impl<'tcx> PointerAnalysis<'tcx> {
     }
 
     /// Solve the accumulated constraints and return a query facade.
-    pub fn solve(&self) -> PointsToResult {
-        let pts = Solver::new(self.arena.loc_count()).solve(&self.constraints);
+    pub fn solve(&mut self) -> PointsToResult {
+        let pts = Solver::new(self.arena.loc_count()).solve(&self.constraints, &mut self.arena);
         PointsToResult::new(pts)
     }
 
@@ -280,14 +319,17 @@ impl<'tcx> PointerAnalysis<'tcx> {
         &self.arena
     }
 
+    pub fn tcx(&self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+
     pub fn constraints(&self) -> &ConstraintSet {
         &self.constraints
     }
 
     /// Render the solved points-to relation as a deterministic, human-readable
     /// report. Used for differential comparison against the legacy engine.
-    pub fn format_report(&self) -> String {
-        let result = self.solve();
+    pub fn format_report(&self, result: &PointsToResult) -> String {
         let mut entries: Vec<(LocId, Vec<LocId>)> = result
             .raw()
             .raw()

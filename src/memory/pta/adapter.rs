@@ -11,7 +11,9 @@
 
 extern crate rustc_middle;
 
+use rustc_middle::mir::Local;
 use rustc_middle::ty::Instance;
+use rustc_middle::ty::TypingEnv;
 
 use super::analysis::PointerAnalysis;
 use super::result::PointsToResult;
@@ -58,11 +60,86 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
     }
 
     fn instance_of(&self, aid: AliasId) -> Option<Instance<'tcx>> {
-        Some(*self.callgraph.index_to_instance(aid.instance_id)?.instance())
+        Some(
+            *self
+                .callgraph
+                .index_to_instance(aid.instance_id)?
+                .instance(),
+        )
+    }
+
+    /// Check if two locals may alias via the type-parameter heuristic: if both
+    /// locals point to parameters of the same index and the same type, they may
+    /// be the same object (e.g., two `&Mutex<T>` parameters could be the same).
+    /// This mirrors the legacy engine's `point_to_same_type_param` heuristic.
+    fn may_alias_via_type_param(
+        &self,
+        a: Instance<'tcx>,
+        a_local: Local,
+        b: Instance<'tcx>,
+        b_local: Local,
+    ) -> bool {
+        // Get body for instance A
+        let body_a = if self.pta.tcx().is_mir_available(a.def_id()) {
+            let body = self.pta.tcx().instance_mir(a.def);
+            if body.source.promoted.is_some() {
+                return false;
+            }
+            body
+        } else {
+            return false;
+        };
+        // Get body for instance B
+        let body_b = if self.pta.tcx().is_mir_available(b.def_id()) {
+            let body = self.pta.tcx().instance_mir(b.def);
+            if body.source.promoted.is_some() {
+                return false;
+            }
+            body
+        } else {
+            return false;
+        };
+
+        // Check if locals are function parameters
+        let param_idx_a = body_a.args_iter().position(|l| l == a_local);
+        let param_idx_b = body_b.args_iter().position(|l| l == b_local);
+
+        let param_idx_a = match param_idx_a {
+            Some(i) => i,
+            None => return false,
+        };
+        let param_idx_b = match param_idx_b {
+            Some(i) => i,
+            None => return false,
+        };
+
+        // Parameter indices must match (same position) unless same function
+        let same_func = a.def_id() == b.def_id();
+        if !same_func && param_idx_a != param_idx_b {
+            return false;
+        }
+
+        // Types must match exactly
+        let typing_env_a = TypingEnv::post_analysis(self.pta.tcx(), a.def_id());
+        let ty_a = a.instantiate_mir_and_normalize_erasing_regions(
+            self.pta.tcx(),
+            typing_env_a,
+            rustc_middle::ty::EarlyBinder::bind(body_a.local_decls[a_local].ty),
+        );
+        let typing_env_b = TypingEnv::post_analysis(self.pta.tcx(), b.def_id());
+        let ty_b = b.instantiate_mir_and_normalize_erasing_regions(
+            self.pta.tcx(),
+            typing_env_b,
+            rustc_middle::ty::EarlyBinder::bind(body_b.local_decls[b_local].ty),
+        );
+
+        ty_a == ty_b
     }
 
     /// May `aid1` and `aid2` alias? Uses context-collapsed points-to sets so the
-    /// result is sound regardless of the configured k-CFA depth.
+    /// result is sound regardless of the configured k-CFA depth. Also applies
+    /// the type-parameter heuristic: two parameters of the same type and index
+    /// in different functions may alias.
     pub fn alias(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
         if aid1.instance_id == aid2.instance_id && aid1.local == aid2.local {
             return ApproximateAliasKind::Probably;
@@ -78,10 +155,13 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
                     ib,
                     aid2.local.as_u32(),
                 ) {
-                    ApproximateAliasKind::Probably
-                } else {
-                    ApproximateAliasKind::Unlikely
+                    return ApproximateAliasKind::Probably;
                 }
+                // Type-parameter heuristic: parameters of same type/index may alias
+                if self.may_alias_via_type_param(ia, aid1.local, ib, aid2.local) {
+                    return ApproximateAliasKind::Possibly;
+                }
+                ApproximateAliasKind::Unlikely
             }
             _ => ApproximateAliasKind::Unknown,
         }
@@ -96,7 +176,10 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
     /// Human-readable dump of the solved points-to relation (for differential
     /// comparison against the legacy engine). Call after [`Self::build`].
     pub fn format_report(&self) -> String {
-        self.pta.format_report()
+        match &self.result {
+            Some(r) => self.pta.format_report(r),
+            None => String::from("=== PTA Points-To Report (unsolved) ===\n"),
+        }
     }
 
     /// May `pointer` point to `pointee`?

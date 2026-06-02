@@ -14,6 +14,11 @@ pub enum ProjElem {
 /// Interned id for a sequence of `ProjElem` (an access path suffix).
 pub type FieldPath = u32;
 
+/// Maximum number of Field/Index elements on any object access path. Beyond
+/// this, projection over-approximates by returning the object unprojected,
+/// guaranteeing solver termination (bounds the projected-location universe).
+pub const FIELD_DEPTH_CAP: usize = 8;
+
 /// Allocation site: identifies a heap object abstractly by its creation point.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AllocSite {
@@ -114,6 +119,46 @@ impl LocArena {
         self.locs.intern(AbstractLoc::Global { def_index, path })
     }
 
+    /// Append `suffix` (Field/Index elems only) to the access path of object
+    /// `loc`. Returns the interned projected location. Over-approximates by
+    /// returning `loc` unchanged when the result would exceed `FIELD_DEPTH_CAP`.
+    pub fn project(&mut self, loc: LocId, suffix: FieldPath) -> Option<LocId> {
+        let suffix_elems = self.paths.get(suffix).clone();
+        if suffix_elems.is_empty() {
+            return Some(loc);
+        }
+        let base_path = match self.locs.get(loc) {
+            AbstractLoc::Var { path, .. }
+            | AbstractLoc::Heap { path, .. }
+            | AbstractLoc::Global { path, .. } => *path,
+        };
+        if self.paths.get(base_path).len() + suffix_elems.len() > FIELD_DEPTH_CAP {
+            return Some(loc);
+        }
+        let mut new_path = base_path;
+        for e in suffix_elems {
+            new_path = self.extend_path(new_path, e);
+        }
+        let projected = match self.locs.get(loc) {
+            AbstractLoc::Var { ctx, func, base, .. } => AbstractLoc::Var {
+                ctx: ctx.clone(),
+                func: *func,
+                base: *base,
+                path: new_path,
+            },
+            AbstractLoc::Heap { ctx, site, .. } => AbstractLoc::Heap {
+                ctx: ctx.clone(),
+                site: *site,
+                path: new_path,
+            },
+            AbstractLoc::Global { def_index, .. } => AbstractLoc::Global {
+                def_index: *def_index,
+                path: new_path,
+            },
+        };
+        Some(self.locs.intern(projected))
+    }
+
     pub fn loc(&self, id: LocId) -> &AbstractLoc {
         self.locs.get(id)
     }
@@ -175,5 +220,45 @@ mod tests {
         assert_eq!(v1, v2);
         assert_ne!(v1, h);
         assert_eq!(arena.loc_count(), 2);
+    }
+
+    #[test]
+    fn project_appends_field_path_to_object() {
+        let mut arena = LocArena::default();
+        let empty = arena.empty_path();
+        let field0 = arena.extend_path(empty, ProjElem::Field(0));
+
+        let v = arena.var(7, 1, empty);
+        let vf0 = arena.project(v, field0).expect("within cap");
+        let expect = arena.var(7, 1, field0);
+        assert_eq!(vf0, expect);
+
+        let h = arena.heap(AllocSite { func: 7, bb: 0, idx: 0 }, empty);
+        let hf0 = arena.project(h, field0).expect("within cap");
+        let hexp = arena.heap(AllocSite { func: 7, bb: 0, idx: 0 }, field0);
+        assert_eq!(hf0, hexp);
+    }
+
+    #[test]
+    fn project_empty_suffix_is_identity() {
+        let mut arena = LocArena::default();
+        let empty = arena.empty_path();
+        let v = arena.var(1, 2, empty);
+        assert_eq!(arena.project(v, empty), Some(v));
+    }
+
+    #[test]
+    fn project_beyond_depth_cap_returns_object_unprojected() {
+        let mut arena = LocArena::default();
+        let mut p = arena.empty_path();
+        for _ in 0..FIELD_DEPTH_CAP {
+            p = arena.extend_path(p, ProjElem::Field(0));
+        }
+        let v = arena.var(1, 2, p); // already at cap
+        let one_more = {
+            let e = arena.empty_path();
+            arena.extend_path(e, ProjElem::Field(1))
+        };
+        assert_eq!(arena.project(v, one_more), Some(v));
     }
 }

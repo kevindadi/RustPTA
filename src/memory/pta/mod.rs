@@ -19,11 +19,12 @@ pub mod loc;
 pub mod model;
 pub mod result;
 pub mod solver;
+mod typeutil;
 
 pub use adapter::PtaAliasAnalysis;
 pub use differential::{alias_pairs, alias_relation_is_superset, points_to_is_superset};
 pub use analysis::PointerAnalysis;
-pub use builder::{assignment_edges, build_body, EdgeKind, Form, Kind, PendingCall};
+pub use builder::{build_body, PendingCall, PlaceWalk, ProjKind};
 pub use constraint::{Constraint, ConstraintSet};
 pub use interproc::{bind_call_edges, FuncMap};
 pub use context::{CallSite, Context, ContextPolicy, KCallSite};

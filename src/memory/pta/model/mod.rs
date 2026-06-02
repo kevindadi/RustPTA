@@ -60,6 +60,7 @@ impl ModelRegistry {
         Self {
             models: vec![
                 Box::new(arc_rc::CloneModel),
+                Box::new(arc_rc::ArcRcDerefModel),
                 Box::new(index::IndexModel),
                 Box::new(atomic::AtomicPtrStoreModel),
             ],
