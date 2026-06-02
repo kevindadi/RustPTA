@@ -191,7 +191,7 @@ Supported configuration areas include:
 | `src/net/` | Petri-net data structures, DOT output, incidence logic, and reductions. |
 | `src/analysis/` | State-space and reachability analysis. |
 | `src/detect/` | Deadlock, data-race, atomicity, and async bug detectors. |
-| `src/memory/` | Ownership, unsafe-memory, and points-to analysis support. |
+| `src/memory/` | Ownership, unsafe-memory, and points-to analysis support. See [docs/pointer-analysis.md](docs/pointer-analysis.md) for the points-to data-flow. |
 | `src/report/` | Text/JSON report structures. |
 | `src/util/` | MIR DOT export, memory watcher, and helper utilities. |
 
