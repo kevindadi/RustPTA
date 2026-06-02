@@ -12,6 +12,7 @@ pub mod constraint;
 pub mod context;
 pub mod intern;
 pub mod loc;
+pub mod model;
 pub mod result;
 pub mod solver;
 
@@ -19,5 +20,6 @@ pub use builder::{assignment_edges, build_body, EdgeKind, Form, Kind};
 pub use constraint::{Constraint, ConstraintSet};
 pub use context::{CallSite, Context, ContextPolicy, KCallSite};
 pub use loc::{AbstractLoc, AllocSite, FieldPath, LocArena, LocId, ProjElem};
+pub use model::{CallModel, CallNodes, ModelRegistry};
 pub use result::PointsToResult;
 pub use solver::{PointsTo, Solver};
