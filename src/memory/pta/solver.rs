@@ -75,6 +75,10 @@ impl Solver {
                         worklist.push_back(dst);
                     }
                 }
+                // TODO(Task 3): handle field-sensitive Offset constraints.
+                // Temporary no-op arm added in Task 1 only to keep the crate
+                // compiling; replaced when Offset solving is implemented.
+                Constraint::Offset { .. } => {}
             }
         }
 

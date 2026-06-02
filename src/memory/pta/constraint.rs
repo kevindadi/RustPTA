@@ -12,6 +12,9 @@ pub enum Constraint {
     Load { dst: LocId, src: LocId },
     /// `*dst ⊇ src`
     Store { dst: LocId, src: LocId },
+    /// Field projection (GEP): `dst ⊇ { o·suffix : o ∈ pts(src) }`, where
+    /// `suffix` is an interned `FieldPath` of Field/Index elems only.
+    Offset { dst: LocId, src: LocId, suffix: super::loc::FieldPath },
 }
 
 /// A deduplicated set of constraints.
@@ -49,6 +52,15 @@ mod tests {
         assert!(cs.add(Constraint::Copy { dst: 1, src: 2 }));
         assert!(!cs.add(Constraint::Copy { dst: 1, src: 2 }));
         assert!(cs.add(Constraint::AddressOf { dst: 1, obj: 9 }));
+        assert_eq!(cs.len(), 2);
+    }
+
+    #[test]
+    fn offset_constraint_is_distinct_and_dedups() {
+        let mut cs = ConstraintSet::default();
+        assert!(cs.add(Constraint::Offset { dst: 1, src: 2, suffix: 7 }));
+        assert!(!cs.add(Constraint::Offset { dst: 1, src: 2, suffix: 7 }));
+        assert!(cs.add(Constraint::Offset { dst: 1, src: 2, suffix: 8 }));
         assert_eq!(cs.len(), 2);
     }
 }
