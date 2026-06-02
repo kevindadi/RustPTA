@@ -199,6 +199,19 @@ fn make_options_parser() -> clap::Command {
                 .value_name("LEVEL")
                 .help("Report audience: developer (default, concise) or research (internal diagnostics)")
                 .value_parser(["developer", "research"]),
+        )
+        .arg(
+            Arg::new("pta_k")
+                .long("pta-k")
+                .value_name("N")
+                .help("Call-site sensitivity depth (k-CFA) for the pointer-analysis engine (default: 1, 0 = context-insensitive)")
+                .value_parser(clap::value_parser!(usize)),
+        )
+        .arg(
+            Arg::new("pta_engine")
+                .long("pta-engine")
+                .help("Use the new field-sensitive/k-CFA pointer-analysis engine for alias queries (default: legacy AliasAnalysis)")
+                .action(clap::ArgAction::SetTrue),
         );
     parser
 }
@@ -400,6 +413,12 @@ impl Options {
                 "research" => ReportLevel::Research,
                 _ => ReportLevel::Developer,
             };
+        }
+        if let Some(&k) = matches.get_one::<usize>("pta_k") {
+            self.config.pta_k = k;
+        }
+        if matches.get_flag("pta_engine") {
+            self.config.pta_engine = true;
         }
 
         rustc_args.to_vec()

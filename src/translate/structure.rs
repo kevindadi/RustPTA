@@ -6,6 +6,11 @@ use crate::concurrency::atomic::AtomicOrdering;
 use crate::config::PnConfig;
 use crate::{memory::pointsto::AliasId, net::PlaceId};
 
+/// Token capacity of an `RwLock` resource place. A read lock consumes one
+/// token (so up to `RWLOCK_CAPACITY` concurrent readers); a write lock is
+/// exclusive and must consume *all* tokens.
+pub const RWLOCK_CAPACITY: u64 = 10;
+
 pub struct ResourceRegistry {
     locks: FxHashMap<AliasId, PlaceId>,
     condvars: FxHashMap<AliasId, PlaceId>,

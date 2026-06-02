@@ -12,7 +12,8 @@ mod thread_control;
 use super::callgraph::{CallGraph, InstanceId};
 use crate::{
     concurrency::blocking::LockGuardMap,
-    memory::pointsto::{AliasAnalysis, AliasId},
+    memory::alias_engine::AliasEngine,
+    memory::pointsto::AliasId,
     net::{Net, PlaceId, TransitionId},
     translate::structure::{FunctionRegistry, KeyApiRegex, ResourceRegistry},
 };
@@ -38,7 +39,7 @@ pub struct BodyToPetriNet<'translate, 'analysis, 'tcx> {
     tcx: TyCtxt<'tcx>,
     callgraph: &'translate CallGraph<'tcx>,
     pub net: &'translate mut Net,
-    alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>,
+    alias: &'translate mut RefCell<AliasEngine<'analysis, 'tcx>>,
     pub lockguards: Arc<LockGuardMap<'tcx>>,
     functions: &'translate FunctionRegistry,
     resources: &'translate ResourceRegistry,
@@ -101,7 +102,7 @@ impl<'translate, 'analysis, 'tcx> BodyToPetriNet<'translate, 'analysis, 'tcx> {
         tcx: TyCtxt<'tcx>,
         callgraph: &'translate CallGraph<'tcx>,
         net: &'translate mut Net,
-        alias: &'translate mut RefCell<AliasAnalysis<'analysis, 'tcx>>,
+        alias: &'translate mut RefCell<AliasEngine<'analysis, 'tcx>>,
         lockguards: Arc<LockGuardMap<'tcx>>,
         functions: &'translate FunctionRegistry,
         resources: &'translate ResourceRegistry,

@@ -4,10 +4,11 @@ extern crate rustc_span;
 use rustc_middle::ty::{EarlyBinder, TyKind, TypingEnv};
 
 use rustc_data_structures::fx::FxHashMap;
-use rustc_middle::mir::{Body, Local};
+use rustc_middle::mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind};
 use rustc_middle::ty::{self, Instance, TyCtxt};
 use rustc_span::Span;
 
+use crate::memory::ownership;
 use crate::memory::pointsto::AliasId;
 use crate::translate::callgraph::InstanceId;
 
@@ -155,6 +156,16 @@ impl<'tcx> LockGuardInfo<'tcx> {
 
 pub type LockGuardMap<'tcx> = FxHashMap<LockGuardId, LockGuardInfo<'tcx>>;
 
+/// How a local obtained its value, used to trace a lock guard back to the
+/// receiver of its acquiring `lock()/read()/write()` call.
+#[derive(Clone, Copy)]
+enum DefSource {
+    /// `dest = lock(receiver, ..)` — the receiver local is the lock object.
+    LockAcquire(Local),
+    /// `dest = move/copy src` or `dest = unwrap/ok/expect(src, ..)`.
+    Forward(Local),
+}
+
 pub struct BlockingCollector<'a, 'b, 'tcx> {
     instance_id: InstanceId,
     instance: &'a Instance<'tcx>,
@@ -162,6 +173,10 @@ pub struct BlockingCollector<'a, 'b, 'tcx> {
     tcx: TyCtxt<'tcx>,
     pub lockguards: LockGuardMap<'tcx>,
     pub condvars: CondvarMap<'tcx>,
+    /// Maps each lock guard to the alias id of the lock object it guards (the
+    /// receiver of the acquiring call). Used to group guards by the *lock they
+    /// protect* rather than by guard-pointer aliasing.
+    pub lock_objects: FxHashMap<LockGuardId, AliasId>,
 }
 
 impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
@@ -178,6 +193,7 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
             tcx,
             lockguards: Default::default(),
             condvars: Default::default(),
+            lock_objects: Default::default(),
         }
     }
 
@@ -229,5 +245,87 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
                 }
             }
         }
+
+        self.resolve_lock_objects();
+    }
+
+    /// For every collected guard, walk backward through moves and
+    /// `Result`/`Option` extractors to the acquiring `lock()` call and record
+    /// the receiver (the lock object). Guards whose receiver cannot be
+    /// determined are simply left out — the consumer falls back to guard
+    /// aliasing for those, preserving the previous (sound) behavior.
+    fn resolve_lock_objects(&mut self) {
+        if self.lockguards.is_empty() {
+            return;
+        }
+
+        let mut def_source: FxHashMap<Local, DefSource> = FxHashMap::default();
+
+        for bb in self.body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                if let StatementKind::Assign(boxed) = &stmt.kind {
+                    let (place, rvalue) = &**boxed;
+                    if !place.projection.is_empty() {
+                        continue;
+                    }
+                    if let Rvalue::Use(Operand::Move(src) | Operand::Copy(src), _) = rvalue {
+                        if src.projection.is_empty() {
+                            def_source.insert(place.local, DefSource::Forward(src.local));
+                        }
+                    }
+                }
+            }
+
+            if let Some(term) = &bb.terminator {
+                if let TerminatorKind::Call {
+                    func,
+                    args,
+                    destination,
+                    ..
+                } = &term.kind
+                {
+                    if !destination.projection.is_empty() {
+                        continue;
+                    }
+                    let Some((def_id, _)) = func.const_fn_def() else {
+                        continue;
+                    };
+                    let arg0 = args.first().and_then(|a| a.node.place());
+                    if let Some(arg0) = arg0 {
+                        if arg0.projection.is_empty() {
+                            if ownership::is_lock_acquire(def_id, self.tcx) {
+                                def_source
+                                    .insert(destination.local, DefSource::LockAcquire(arg0.local));
+                            } else if ownership::is_wrapper_extract(def_id, self.tcx) {
+                                def_source
+                                    .insert(destination.local, DefSource::Forward(arg0.local));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let guard_locals: Vec<Local> = self.lockguards.keys().map(|g| g.local).collect();
+        for guard_local in guard_locals {
+            if let Some(receiver) = Self::trace_receiver(&def_source, guard_local) {
+                let guard_id = LockGuardId::new(self.instance_id, guard_local);
+                self.lock_objects
+                    .insert(guard_id, AliasId::new(self.instance_id, receiver));
+            }
+        }
+    }
+
+    /// Follow `Forward` edges until a `LockAcquire`, returning its receiver
+    /// local. Bounded by the number of locals to avoid cycles.
+    fn trace_receiver(def_source: &FxHashMap<Local, DefSource>, start: Local) -> Option<Local> {
+        let mut current = start;
+        for _ in 0..def_source.len().saturating_add(1) {
+            match def_source.get(&current)? {
+                DefSource::LockAcquire(receiver) => return Some(*receiver),
+                DefSource::Forward(src) => current = *src,
+            }
+        }
+        None
     }
 }

@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use super::callgraph::{CallGraph, CallGraphNode, InstanceId};
 use crate::concurrency::blocking::{LockGuardId, LockGuardMap, LockGuardTy};
-use crate::memory::pointsto::AliasAnalysis;
+use crate::memory::alias_engine::AliasEngine;
 use crate::net::{Net, Place, PlaceId};
 use crate::translate::mir_to_pn::BodyToPetriNet;
 
@@ -43,7 +43,7 @@ pub struct PetriNet<'analysis, 'tcx> {
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     pub net: Net,
     callgraph: &'analysis CallGraph<'tcx>,
-    pub alias: RefCell<AliasAnalysis<'analysis, 'tcx>>,
+    pub alias: RefCell<AliasEngine<'analysis, 'tcx>>,
     functions: FunctionRegistry,
     lock_info: Arc<LockGuardMap<'tcx>>,
     resources: ResourceRegistry,
@@ -79,7 +79,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         callgraph: &'analysis CallGraph<'tcx>,
     ) -> Self {
-        let alias = RefCell::new(AliasAnalysis::new(tcx, &callgraph));
+        let alias = RefCell::new(AliasEngine::new(tcx, callgraph, &options.config));
         Self {
             options,
             tcx,
@@ -543,7 +543,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
     }
 
     pub fn construct_lock_with_dfs(&mut self) {
-        let lockguards = self.collect_blocking_primitives();
+        let (lockguards, lock_objects) = self.collect_blocking_primitives();
         if lockguards.is_empty() {
             log::debug!("Not Found Lockguards In This Crate");
             return;
@@ -562,13 +562,24 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             union_find.insert(lock_id.clone(), lock_id.clone());
         }
 
+        // Two guards belong to the same lock resource when the lock objects
+        // they protect may alias. We compare the *acquiring receivers* (the
+        // `&Mutex` passed to `lock()`), captured by `BlockingCollector`, rather
+        // than the guard objects themselves: distinct guards of the same mutex
+        // are different objects (so guard aliasing misses them), while their
+        // receivers both point at the same lock. When a receiver is unknown we
+        // fall back to guard aliasing to stay sound.
+        let alias_id_for = |guard: &LockGuardId| -> AliasId {
+            lock_objects.get(guard).copied().unwrap_or_else(|| guard.clone().into())
+        };
+
         let policy = self.options.config.alias_unknown_policy;
         for i in 0..lockid_vec.len() {
             for j in i + 1..lockid_vec.len() {
                 if self
                     .alias
                     .borrow_mut()
-                    .alias(lockid_vec[i].clone().into(), lockid_vec[j].clone().into())
+                    .alias(alias_id_for(&lockid_vec[i]), alias_id_for(&lockid_vec[j]))
                     .may_alias(policy)
                 {
                     log::debug!(
@@ -604,8 +615,9 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                 }
                 _ => {
                     let lock_name = format!("RwLock_{}", group_id);
+                    let cap = crate::translate::structure::RWLOCK_CAPACITY;
                     let lock_node =
-                        self.create_resource_place(lock_name.clone(), 10, 10, String::default());
+                        self.create_resource_place(lock_name.clone(), cap, cap, String::default());
                     log::debug!("Creating RwLock node: {}", lock_name);
                     for lock in group {
                         let alias_id = lock.get_alias_id();
@@ -618,8 +630,14 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
         log::debug!("Total lock groups discovered: {}", group_id);
     }
 
-    fn collect_blocking_primitives(&mut self) -> FxHashMap<InstanceId, LockGuardMap<'tcx>> {
+    fn collect_blocking_primitives(
+        &mut self,
+    ) -> (
+        FxHashMap<InstanceId, LockGuardMap<'tcx>>,
+        FxHashMap<LockGuardId, AliasId>,
+    ) {
         let mut lockguards = FxHashMap::default();
+        let mut lock_objects: FxHashMap<LockGuardId, AliasId> = FxHashMap::default();
         let mut condvars = FxHashMap::default();
 
         for (instance_id, node) in self.callgraph.graph.node_references() {
@@ -640,6 +658,8 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
                 lockguards.insert(instance_id, collector.lockguards.clone());
                 Arc::make_mut(&mut self.lock_info).extend(collector.lockguards);
             }
+
+            lock_objects.extend(collector.lock_objects);
 
             if !collector.condvars.is_empty() {
                 condvars.insert(instance_id, collector.condvars);
@@ -662,7 +682,7 @@ impl<'analysis, 'tcx> PetriNet<'analysis, 'tcx> {
             log::debug!("Not Found Condvars In This Crate");
         }
 
-        lockguards
+        (lockguards, lock_objects)
     }
 
     pub fn get_or_insert_node(&mut self, def_id: DefId) -> (PlaceId, PlaceId) {
