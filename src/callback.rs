@@ -364,7 +364,11 @@ impl PTACallbacks {
             // Differential side-channel: run the new field-sensitive engine over
             // the same call graph and emit a parallel report. Read-only; does not
             // affect Petri-net construction or any detector.
-            let mut pta = crate::memory::pta::PtaAliasAnalysis::new(pn.tcx(), callgraph);
+            let mut pta = crate::memory::pta::PtaAliasAnalysis::with_k(
+                pn.tcx(),
+                callgraph,
+                self.options.config.pta_k,
+            );
             pta.build();
             let pta_report = pta.format_report();
             let pta_path = self.output_directory.join("points_to_report_pta.txt");

@@ -46,6 +46,17 @@ pub enum AbstractLoc {
 /// Dense id for an interned `AbstractLoc`.
 pub type LocId = u32;
 
+/// Context-insensitive identity of an abstract location: the same memory
+/// location across all calling contexts. Used to collapse k-CFA results for
+/// context-insensitive queries soundly (two pointers alias if they reach the
+/// same location under *any* pair of contexts).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum CiKey {
+    Var { func: u32, base: u32, path: FieldPath },
+    Heap { site: AllocSite, path: FieldPath },
+    Global { def_index: u64, path: FieldPath },
+}
+
 /// Owns the interners for field paths and abstract locations.
 #[derive(Default)]
 pub struct LocArena {
@@ -66,6 +77,11 @@ impl LocArena {
 
     pub fn path(&self, id: FieldPath) -> &[ProjElem] {
         self.paths.get(id)
+    }
+
+    /// Id of the already-interned empty path, if any path was interned.
+    pub fn empty_path_id(&self) -> Option<FieldPath> {
+        self.paths.get_id(&Vec::new())
     }
 
     pub fn var(&mut self, func: u32, base: u32, path: FieldPath) -> LocId {
@@ -104,6 +120,30 @@ impl LocArena {
 
     pub fn loc_count(&self) -> usize {
         self.locs.len()
+    }
+
+    /// Iterate `(LocId, &AbstractLoc)` for every interned location.
+    pub fn iter_locs(&self) -> impl Iterator<Item = (LocId, &AbstractLoc)> {
+        self.locs.iter()
+    }
+
+    /// Context-insensitive identity of a location id.
+    pub fn ci_key(&self, id: LocId) -> CiKey {
+        match self.locs.get(id) {
+            AbstractLoc::Var { func, base, path, .. } => CiKey::Var {
+                func: *func,
+                base: *base,
+                path: *path,
+            },
+            AbstractLoc::Heap { site, path, .. } => CiKey::Heap {
+                site: *site,
+                path: *path,
+            },
+            AbstractLoc::Global { def_index, path } => CiKey::Global {
+                def_index: *def_index,
+                path: *path,
+            },
+        }
     }
 }
 

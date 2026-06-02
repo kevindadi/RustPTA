@@ -58,6 +58,11 @@ impl<'tcx> FuncMap<'tcx> {
         *self.inner.get(id)
     }
 
+    /// Existing id for an instance, without interning a new one.
+    pub fn get_id(&self, instance: &Instance<'tcx>) -> Option<u32> {
+        self.inner.get_id(instance)
+    }
+
     pub fn len(&self) -> usize {
         self.inner.len()
     }

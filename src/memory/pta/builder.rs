@@ -19,6 +19,7 @@ use rustc_middle::ty::{self, GenericArgsRef, Instance, TyCtxt, TypingEnv};
 use rustc_span::Spanned;
 
 use super::constraint::{Constraint, ConstraintSet};
+use super::context::Context;
 use super::loc::{AllocSite, FieldPath, LocArena, LocId, ProjElem};
 use super::model::{CallNodes, ModelRegistry};
 
@@ -29,6 +30,9 @@ pub struct PendingCall<'tcx> {
     /// Monomorphized callee, if the call is a direct `FnDef`; `None` for
     /// indirect calls (fn pointers / dynamic dispatch).
     pub callee: Option<(DefId, GenericArgsRef<'tcx>)>,
+    /// Basic block of the call terminator in the caller; combined with the
+    /// caller's `func` id it forms the `CallSite` for context extension.
+    pub bb: u32,
     pub dest: LocId,
     pub args: SmallVec<[Option<LocId>; 4]>,
     pub fresh_heap: LocId,
@@ -92,6 +96,7 @@ pub fn build_body<'a, 'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
     func: u32,
+    ctx: Context,
     caller: Instance<'tcx>,
     registry: &ModelRegistry,
     arena: &mut LocArena,
@@ -102,6 +107,7 @@ pub fn build_body<'a, 'tcx>(
         tcx,
         body,
         func,
+        ctx,
         caller,
         typing_env,
         arena,
@@ -136,6 +142,9 @@ struct ConstraintBuilder<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
     func: u32,
+    /// Calling context this body is being built under (k-CFA). Tags every
+    /// local/place node so the same instance can be cloned per context.
+    ctx: Context,
     caller: Instance<'tcx>,
     typing_env: TypingEnv<'tcx>,
     arena: &'a mut LocArena,
@@ -170,7 +179,9 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
 
     fn place_node(&mut self, local: Local, proj: &[PlaceElem<'tcx>]) -> LocId {
         let path = self.intern_path(proj);
-        let id = self.arena.var(self.func, local.as_u32(), path);
+        let id = self
+            .arena
+            .var_ctx(self.ctx.clone(), self.func, local.as_u32(), path);
         self.vars.push((id, local.as_u32(), path));
         id
     }
@@ -313,6 +324,7 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             // Analyzable-or-not is decided by the driver; record for binding.
             self.pending.push(PendingCall {
                 callee: Some((def_id, substs)),
+                bb,
                 dest: nodes.dest,
                 args: nodes.args,
                 fresh_heap: nodes.fresh_heap,
@@ -321,6 +333,7 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             // Indirect call (fn pointer / dynamic dispatch).
             self.pending.push(PendingCall {
                 callee: None,
+                bb,
                 dest,
                 args: arg_nodes,
                 fresh_heap,

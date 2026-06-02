@@ -27,7 +27,7 @@ pub use builder::{assignment_edges, build_body, EdgeKind, Form, Kind, PendingCal
 pub use constraint::{Constraint, ConstraintSet};
 pub use interproc::{bind_call_edges, FuncMap};
 pub use context::{CallSite, Context, ContextPolicy, KCallSite};
-pub use loc::{AbstractLoc, AllocSite, FieldPath, LocArena, LocId, ProjElem};
+pub use loc::{AbstractLoc, AllocSite, CiKey, FieldPath, LocArena, LocId, ProjElem};
 pub use model::{CallModel, CallNodes, ModelRegistry};
 pub use result::PointsToResult;
 pub use solver::{PointsTo, Solver};

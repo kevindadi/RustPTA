@@ -3,8 +3,10 @@
 //! [`PointerAnalysis`] builds constraints for all functions reachable (by
 //! direct calls) from a set of roots, performing interprocedural binding for
 //! analyzable callees and falling back to the conservative model otherwise,
-//! then solves to a [`PointsToResult`]. Context-insensitive (`k = 0`) for now;
-//! the `ContextPolicy` hook is ready for k-CFA in a later phase.
+//! then solves to a [`PointsToResult`]. Call-site sensitivity (k-CFA) is
+//! controlled by `k`: each `(instance, context)` pair is built once and its
+//! local/place nodes are tagged with that context. `k = 0` reduces to a single
+//! context-insensitive context.
 
 extern crate rustc_middle;
 
@@ -12,11 +14,13 @@ use std::collections::VecDeque;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::ty::{Instance, TyCtxt, TypingEnv};
+use smallvec::SmallVec;
 
 use super::builder::{build_body, PendingCall};
 use super::constraint::ConstraintSet;
+use super::context::{CallSite, Context, ContextPolicy, KCallSite};
 use super::interproc::{bind_call_edges, FuncMap};
-use super::loc::{AbstractLoc, FieldPath, LocArena, LocId, ProjElem};
+use super::loc::{AbstractLoc, CiKey, FieldPath, LocArena, LocId, ProjElem};
 use super::model::{CallNodes, ModelRegistry};
 use super::result::PointsToResult;
 use super::solver::Solver;
@@ -27,17 +31,26 @@ pub struct PointerAnalysis<'tcx> {
     constraints: ConstraintSet,
     funcs: FuncMap<'tcx>,
     registry: ModelRegistry,
-    built: FxHashSet<Instance<'tcx>>,
+    policy: KCallSite,
+    /// `(instance, context)` pairs already translated.
+    built: FxHashSet<(Instance<'tcx>, Context)>,
 }
 
 impl<'tcx> PointerAnalysis<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self::with_k(tcx, 0)
+    }
+
+    /// Create an analysis with call-site sensitivity depth `k` (`0` = context
+    /// insensitive, `1` = last call site, etc.).
+    pub fn with_k(tcx: TyCtxt<'tcx>, k: usize) -> Self {
         Self {
             tcx,
             arena: LocArena::default(),
             constraints: ConstraintSet::default(),
             funcs: FuncMap::default(),
             registry: ModelRegistry::builtin(),
+            policy: KCallSite::new(k),
             built: FxHashSet::default(),
         }
     }
@@ -48,14 +61,16 @@ impl<'tcx> PointerAnalysis<'tcx> {
     }
 
     /// Build constraints for every function reachable by direct calls from
-    /// `roots`. Safe to call multiple times; already-built functions are skipped.
+    /// `roots` (entered under the empty context). Safe to call multiple times;
+    /// already-built `(instance, context)` pairs are skipped.
     pub fn build_reachable<I>(&mut self, roots: I)
     where
         I: IntoIterator<Item = Instance<'tcx>>,
     {
-        let mut queue: VecDeque<Instance<'tcx>> = roots.into_iter().collect();
-        while let Some(inst) = queue.pop_front() {
-            if !self.built.insert(inst) {
+        let mut queue: VecDeque<(Instance<'tcx>, Context)> =
+            roots.into_iter().map(|i| (i, Context::empty())).collect();
+        while let Some((inst, ctx)) = queue.pop_front() {
+            if !self.built.insert((inst, ctx.clone())) {
                 continue;
             }
             if !self.tcx.is_mir_available(inst.def_id()) {
@@ -70,13 +85,14 @@ impl<'tcx> PointerAnalysis<'tcx> {
                 self.tcx,
                 body,
                 func,
+                ctx.clone(),
                 inst,
                 &self.registry,
                 &mut self.arena,
                 &mut self.constraints,
             );
             for pc in pending {
-                self.resolve_pending(inst, pc, &mut queue);
+                self.resolve_pending(inst, func, &ctx, pc, &mut queue);
             }
         }
     }
@@ -84,8 +100,10 @@ impl<'tcx> PointerAnalysis<'tcx> {
     fn resolve_pending(
         &mut self,
         caller: Instance<'tcx>,
+        caller_func: u32,
+        caller_ctx: &Context,
         pc: PendingCall<'tcx>,
-        queue: &mut VecDeque<Instance<'tcx>>,
+        queue: &mut VecDeque<(Instance<'tcx>, Context)>,
     ) {
         if let Some((def_id, substs)) = pc.callee {
             let typing_env = TypingEnv::post_analysis(self.tcx, caller.def_id());
@@ -96,9 +114,14 @@ impl<'tcx> PointerAnalysis<'tcx> {
                 if self.tcx.is_mir_available(callee.def_id()) {
                     let body = self.tcx.instance_mir(callee.def);
                     if body.source.promoted.is_none() {
-                        self.bind_callee(callee, body.arg_count, &pc);
-                        if !self.built.contains(&callee) {
-                            queue.push_back(callee);
+                        let site = CallSite {
+                            func: caller_func,
+                            bb: pc.bb,
+                        };
+                        let callee_ctx = self.policy.extend(caller_ctx.clone(), site);
+                        self.bind_callee(callee, callee_ctx.clone(), body.arg_count, &pc);
+                        if !self.built.contains(&(callee, callee_ctx.clone())) {
+                            queue.push_back((callee, callee_ctx));
                         }
                         return;
                     }
@@ -110,15 +133,25 @@ impl<'tcx> PointerAnalysis<'tcx> {
     }
 
     /// Emit interprocedural binding constraints between a call site and an
-    /// analyzable callee (`param ⊇ arg`, `dest ⊇ callee._0`).
-    fn bind_callee(&mut self, callee: Instance<'tcx>, arg_count: usize, pc: &PendingCall<'tcx>) {
+    /// analyzable callee (`param ⊇ arg`, `dest ⊇ callee._0`). Callee nodes are
+    /// created under `callee_ctx`.
+    fn bind_callee(
+        &mut self,
+        callee: Instance<'tcx>,
+        callee_ctx: Context,
+        arg_count: usize,
+        pc: &PendingCall<'tcx>,
+    ) {
         let callee_func = self.funcs.intern(callee);
         let empty = self.arena.empty_path();
         let mut params: Vec<LocId> = Vec::with_capacity(arg_count);
         for i in 1..=arg_count {
-            params.push(self.arena.var(callee_func, i as u32, empty));
+            params.push(
+                self.arena
+                    .var_ctx(callee_ctx.clone(), callee_func, i as u32, empty),
+            );
         }
-        let ret = self.arena.var(callee_func, 0, empty);
+        let ret = self.arena.var_ctx(callee_ctx, callee_func, 0, empty);
         for edge in bind_call_edges(&params, ret, &pc.args, pc.dest) {
             self.constraints.add(edge);
         }
@@ -139,12 +172,97 @@ impl<'tcx> PointerAnalysis<'tcx> {
         PointsToResult::new(pts)
     }
 
-    /// The interned `LocId` of a function-local variable (interns if needed).
+    /// Existing `func` id for an instance, or `None` if it was never built.
+    pub fn func_id(&self, instance: Instance<'tcx>) -> Option<u32> {
+        self.funcs.get_id(&instance)
+    }
+
+    /// All context-qualified node ids for a function-local variable (the local
+    /// itself, empty field path), across every calling context that was built.
     /// `local = 0` is the return place; `1..=arg_count` are parameters.
-    pub fn node_of(&mut self, instance: Instance<'tcx>, local: u32) -> LocId {
-        let func = self.funcs.intern(instance);
-        let empty = self.arena.empty_path();
-        self.arena.var(func, local, empty)
+    pub fn var_nodes(&self, instance: Instance<'tcx>, local: u32) -> SmallVec<[LocId; 4]> {
+        let mut out = SmallVec::new();
+        let Some(func) = self.funcs.get_id(&instance) else {
+            return out;
+        };
+        for (id, loc) in self.arena.iter_locs() {
+            if let AbstractLoc::Var {
+                func: f,
+                base,
+                path,
+                ..
+            } = loc
+            {
+                if *f == func && *base == local && self.arena.path(*path).is_empty() {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
+    /// Context-insensitive points-to set for a local: the union over all
+    /// contexts, with pointees collapsed to their context-insensitive identity.
+    pub fn collapsed_points_to(
+        &self,
+        result: &PointsToResult,
+        instance: Instance<'tcx>,
+        local: u32,
+    ) -> FxHashSet<CiKey> {
+        let mut keys = FxHashSet::default();
+        for node in self.var_nodes(instance, local) {
+            for &pointee in result.points_to(node) {
+                keys.insert(self.arena.ci_key(pointee));
+            }
+        }
+        keys
+    }
+
+    /// Sound context-insensitive may-alias: two locals may alias if their
+    /// context-collapsed points-to sets share a context-insensitive location.
+    pub fn collapsed_may_alias(
+        &self,
+        result: &PointsToResult,
+        a: Instance<'tcx>,
+        a_local: u32,
+        b: Instance<'tcx>,
+        b_local: u32,
+    ) -> bool {
+        let sa = self.collapsed_points_to(result, a, a_local);
+        if sa.is_empty() {
+            return false;
+        }
+        let sb = self.collapsed_points_to(result, b, b_local);
+        !sa.is_disjoint(&sb)
+    }
+
+    /// Whether `pointer` may point to a location whose context-insensitive
+    /// identity matches one of `pointee`'s own collapsed locations.
+    pub fn collapsed_points_to_local(
+        &self,
+        result: &PointsToResult,
+        pointer: Instance<'tcx>,
+        pointer_local: u32,
+        pointee: Instance<'tcx>,
+        pointee_local: u32,
+    ) -> bool {
+        let targets = self.collapsed_points_to(result, pointer, pointer_local);
+        if targets.is_empty() {
+            return false;
+        }
+        // The pointee local's own context-insensitive identity (empty path).
+        let Some(func) = self.funcs.get_id(&pointee) else {
+            return false;
+        };
+        let Some(empty) = self.arena.empty_path_id() else {
+            return false;
+        };
+        let key = CiKey::Var {
+            func,
+            base: pointee_local,
+            path: empty,
+        };
+        targets.contains(&key)
     }
 
     pub fn arena(&self) -> &LocArena {
@@ -185,8 +303,23 @@ impl<'tcx> PointerAnalysis<'tcx> {
 
     fn fmt_loc(&self, id: LocId) -> String {
         match self.arena.loc(id) {
-            AbstractLoc::Var { func, base, path, .. } => {
-                format!("f{}::_{}{}", func, base, self.fmt_path(*path))
+            AbstractLoc::Var {
+                ctx,
+                func,
+                base,
+                path,
+            } => {
+                let cx = if ctx.is_empty() {
+                    String::new()
+                } else {
+                    let sites: Vec<String> = ctx
+                        .as_slice()
+                        .iter()
+                        .map(|s| format!("{}:{}", s.func, s.bb))
+                        .collect();
+                    format!("@[{}]", sites.join(","))
+                };
+                format!("f{}::_{}{}{}", func, base, self.fmt_path(*path), cx)
             }
             AbstractLoc::Heap { site, path, .. } => {
                 format!(

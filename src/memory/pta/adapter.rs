@@ -14,7 +14,6 @@ extern crate rustc_middle;
 use rustc_middle::ty::Instance;
 
 use super::analysis::PointerAnalysis;
-use super::loc::LocId;
 use super::result::PointsToResult;
 use crate::memory::pointsto::{AliasId, ApproximateAliasKind};
 use crate::translate::callgraph::CallGraph;
@@ -26,9 +25,19 @@ pub struct PtaAliasAnalysis<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
+    /// Context-insensitive (`k = 0`) shim. Prefer [`Self::with_k`].
     pub fn new(tcx: rustc_middle::ty::TyCtxt<'tcx>, callgraph: &'a CallGraph<'tcx>) -> Self {
+        Self::with_k(tcx, callgraph, 0)
+    }
+
+    /// Shim using call-site sensitivity depth `k` (k-CFA).
+    pub fn with_k(
+        tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        callgraph: &'a CallGraph<'tcx>,
+        k: usize,
+    ) -> Self {
         Self {
-            pta: PointerAnalysis::new(tcx),
+            pta: PointerAnalysis::with_k(tcx, k),
             callgraph,
             result: None,
         }
@@ -48,21 +57,27 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
         self.result = Some(self.pta.solve());
     }
 
-    fn loc(&mut self, aid: AliasId) -> Option<LocId> {
-        let instance = *self.callgraph.index_to_instance(aid.instance_id)?.instance();
-        Some(self.pta.node_of(instance, aid.local.as_u32()))
+    fn instance_of(&self, aid: AliasId) -> Option<Instance<'tcx>> {
+        Some(*self.callgraph.index_to_instance(aid.instance_id)?.instance())
     }
 
-    /// May `aid1` and `aid2` alias?
+    /// May `aid1` and `aid2` alias? Uses context-collapsed points-to sets so the
+    /// result is sound regardless of the configured k-CFA depth.
     pub fn alias(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
         if aid1.instance_id == aid2.instance_id && aid1.local == aid2.local {
             return ApproximateAliasKind::Probably;
         }
-        let la = self.loc(aid1);
-        let lb = self.loc(aid2);
-        match (la, lb, &self.result) {
-            (Some(la), Some(lb), Some(result)) => {
-                if result.may_alias(la, lb) {
+        let ia = self.instance_of(aid1);
+        let ib = self.instance_of(aid2);
+        match (ia, ib, &self.result) {
+            (Some(ia), Some(ib), Some(result)) => {
+                if self.pta.collapsed_may_alias(
+                    result,
+                    ia,
+                    aid1.local.as_u32(),
+                    ib,
+                    aid2.local.as_u32(),
+                ) {
                     ApproximateAliasKind::Probably
                 } else {
                     ApproximateAliasKind::Unlikely
@@ -86,11 +101,17 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
 
     /// May `pointer` point to `pointee`?
     pub fn points_to(&mut self, pointer: AliasId, pointee: AliasId) -> ApproximateAliasKind {
-        let lp = self.loc(pointer);
-        let lt = self.loc(pointee);
-        match (lp, lt, &self.result) {
-            (Some(lp), Some(lt), Some(result)) => {
-                if result.points_to(lp).contains(&lt) {
+        let ip = self.instance_of(pointer);
+        let it = self.instance_of(pointee);
+        match (ip, it, &self.result) {
+            (Some(ip), Some(it), Some(result)) => {
+                if self.pta.collapsed_points_to_local(
+                    result,
+                    ip,
+                    pointer.local.as_u32(),
+                    it,
+                    pointee.local.as_u32(),
+                ) {
                     ApproximateAliasKind::Probably
                 } else {
                     ApproximateAliasKind::Unlikely

@@ -31,12 +31,22 @@ impl<T: Clone + Eq + Hash> Interner<T> {
         &self.items[id as usize]
     }
 
+    /// Look up an existing id without interning a new value.
+    pub fn get_id(&self, value: &T) -> Option<u32> {
+        self.map.get(value).copied()
+    }
+
     pub fn len(&self) -> usize {
         self.items.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    /// Iterate `(id, &value)` for every interned item in id order.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, &T)> {
+        self.items.iter().enumerate().map(|(i, v)| (i as u32, v))
     }
 }
 

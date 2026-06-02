@@ -12,13 +12,9 @@
 //! tests and offline diff tooling without pulling in rustc.
 
 use rustc_data_structures::fx::FxHashSet;
-use smallvec::SmallVec;
 
-use super::constraint::{Constraint, ConstraintSet};
-use super::loc::{LocArena, LocId};
-use super::model::{CallNodes, ModelRegistry};
+use super::loc::LocId;
 use super::result::PointsToResult;
-use super::solver::Solver;
 
 /// Collect unordered may-alias pairs among `nodes` according to `result`.
 pub fn alias_pairs(result: &PointsToResult, nodes: &[LocId]) -> FxHashSet<(LocId, LocId)> {
@@ -57,15 +53,19 @@ pub fn points_to_is_superset(
         .all(|&n| baseline.points_to(n).is_subset(candidate.points_to(n)))
 }
 
-fn solve(constraints: &ConstraintSet, loc_count: usize) -> PointsToResult {
-    PointsToResult::new(Solver::new(loc_count).solve(constraints))
-}
-
 #[cfg(test)]
 mod tests {
+    use smallvec::SmallVec;
+
     use super::super::constraint::{Constraint, ConstraintSet};
+    use super::super::loc::LocArena;
+    use super::super::model::{CallNodes, ModelRegistry};
     use super::super::solver::Solver;
     use super::*;
+
+    fn solve(constraints: &ConstraintSet, loc_count: usize) -> PointsToResult {
+        PointsToResult::new(Solver::new(loc_count).solve(constraints))
+    }
 
     #[test]
     fn alias_superset_holds_when_candidate_adds_pairs() {
@@ -206,5 +206,72 @@ mod tests {
         cs.add(Constraint::Copy { dst: c, src: b });
         let pts = Solver::new(4).solve(&cs);
         assert!(pts.points_to(c).contains(&obj));
+    }
+
+    use super::super::context::{CallSite, Context, ContextPolicy, KCallSite};
+
+    /// Builds `id(p) -> p` called from two sites with distinct heap args, under
+    /// a chosen k, and returns whether the two destinations are kept apart.
+    ///
+    /// Layout (func ids: callee=0, caller=9):
+    /// - callee param = local 1, return = local 0
+    /// - caller args point to distinct heaps `ha`, `hb`; dests are locals 5, 6.
+    fn dests_disjoint_under_k(k: usize) -> bool {
+        let mut arena = LocArena::default();
+        let empty = arena.empty_path();
+        let policy = KCallSite::new(k);
+
+        let ctx1 = policy.extend(Context::empty(), CallSite { func: 9, bb: 1 });
+        let ctx2 = policy.extend(Context::empty(), CallSite { func: 9, bb: 2 });
+
+        // Caller-side nodes (empty context — caller is a root here).
+        let arg_a = arena.var_ctx(Context::empty(), 9, 1, empty);
+        let arg_b = arena.var_ctx(Context::empty(), 9, 2, empty);
+        let dest1 = arena.var_ctx(Context::empty(), 9, 5, empty);
+        let dest2 = arena.var_ctx(Context::empty(), 9, 6, empty);
+        let ha = arena.heap(
+            super::super::loc::AllocSite { func: 9, bb: 0, idx: 1 },
+            empty,
+        );
+        let hb = arena.heap(
+            super::super::loc::AllocSite { func: 9, bb: 0, idx: 2 },
+            empty,
+        );
+
+        // Callee nodes cloned per calling context.
+        let p1 = arena.var_ctx(ctx1.clone(), 0, 1, empty);
+        let r1 = arena.var_ctx(ctx1, 0, 0, empty);
+        let p2 = arena.var_ctx(ctx2.clone(), 0, 1, empty);
+        let r2 = arena.var_ctx(ctx2, 0, 0, empty);
+
+        let mut cs = ConstraintSet::default();
+        cs.add(Constraint::AddressOf { dst: arg_a, obj: ha });
+        cs.add(Constraint::AddressOf { dst: arg_b, obj: hb });
+        // Site 1 binding + callee body `return p`.
+        cs.add(Constraint::Copy { dst: p1, src: arg_a });
+        cs.add(Constraint::Copy { dst: r1, src: p1 });
+        cs.add(Constraint::Copy { dst: dest1, src: r1 });
+        // Site 2 binding + callee body.
+        cs.add(Constraint::Copy { dst: p2, src: arg_b });
+        cs.add(Constraint::Copy { dst: r2, src: p2 });
+        cs.add(Constraint::Copy { dst: dest2, src: r2 });
+
+        let result = solve(&cs, arena.loc_count());
+        let s1 = result.points_to(dest1);
+        let s2 = result.points_to(dest2);
+        // Each dest must keep its own heap (soundness for both k).
+        assert!(s1.contains(&ha));
+        assert!(s2.contains(&hb));
+        s1.is_disjoint(s2)
+    }
+
+    #[test]
+    fn k1_keeps_call_sites_apart_but_k0_merges() {
+        // k=1: the callee param/return are cloned per call site, so the two
+        // destinations stay disjoint (precise).
+        assert!(dests_disjoint_under_k(1));
+        // k=0: a single shared context merges both args into one param, so the
+        // destinations cross-contaminate (sound but imprecise).
+        assert!(!dests_disjoint_under_k(0));
     }
 }

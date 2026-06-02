@@ -54,6 +54,10 @@ pub struct PnConfig {
     /// Unknown-alias policy: conservative (sound) treats Unknown as Possibly; optimistic treats Unknown as Unlikely.
     #[serde(default = "default_alias_unknown_policy")]
     pub alias_unknown_policy: AliasUnknownPolicy,
+    /// Call-site sensitivity depth (k-CFA) for the new pointer-analysis engine.
+    /// `0` = context-insensitive; `1` (default) keeps the last call site.
+    #[serde(default = "default_pta_k")]
+    pub pta_k: usize,
     #[serde(default)]
     pub report_level: ReportLevel,
 }
@@ -89,6 +93,7 @@ impl Default for PnConfig {
             atomic_load: default_atomic_load(),
             atomic_store: default_atomic_store(),
             alias_unknown_policy: default_alias_unknown_policy(),
+            pta_k: default_pta_k(),
             report_level: ReportLevel::Developer,
         }
     }
@@ -96,6 +101,10 @@ impl Default for PnConfig {
 
 fn default_alias_unknown_policy() -> AliasUnknownPolicy {
     AliasUnknownPolicy::Conservative
+}
+
+fn default_pta_k() -> usize {
+    1
 }
 
 impl PnConfig {
