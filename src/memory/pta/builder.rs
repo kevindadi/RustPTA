@@ -467,8 +467,11 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
         }
 
         // Closures are interprocedural: any closure passed by value will be invoked
-        // with this environment object. Bind `closure._1 ⊇ closure_object` (field-
-        // expanded by the driver) so captured upvars flow into the closure body.
+        // with an environment heap that stores the captured upvars. For each closure arg:
+        // 1. Allocate a fresh heap object (clo_heap)
+        // 2. Store the captured value (clo_obj) into clo_heap._0
+        // 3. Point clo_dest at clo_heap via AddressOf
+        // 4. Queue the closure body for analysis with clo_dest as the destination
         for (i, a) in args.iter().enumerate() {
             let Some(Some(clo_obj)) = arg_nodes.get(i).copied() else {
                 continue;
@@ -492,6 +495,20 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
                 let clo_dest =
                     self.arena
                         .var_ctx(self.ctx.clone(), self.func, u32::MAX - i as u32, empty);
+
+                // Store the captured value into the heap's first field (environment slot)
+                let clo_heap_env = self.arena.project(clo_heap, empty).unwrap_or(clo_heap);
+                self.constraints.add(Constraint::Store {
+                    dst: clo_heap_env,
+                    src: clo_obj,
+                });
+
+                // Point the closure destination at the heap
+                self.constraints.add(Constraint::AddressOf {
+                    dst: clo_dest,
+                    obj: clo_heap,
+                });
+
                 self.pending.push(PendingCall {
                     callee: Some((clo_def, clo_substs)),
                     bb,

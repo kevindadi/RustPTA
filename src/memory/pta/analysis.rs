@@ -108,6 +108,9 @@ impl<'tcx> PointerAnalysis<'tcx> {
         queue: &mut VecDeque<(Instance<'tcx>, Context)>,
     ) {
         if let Some((def_id, substs)) = pc.callee {
+            // Use the caller's typing environment to resolve the callee instance.
+            // For closures, substs contains captured upvars from the caller's scope,
+            // so we resolve them in the caller's environment.
             let typing_env = TypingEnv::post_analysis(self.tcx, caller.def_id());
             let resolved = Instance::try_resolve(self.tcx, typing_env, def_id, substs)
                 .ok()
@@ -314,6 +317,10 @@ impl<'tcx> PointerAnalysis<'tcx> {
 
     pub fn arena(&self) -> &LocArena {
         &self.arena
+    }
+
+    pub fn tcx(&self) -> TyCtxt<'tcx> {
+        self.tcx
     }
 
     pub fn constraints(&self) -> &ConstraintSet {
