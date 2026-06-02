@@ -761,4 +761,94 @@ mod place_tests {
         assert!(pts.points_to(dest).contains(&heap));
         assert!(pts.points_to(heap_f0).contains(&lock));
     }
+
+    #[test]
+    fn closure_environment_has_field_level_upvars() {
+        // Test that closure environment heap has field-level upvar storage.
+        // This verifies the fix for the 6-lock bug where closures weren't
+        // properly modeling struct field access through captured upvars.
+        use crate::memory::pta::loc::AllocSite;
+        use crate::memory::pta::solver::Solver;
+
+        let mut arena = LocArena::default();
+        let mut cs = ConstraintSet::default();
+        let empty = arena.empty_path();
+
+        // Create a struct's heap with 3 fields (simulating MyStruct { mu, rw1, rw2 })
+        let _struct_heap = arena.heap(
+            AllocSite { func: 0, bb: 0, idx: 0 },
+            empty,
+        );
+        let f0 = arena.extend_path(empty, ProjElem::Field(0)); // mu field
+        let f1 = arena.extend_path(empty, ProjElem::Field(1)); // rw1 field
+        let f2 = arena.extend_path(empty, ProjElem::Field(2)); // rw2 field
+
+        let struct_f0 = arena.heap(AllocSite { func: 0, bb: 0, idx: 0 }, f0);
+        let struct_f1 = arena.heap(AllocSite { func: 0, bb: 0, idx: 0 }, f1);
+        let struct_f2 = arena.heap(AllocSite { func: 0, bb: 0, idx: 0 }, f2);
+
+        // Create 3 lock objects (one for each field)
+        let lock0 = arena.heap(AllocSite { func: 0, bb: 0, idx: 1 }, empty);
+        let lock1 = arena.heap(AllocSite { func: 0, bb: 0, idx: 2 }, empty);
+        let lock2 = arena.heap(AllocSite { func: 0, bb: 0, idx: 3 }, empty);
+
+        // Struct fields point to locks via AddressOf
+        cs.add(Constraint::AddressOf { dst: struct_f0, obj: lock0 });
+        cs.add(Constraint::AddressOf { dst: struct_f1, obj: lock1 });
+        cs.add(Constraint::AddressOf { dst: struct_f2, obj: lock2 });
+
+        // Create closure environment heap with 3 fields
+        let _clo_heap = arena.heap(
+            AllocSite { func: 0, bb: 0, idx: 4 },
+            empty,
+        );
+        let clo_f0 = arena.heap(AllocSite { func: 0, bb: 0, idx: 4 }, f0);
+        let clo_f1 = arena.heap(AllocSite { func: 0, bb: 0, idx: 4 }, f1);
+        let clo_f2 = arena.heap(AllocSite { func: 0, bb: 0, idx: 4 }, f2);
+
+        // Closure captures struct: clo_heap.field_i ⊇ struct_heap.field_i
+        // This is the key constraint that was missing before the fix
+        cs.add(Constraint::Copy { dst: clo_f0, src: struct_f0 });
+        cs.add(Constraint::Copy { dst: clo_f1, src: struct_f1 });
+        cs.add(Constraint::Copy { dst: clo_f2, src: struct_f2 });
+
+        let pts = Solver::new(0).solve(&cs, &mut arena);
+
+        // Verify: closure's field 0 points to lock0 (through struct_f0)
+        assert!(
+            pts.points_to(clo_f0).contains(&lock0),
+            "closure field 0 should point to lock0 (struct's mu)"
+        );
+
+        // Verify: closure's field 1 points to lock1
+        assert!(
+            pts.points_to(clo_f1).contains(&lock1),
+            "closure field 1 should point to lock1 (struct's rw1)"
+        );
+
+        // Verify: closure's field 2 points to lock2
+        assert!(
+            pts.points_to(clo_f2).contains(&lock2),
+            "closure field 2 should point to lock2 (struct's rw2)"
+        );
+
+        // All fields should point to DISTINCT locks (not the same)
+        // This is the key property that fixes the 6-lock bug
+        let pts_to_f0: std::collections::HashSet<_> = pts.points_to(clo_f0).iter().copied().collect();
+        let pts_to_f1: std::collections::HashSet<_> = pts.points_to(clo_f1).iter().copied().collect();
+        let pts_to_f2: std::collections::HashSet<_> = pts.points_to(clo_f2).iter().copied().collect();
+
+        assert!(
+            pts_to_f0.is_disjoint(&pts_to_f1),
+            "closure fields should point to different locks"
+        );
+        assert!(
+            pts_to_f0.is_disjoint(&pts_to_f2),
+            "closure fields should point to different locks"
+        );
+        assert!(
+            pts_to_f1.is_disjoint(&pts_to_f2),
+            "closure fields should point to different locks"
+        );
+    }
 }
