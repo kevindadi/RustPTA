@@ -16,18 +16,18 @@ use rustc_hir::def_id::DefId;
 use smallvec::SmallVec;
 
 use rustc_middle::mir::{
-    AggregateKind, Body, LocalKind, Operand, Place, PlaceElem, ProjectionElem, Rvalue, StatementKind,
-    TerminatorKind,
+    AggregateKind, Body, LocalKind, Operand, Place, PlaceElem, ProjectionElem, Rvalue,
+    StatementKind, TerminatorKind,
 };
 use rustc_middle::ty::{self, GenericArgsRef, Instance, TyCtxt, TypingEnv};
 use rustc_span::Spanned;
 
-use crate::memory::ownership;
 use super::constraint::{Constraint, ConstraintSet};
 use super::context::Context;
 use super::loc::{AllocSite, FieldPath, LocArena, LocId, ProjElem};
 use super::model::{CallNodes, ModelRegistry};
 use super::typeutil::leaf_field_paths;
+use crate::memory::ownership;
 
 /// A call site recorded during constraint building, to be resolved by the
 /// driver (which owns the cross-function `FuncMap`). For analyzable callees the
@@ -57,7 +57,10 @@ pub(crate) fn emit_boxed_value(
     value: LocId,
     leaf_paths: &[FieldPath],
 ) {
-    out.add(Constraint::AddressOf { dst: dest, obj: heap });
+    out.add(Constraint::AddressOf {
+        dst: dest,
+        obj: heap,
+    });
     for &p in leaf_paths {
         if let (Some(hp), Some(vp)) = (arena.project(heap, p), arena.project(value, p)) {
             out.add(Constraint::Copy { dst: hp, src: vp });
@@ -151,7 +154,10 @@ impl<'a> PlaceWalk<'a> {
         let empty = self.empty();
         let slot = self.slot(local, empty);
         let cur0 = self.fresh();
-        self.cs.add(Constraint::AddressOf { dst: cur0, obj: slot }); // pts(cur0) = { V_local }
+        self.cs.add(Constraint::AddressOf {
+            dst: cur0,
+            obj: slot,
+        }); // pts(cur0) = { V_local }
         let mut cur = cur0;
         let mut pending: Vec<ProjKind> = Vec::new();
         for e in proj {
@@ -160,7 +166,10 @@ impl<'a> PlaceWalk<'a> {
                 ProjKind::Deref => {
                     cur = self.apply_pending(cur, &mut pending); // field offset first
                     let next = self.fresh();
-                    self.cs.add(Constraint::Load { dst: next, src: cur }); // *cur
+                    self.cs.add(Constraint::Load {
+                        dst: next,
+                        src: cur,
+                    }); // *cur
                     cur = next;
                 }
             }
@@ -175,7 +184,11 @@ impl<'a> PlaceWalk<'a> {
         let suffix = self.intern_suffix(pending);
         pending.clear();
         let next = self.fresh();
-        self.cs.add(Constraint::Offset { dst: next, src: cur, suffix });
+        self.cs.add(Constraint::Offset {
+            dst: next,
+            src: cur,
+            suffix,
+        });
         next
     }
 
@@ -241,7 +254,10 @@ pub fn build_body<'a, 'tcx>(
             }
         }
     }
-    builder.seed_addr_taken();
+    // Address-taken seeding disabled until precision is improved: it still
+    // duplicates boxed/aggregate objects in several benchmarks. Arc-based
+    // deadlock cases rely on emit_boxed_value closure binding instead.
+    // builder.seed_addr_taken();
     builder.pending
 }
 
@@ -320,7 +336,10 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             let mut w = self.walk();
             w.place_addr(lhs_local, lhs_proj)
         };
-        self.constraints.add(Constraint::Store { dst: addr, src: value });
+        self.constraints.add(Constraint::Store {
+            dst: addr,
+            src: value,
+        });
     }
 
     fn copy_with_aggregate_expansion(&mut self, dst_local: u32, value: LocId) {
@@ -416,8 +435,12 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             let proj = Self::proj_kinds(destination.projection);
             if proj.is_empty() {
                 let empty = self.arena.empty_path();
-                self.arena
-                    .var_ctx(self.ctx.clone(), self.func, destination.local.as_u32(), empty)
+                self.arena.var_ctx(
+                    self.ctx.clone(),
+                    self.func,
+                    destination.local.as_u32(),
+                    empty,
+                )
             } else {
                 // Projected destination (`(*p).f = call()`): models and binding
                 // `Copy` the return value into `dest` treating it as a *value*
@@ -430,8 +453,10 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
                     let temp = w.fresh();
                     (addr, temp)
                 };
-                self.constraints
-                    .add(Constraint::Store { dst: addr, src: temp });
+                self.constraints.add(Constraint::Store {
+                    dst: addr,
+                    src: temp,
+                });
                 temp
             }
         };
@@ -464,12 +489,9 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
                     },
                     empty,
                 );
-                let clo_dest = self.arena.var_ctx(
-                    self.ctx.clone(),
-                    self.func,
-                    u32::MAX - i as u32,
-                    empty,
-                );
+                let clo_dest =
+                    self.arena
+                        .var_ctx(self.ctx.clone(), self.func, u32::MAX - i as u32, empty);
                 self.pending.push(PendingCall {
                     callee: Some((clo_def, clo_substs)),
                     bb,
@@ -566,9 +588,7 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             if !self.should_seed_addr_taken(base) {
                 continue;
             }
-            let slot = self
-                .arena
-                .var_ctx(self.ctx.clone(), self.func, base, empty);
+            let slot = self.arena.var_ctx(self.ctx.clone(), self.func, base, empty);
             let obj = self.arena.heap(
                 AllocSite {
                     func: self.func,
@@ -597,13 +617,7 @@ impl<'a, 'tcx> ConstraintBuilder<'a, 'tcx> {
             self.typing_env,
             ty::EarlyBinder::bind(self.body.local_decls[local].ty),
         );
-        if ty.is_ref() {
-            return false;
-        }
-        let name = format!("{:?}", ty);
-        ownership::is_arc(&name)
-            || ownership::is_rc(&name)
-            || name.starts_with("std::boxed::Box<")
+        !ownership::is_smart_pointer_ty(ty, self.tcx)
     }
 }
 
@@ -630,7 +644,11 @@ mod place_tests {
         let empty = arena.empty_path();
         let f0 = arena.extend_path(empty, ProjElem::Field(0));
         let o = arena.heap(
-            crate::memory::pta::loc::AllocSite { func: 0, bb: 0, idx: 0 },
+            crate::memory::pta::loc::AllocSite {
+                func: 0,
+                bb: 0,
+                idx: 0,
+            },
             empty,
         );
         let v1 = arena.var_ctx(crate::memory::pta::context::Context::empty(), 0, 1, empty);
@@ -643,7 +661,11 @@ mod place_tests {
         };
 
         let o_f0 = arena.heap(
-            crate::memory::pta::loc::AllocSite { func: 0, bb: 0, idx: 0 },
+            crate::memory::pta::loc::AllocSite {
+                func: 0,
+                bb: 0,
+                idx: 0,
+            },
             f0,
         );
         let pts = Solver::new(0).solve(&cs, &mut arena);
@@ -661,19 +683,40 @@ mod place_tests {
         // value = the aggregate being boxed; its field .0 holds a lock object L.
         let value = arena.var(0, 5, empty);
         let value_f0 = arena.var(0, 5, f0);
-        let lock = arena.heap(AllocSite { func: 0, bb: 1, idx: 1 }, empty);
+        let lock = arena.heap(
+            AllocSite {
+                func: 0,
+                bb: 1,
+                idx: 1,
+            },
+            empty,
+        );
         cs.add(Constraint::AddressOf {
             dst: value_f0,
             obj: lock,
         }); // value.0 = &L
 
         let dest = arena.var(0, 6, empty); // the Arc local
-        let heap = arena.heap(AllocSite { func: 0, bb: 2, idx: 1 }, empty); // H_arc
+        let heap = arena.heap(
+            AllocSite {
+                func: 0,
+                bb: 2,
+                idx: 1,
+            },
+            empty,
+        ); // H_arc
 
         // leaf paths for a 1-field aggregate: [.0]
         super::emit_boxed_value(&mut arena, &mut cs, dest, heap, value, &[f0]);
 
-        let heap_f0 = arena.heap(AllocSite { func: 0, bb: 2, idx: 1 }, f0);
+        let heap_f0 = arena.heap(
+            AllocSite {
+                func: 0,
+                bb: 2,
+                idx: 1,
+            },
+            f0,
+        );
         let pts = Solver::new(0).solve(&cs, &mut arena);
         // dest points at the heap, and heap.0 carries the lock (shared content).
         assert!(pts.points_to(dest).contains(&heap));

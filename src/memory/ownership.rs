@@ -2,9 +2,7 @@ extern crate rustc_hir;
 extern crate rustc_middle;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
-
-use rustc_middle::ty::{GenericArg, List};
+use rustc_middle::ty::{GenericArg, List, Ty, TyCtxt, TyKind};
 
 pub fn is_arc_or_rc_clone<'tcx>(
     def_id: DefId,
@@ -26,12 +24,36 @@ pub fn is_arc_or_rc_clone<'tcx>(
 
 #[inline]
 pub fn is_arc(arg_ty_name: &str) -> bool {
-    arg_ty_name.starts_with("std::sync::Arc<")
+    arg_ty_name.starts_with("std::sync::Arc<") || arg_ty_name.starts_with("alloc::sync::Arc<")
 }
 
 #[inline]
 pub fn is_rc(arg_ty_name: &str) -> bool {
-    arg_ty_name.starts_with("std::rc::Rc<")
+    arg_ty_name.starts_with("std::rc::Rc<") || arg_ty_name.starts_with("alloc::rc::Rc<")
+}
+
+#[inline]
+pub fn is_box_ty_name(arg_ty_name: &str) -> bool {
+    arg_ty_name.starts_with("std::boxed::Box<") || arg_ty_name.starts_with("alloc::boxed::Box<")
+}
+
+/// Whether `ty` is `Arc`/`Rc`/`Box` or a reference (including `&T`).
+#[inline]
+pub fn is_smart_pointer_ty<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    if ty.is_ref() {
+        return true;
+    }
+    if let TyKind::Adt(adt, _) = ty.kind() {
+        let path = tcx.def_path_str(adt.did());
+        return path.starts_with("std::sync::Arc")
+            || path.starts_with("alloc::sync::Arc")
+            || path.starts_with("std::rc::Rc")
+            || path.starts_with("alloc::rc::Rc")
+            || path.starts_with("std::boxed::Box")
+            || path.starts_with("alloc::boxed::Box");
+    }
+    let name = format!("{:?}", ty);
+    is_arc(&name) || is_rc(&name) || is_box_ty_name(&name)
 }
 
 /// Pure-string test: a `Box`/`Arc`/`Rc` inherent `::new`. Excludes lock
