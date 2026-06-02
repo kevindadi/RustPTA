@@ -96,7 +96,10 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
     /// Human-readable dump of the solved points-to relation (for differential
     /// comparison against the legacy engine). Call after [`Self::build`].
     pub fn format_report(&self) -> String {
-        self.pta.format_report()
+        match &self.result {
+            Some(r) => self.pta.format_report(r),
+            None => String::from("=== PTA Points-To Report (unsolved) ===\n"),
+        }
     }
 
     /// May `pointer` point to `pointee`?

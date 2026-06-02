@@ -44,7 +44,8 @@ mod tests {
         let mut cs = ConstraintSet::default();
         cs.add(Constraint::AddressOf { dst: p, obj: a });
         cs.add(Constraint::AddressOf { dst: q, obj: a });
-        let pts = Solver::new(3).solve(&cs);
+        let mut arena = crate::memory::pta::loc::LocArena::default();
+        let pts = Solver::new(3).solve(&cs, &mut arena);
         let r = PointsToResult::new(pts);
         assert!(r.may_alias(p, q));
     }
@@ -55,7 +56,8 @@ mod tests {
         let mut cs = ConstraintSet::default();
         cs.add(Constraint::AddressOf { dst: p, obj: a });
         cs.add(Constraint::AddressOf { dst: q, obj: b });
-        let pts = Solver::new(4).solve(&cs);
+        let mut arena = crate::memory::pta::loc::LocArena::default();
+        let pts = Solver::new(4).solve(&cs, &mut arena);
         let r = PointsToResult::new(pts);
         assert!(!r.may_alias(p, q));
     }

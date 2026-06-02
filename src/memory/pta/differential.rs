@@ -64,7 +64,8 @@ mod tests {
     use super::*;
 
     fn solve(constraints: &ConstraintSet, loc_count: usize) -> PointsToResult {
-        PointsToResult::new(Solver::new(loc_count).solve(constraints))
+        let mut arena = crate::memory::pta::loc::LocArena::default();
+        PointsToResult::new(Solver::new(loc_count).solve(constraints, &mut arena))
     }
 
     #[test]
@@ -204,7 +205,8 @@ mod tests {
         cs.add(Constraint::AddressOf { dst: a, obj });
         cs.add(Constraint::Copy { dst: b, src: a });
         cs.add(Constraint::Copy { dst: c, src: b });
-        let pts = Solver::new(4).solve(&cs);
+        let mut arena = crate::memory::pta::loc::LocArena::default();
+        let pts = Solver::new(4).solve(&cs, &mut arena);
         assert!(pts.points_to(c).contains(&obj));
     }
 
@@ -230,11 +232,19 @@ mod tests {
         let dest1 = arena.var_ctx(Context::empty(), 9, 5, empty);
         let dest2 = arena.var_ctx(Context::empty(), 9, 6, empty);
         let ha = arena.heap(
-            super::super::loc::AllocSite { func: 9, bb: 0, idx: 1 },
+            super::super::loc::AllocSite {
+                func: 9,
+                bb: 0,
+                idx: 1,
+            },
             empty,
         );
         let hb = arena.heap(
-            super::super::loc::AllocSite { func: 9, bb: 0, idx: 2 },
+            super::super::loc::AllocSite {
+                func: 9,
+                bb: 0,
+                idx: 2,
+            },
             empty,
         );
 
@@ -245,16 +255,34 @@ mod tests {
         let r2 = arena.var_ctx(ctx2, 0, 0, empty);
 
         let mut cs = ConstraintSet::default();
-        cs.add(Constraint::AddressOf { dst: arg_a, obj: ha });
-        cs.add(Constraint::AddressOf { dst: arg_b, obj: hb });
+        cs.add(Constraint::AddressOf {
+            dst: arg_a,
+            obj: ha,
+        });
+        cs.add(Constraint::AddressOf {
+            dst: arg_b,
+            obj: hb,
+        });
         // Site 1 binding + callee body `return p`.
-        cs.add(Constraint::Copy { dst: p1, src: arg_a });
+        cs.add(Constraint::Copy {
+            dst: p1,
+            src: arg_a,
+        });
         cs.add(Constraint::Copy { dst: r1, src: p1 });
-        cs.add(Constraint::Copy { dst: dest1, src: r1 });
+        cs.add(Constraint::Copy {
+            dst: dest1,
+            src: r1,
+        });
         // Site 2 binding + callee body.
-        cs.add(Constraint::Copy { dst: p2, src: arg_b });
+        cs.add(Constraint::Copy {
+            dst: p2,
+            src: arg_b,
+        });
         cs.add(Constraint::Copy { dst: r2, src: p2 });
-        cs.add(Constraint::Copy { dst: dest2, src: r2 });
+        cs.add(Constraint::Copy {
+            dst: dest2,
+            src: r2,
+        });
 
         let result = solve(&cs, arena.loc_count());
         let s1 = result.points_to(dest1);

@@ -178,8 +178,8 @@ impl<'tcx> PointerAnalysis<'tcx> {
     }
 
     /// Solve the accumulated constraints and return a query facade.
-    pub fn solve(&self) -> PointsToResult {
-        let pts = Solver::new(self.arena.loc_count()).solve(&self.constraints);
+    pub fn solve(&mut self) -> PointsToResult {
+        let pts = Solver::new(self.arena.loc_count()).solve(&self.constraints, &mut self.arena);
         PointsToResult::new(pts)
     }
 
@@ -286,8 +286,7 @@ impl<'tcx> PointerAnalysis<'tcx> {
 
     /// Render the solved points-to relation as a deterministic, human-readable
     /// report. Used for differential comparison against the legacy engine.
-    pub fn format_report(&self) -> String {
-        let result = self.solve();
+    pub fn format_report(&self, result: &PointsToResult) -> String {
         let mut entries: Vec<(LocId, Vec<LocId>)> = result
             .raw()
             .raw()
