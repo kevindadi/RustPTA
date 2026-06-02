@@ -13,7 +13,7 @@ extern crate rustc_middle;
 use std::collections::VecDeque;
 
 use rustc_data_structures::fx::FxHashSet;
-use rustc_middle::ty::{Instance, TyCtxt, TypingEnv};
+use rustc_middle::ty::{Instance, InstanceKind, TyCtxt, TypingEnv};
 use smallvec::SmallVec;
 
 use super::builder::{build_body, PendingCall};
@@ -73,7 +73,9 @@ impl<'tcx> PointerAnalysis<'tcx> {
             if !self.built.insert((inst, ctx.clone())) {
                 continue;
             }
-            if !self.tcx.is_mir_available(inst.def_id()) {
+            // Only user `Item` instances have safely-materializable MIR;
+            // intrinsics / shims / virtual dispatch would ICE in `instance_mir`.
+            if !Self::is_user_item(self.tcx, inst) {
                 continue;
             }
             let body = self.tcx.instance_mir(inst.def);
@@ -111,7 +113,7 @@ impl<'tcx> PointerAnalysis<'tcx> {
                 .ok()
                 .flatten();
             if let Some(callee) = resolved {
-                if self.tcx.is_mir_available(callee.def_id()) {
+                if Self::is_user_item(self.tcx, callee) {
                     let body = self.tcx.instance_mir(callee.def);
                     if body.source.promoted.is_none() {
                         let site = CallSite {
@@ -128,8 +130,17 @@ impl<'tcx> PointerAnalysis<'tcx> {
                 }
             }
         }
-        // Indirect, unresolved, or no MIR available: conservative model.
+        // Indirect, unresolved, intrinsic/shim, or no MIR: conservative model.
         self.apply_unknown(pc);
+    }
+
+    /// Whether `inst` is a user `Item` with available MIR that can be safely
+    /// materialized by `instance_mir`. Intrinsics, compiler shims (drop/clone
+    /// glue, fn-ptr/closure shims), and virtual dispatch are excluded — they
+    /// either ICE in `instance_mir` or carry no user pointer flow — and are
+    /// handled by the conservative call model instead.
+    fn is_user_item(tcx: TyCtxt<'tcx>, inst: Instance<'tcx>) -> bool {
+        matches!(inst.def, InstanceKind::Item(_)) && tcx.is_mir_available(inst.def_id())
     }
 
     /// Emit interprocedural binding constraints between a call site and an
