@@ -165,7 +165,9 @@ enum DefSource<'tcx> {
     /// `dest = move/copy src` — stores the full source place (local + projection).
     Forward {
         local: Local,
-        projection: Vec<rustc_middle::mir::ProjectionElem<rustc_middle::mir::Local, rustc_middle::ty::Ty<'tcx>>>,
+        projection: Vec<
+            rustc_middle::mir::ProjectionElem<rustc_middle::mir::Local, rustc_middle::ty::Ty<'tcx>>,
+        >,
     },
     /// `dest = &borrow(place)` — records the base local and field of the borrowed place.
     /// Used to recover field info from expressions like `_4 = &((*_1).0: Mutex<bool>)`.
@@ -175,13 +177,29 @@ enum DefSource<'tcx> {
 impl<'tcx> PartialEq for DefSource<'tcx> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (DefSource::Forward { local: la, .. }, DefSource::Forward { local: lb, .. }) => la == lb,
-            (DefSource::LockAcquire { local: la, field: fa }, DefSource::LockAcquire { local: lb, field: fb }) => {
-                la == lb && fa == fb
+            (DefSource::Forward { local: la, .. }, DefSource::Forward { local: lb, .. }) => {
+                la == lb
             }
-            (DefSource::Borrow { base: ba, field: fa }, DefSource::Borrow { base: bb, field: fb }) => {
-                ba == bb && fa == fb
-            }
+            (
+                DefSource::LockAcquire {
+                    local: la,
+                    field: fa,
+                },
+                DefSource::LockAcquire {
+                    local: lb,
+                    field: fb,
+                },
+            ) => la == lb && fa == fb,
+            (
+                DefSource::Borrow {
+                    base: ba,
+                    field: fa,
+                },
+                DefSource::Borrow {
+                    base: bb,
+                    field: fb,
+                },
+            ) => ba == bb && fa == fb,
             _ => false,
         }
     }
@@ -293,9 +311,9 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
         self.resolve_lock_objects();
     }
 
-    /// For every collected guard, walk backward through moves and
-    /// `Result`/`Option` extractors to the acquiring `lock()` call and record
-    /// the receiver (the lock object). Guards whose receiver cannot be
+    /// For every collected guard, walk backward through moves, smart-pointer
+    /// derefs, and `Result`/`Option` extractors to the acquiring `lock()` call
+    /// and record the receiver (the lock object). Guards whose receiver cannot be
     /// determined are simply left out — the consumer falls back to guard
     /// aliasing for those, preserving the previous (sound) behavior.
     fn resolve_lock_objects(&mut self) {
@@ -333,10 +351,7 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
                                 None
                             }
                         });
-                        def_source.insert(
-                            place.local,
-                            DefSource::Borrow { base, field },
-                        );
+                        def_source.insert(place.local, DefSource::Borrow { base, field });
                     }
                 }
             }
@@ -352,16 +367,17 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
                     if !destination.projection.is_empty() {
                         continue;
                     }
-                    let Some((def_id, _)) = func.const_fn_def() else {
+                    let Some((def_id, substs)) = func.const_fn_def() else {
                         continue;
                     };
                     let arg0_place = args.first().and_then(|a| {
                         // Try to get the place with projection from node
                         match &a.node {
-                            rustc_middle::mir::Operand::Move(p) | rustc_middle::mir::Operand::Copy(p) => {
+                            rustc_middle::mir::Operand::Move(p)
+                            | rustc_middle::mir::Operand::Copy(p) => {
                                 Some((p.local, p.projection.to_vec()))
                             }
-                            _ => None
+                            _ => None,
                         }
                     });
                     if let Some((local, projection)) = arg0_place {
@@ -392,7 +408,12 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
                                     field: receiver_field,
                                 },
                             );
-                        } else if ownership::is_wrapper_extract(def_id, self.tcx) {
+                        } else if ownership::is_wrapper_extract(def_id, self.tcx)
+                            || ownership::is_arc_rc_deref(def_id, substs, self.tcx)
+                        {
+                            // `Result::unwrap()` and `Arc/Rc::deref()` do not change
+                            // which lock object a guard protects; they only re-express
+                            // the receiver through a temporary local.
                             def_source.insert(
                                 destination.local,
                                 DefSource::Forward {
@@ -430,9 +451,14 @@ impl<'a, 'b, 'tcx> BlockingCollector<'a, 'b, 'tcx> {
     /// Follow `Forward` edges until a `LockAcquire` or `Borrow`, returning its DefSource.
     /// Combines projections when following Forward chains to preserve field access info.
     /// Bounded by the number of locals to avoid cycles.
-    fn trace_receiver<'s>(def_source: &'s FxHashMap<Local, DefSource<'tcx>>, start: Local) -> Option<DefSource<'tcx>> {
+    fn trace_receiver<'s>(
+        def_source: &'s FxHashMap<Local, DefSource<'tcx>>,
+        start: Local,
+    ) -> Option<DefSource<'tcx>> {
         let mut current = start;
-        let mut accumulated_projection: Vec<rustc_middle::mir::ProjectionElem<rustc_middle::mir::Local, rustc_middle::ty::Ty<'tcx>>> = Vec::new();
+        let mut accumulated_projection: Vec<
+            rustc_middle::mir::ProjectionElem<rustc_middle::mir::Local, rustc_middle::ty::Ty<'tcx>>,
+        > = Vec::new();
         for _ in 0..def_source.len().saturating_add(1) {
             match def_source.get(&current)?.clone() {
                 DefSource::LockAcquire { local, field } => {
