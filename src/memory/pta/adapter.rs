@@ -141,9 +141,52 @@ impl<'a, 'tcx> PtaAliasAnalysis<'a, 'tcx> {
     /// the type-parameter heuristic: two parameters of the same type and index
     /// in different functions may alias.
     pub fn alias(&mut self, aid1: AliasId, aid2: AliasId) -> ApproximateAliasKind {
+        // Same instance and local - check array_index and field for disambiguation
         if aid1.instance_id == aid2.instance_id && aid1.local == aid2.local {
-            return ApproximateAliasKind::Probably;
+            // If both have field values, they must match for aliasing
+            match (aid1.field, aid2.field) {
+                (Some(f1), Some(f2)) => {
+                    return if f1 == f2 {
+                        ApproximateAliasKind::Probably
+                    } else {
+                        ApproximateAliasKind::Unlikely
+                    };
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    // One has field, one doesn't - conservative: they could be same
+                    return ApproximateAliasKind::Possibly;
+                }
+                (None, None) => {}
+            }
+            // If both have array indices, they must match
+            if let (Some(i), Some(j)) = (aid1.array_index, aid2.array_index) {
+                return if i == j {
+                    ApproximateAliasKind::Probably
+                } else {
+                    ApproximateAliasKind::Unlikely
+                };
+            }
+            // If neither has array index, they definitely alias
+            if aid1.array_index.is_none() && aid2.array_index.is_none() {
+                return ApproximateAliasKind::Probably;
+            }
+            // One has array_index, one doesn't - conservative: they could be same
+            return ApproximateAliasKind::Possibly;
         }
+
+        // Different instance but same local (e.g., guard aliases pointing to the
+        // same struct field across functions like mu_rw1/rw1_rw2/rw2_mu). When
+        // both have field info, different fields cannot alias.
+        if aid1.local == aid2.local {
+            match (aid1.field, aid2.field) {
+                (Some(f1), Some(f2)) if f1 != f2 => {
+                    return ApproximateAliasKind::Unlikely;
+                }
+                _ => {}
+            }
+        }
+
+        // Different instance or local - use points-to analysis
         let ia = self.instance_of(aid1);
         let ib = self.instance_of(aid2);
         match (ia, ib, &self.result) {
