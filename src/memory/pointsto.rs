@@ -777,6 +777,9 @@ pub struct AliasId {
     pub local: Local,
     /// Constant index distinguishes `arr[0]` vs `arr[1]`; dynamic index or non-array ⇒ `None` (merged).
     pub array_index: Option<u64>,
+    /// For field accesses (like self.mu), this stores the field index to distinguish
+    /// different fields of the same struct. None means no field projection.
+    pub field: Option<u32>,
 }
 
 impl AliasId {
@@ -785,10 +788,12 @@ impl AliasId {
             instance_id,
             local,
             array_index: None,
+            field: None,
         }
     }
 
-    /// Build from `Place`, extracting constant indices to distinguish `arr[0]` vs `arr[1]`.
+    /// Build from `Place`, extracting constant indices to distinguish `arr[0]` vs `arr[1]`
+    /// and field index to distinguish `self.mu` vs `self.rw1`.
     pub fn from_place<'tcx>(instance_id: InstanceId, place: PlaceRef<'tcx>) -> Self {
         let array_index = if place
             .projection
@@ -805,10 +810,19 @@ impl AliasId {
                 }
             })
         };
+        // Extract the first Field projection to distinguish different fields
+        let field = place.projection.iter().find_map(|elem| {
+            if let ProjectionElem::Field(f, _) = elem {
+                Some(f.as_u32())
+            } else {
+                None
+            }
+        });
         Self {
             instance_id,
             local: place.local,
             array_index,
+            field,
         }
     }
 }
@@ -819,6 +833,7 @@ impl std::convert::From<LockGuardId> for AliasId {
             instance_id: lockguard_id.instance_id,
             local: lockguard_id.local,
             array_index: None,
+            field: None,
         }
     }
 }
@@ -829,6 +844,7 @@ impl std::convert::From<CondVarId> for AliasId {
             instance_id: condvar_id.instance_id,
             local: condvar_id.local,
             array_index: None,
+            field: None,
         }
     }
 }
@@ -839,6 +855,7 @@ impl std::convert::From<ChannelId> for AliasId {
             instance_id: channel_id.instance_id,
             local: channel_id.local,
             array_index: None,
+            field: None,
         }
     }
 }
