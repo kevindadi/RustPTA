@@ -67,6 +67,11 @@ fn in_cargo_pta() {
 
     let flags: Vec<_> = args.by_ref().take_while(|arg| arg != "--").collect();
     let flags = flags.join(" ");
+    let contains_target_crate = flags.contains("-p");
+    if !contains_target_crate {
+        eprintln!("Target crate is required");
+        return;
+    }
     cmd.env("PN_FLAGS", flags);
 
     let exit_status = cmd

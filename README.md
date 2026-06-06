@@ -46,7 +46,7 @@ cargo install --path .
 
 This installs the main binaries declared by the crate:
 
-- `pn` — rustc-driver entry point for direct analysis;
+- `pn` — rustc-driver entry point for direct analysis; need export LD_LIBRARY_PATH=$(rustc --print sysroot)/lib:$LD_LIBRARY_PATH
 - `cargo-pn` — Cargo wrapper used as `cargo pn`;
 - `pn-web` — local web viewer for generated artifacts.
 
@@ -85,27 +85,29 @@ cargo run --bin pn -- \
 
 ## Common flags
 
-| Flag | Meaning |
-| --- | --- |
-| `-m, --mode <deadlock\|datarace\|atomic\|all\|pointsto>` | Select the analysis mode. `atomic` is accepted only when the `atomic-violation` feature is enabled. |
-| `-p, --pn-crate <name>` | Set the target crate/output name for Cargo-based analysis. |
-| `--pn-analysis-dir <path>` | Set the output root for analysis artifacts. |
-| `--config <file>` | Load configuration from a TOML file. Defaults to `pn.toml` when present. |
-| `--viz-callgraph` | Emit `callgraph.dot`. |
-| `--viz-petrinet` | Emit raw, reduced-stage, and final Petri-net DOT files. |
-| `--viz-stategraph` | Emit `stategraph.dot`. |
-| `--viz-pointsto` | Emit `points_to_report.txt`. |
-| `--viz-mir` | Emit MIR DOT files under `mir/`. |
-| `--viz-cir` | Emit `cir.yaml`. |
-| `--stop-after <mir\|callgraph\|pointsto\|petrinet\|stategraph>` | Stop after a pipeline stage for debugging. |
-| `--state-limit <N>` | Cap state exploration. `0` means unlimited. |
-| `--full` | Translate all functions instead of using entry-reachable filtering. |
-| `--crate-whitelist <a,b>` | Analyze only the listed crate names. |
-| `--crate-blacklist <a,b>` | Exclude the listed crate names. |
-| `--no-reduce` | Disable Petri-net reduction. |
-| `--por` | Enable partial-order reduction. |
-| `--no-concurrent-roots` | Disable extra translation of functions that use configured concurrency APIs. |
-| `--alias-unknown-policy <conservative\|optimistic>` | Choose how unknown alias results affect Petri-net edges. |
+
+| Flag                                                        | Meaning                                                                                             |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `-m, --mode <deadlock|datarace|atomic|all|pointsto>`        | Select the analysis mode. `atomic` is accepted only when the `atomic-violation` feature is enabled. |
+| `-p, --pn-crate <name>`                                     | Set the target crate/output name for Cargo-based analysis.                                          |
+| `--pn-analysis-dir <path>`                                  | Set the output root for analysis artifacts.                                                         |
+| `--config <file>`                                           | Load configuration from a TOML file. Defaults to `pn.toml` when present.                            |
+| `--viz-callgraph`                                           | Emit `callgraph.dot`.                                                                               |
+| `--viz-petrinet`                                            | Emit raw, reduced-stage, and final Petri-net DOT files.                                             |
+| `--viz-stategraph`                                          | Emit `stategraph.dot`.                                                                              |
+| `--viz-pointsto`                                            | Emit `points_to_report.txt`.                                                                        |
+| `--viz-mir`                                                 | Emit MIR DOT files under `mir/`.                                                                    |
+| `--viz-cir`                                                 | Emit `cir.yaml`.                                                                                    |
+| `--stop-after <mir|callgraph|pointsto|petrinet|stategraph>` | Stop after a pipeline stage for debugging.                                                          |
+| `--state-limit <N>`                                         | Cap state exploration. `0` means unlimited.                                                         |
+| `--full`                                                    | Translate all functions instead of using entry-reachable filtering.                                 |
+| `--crate-whitelist <a,b>`                                   | Analyze only the listed crate names.                                                                |
+| `--crate-blacklist <a,b>`                                   | Exclude the listed crate names.                                                                     |
+| `--no-reduce`                                               | Disable Petri-net reduction.                                                                        |
+| `--por`                                                     | Enable partial-order reduction.                                                                     |
+| `--no-concurrent-roots`                                     | Disable extra translation of functions that use configured concurrency APIs.                        |
+| `--alias-unknown-policy <conservative|optimistic>`          | Choose how unknown alias results affect Petri-net edges.                                            |
+
 
 ## Output files
 
@@ -117,51 +119,24 @@ Artifacts are written under:
 
 Typical files include:
 
-| File | Description |
-| --- | --- |
-| `summary.json` | Run metadata, graph metrics, detector mode, and artifact names. |
-| `callgraph.dot` | Call graph visualization. |
-| `petrinet_raw.dot` | Petri net before reduction. |
-| `petrinet.dot` | Final Petri net used for state exploration. |
-| `petrinet_reduce_1_loop.dot` | Petri net after loop removal. |
-| `petrinet_reduce_2_sequence.dot` | Petri net after sequence merging. |
-| `petrinet_reduce_3_intermediate.dot` | Petri net after intermediate-place elimination. |
-| `stategraph.dot` | State graph built from the final Petri net. |
-| `deadlock_report.txt` / `deadlock_report.txt.json` | Deadlock detector report. |
-| `datarace_report.txt` / `datarace_report.txt.json` | Data-race detector report. |
-| `atomicity_report.txt` / `atomicity_report.txt.json` | Atomicity detector report. |
-| `points_to_report.txt` | Points-to report. |
-| `mir/*.dot` | MIR graph output when `--viz-mir` is enabled. |
-| `cir.yaml` | Concurrency IR output when `--viz-cir` is enabled. |
 
-## Web viewer
+| File                                                 | Description                                                     |
+| ---------------------------------------------------- | --------------------------------------------------------------- |
+| `summary.json`                                       | Run metadata, graph metrics, detector mode, and artifact names. |
+| `callgraph.dot`                                      | Call graph visualization.                                       |
+| `petrinet_raw.dot`                                   | Petri net before reduction.                                     |
+| `petrinet.dot`                                       | Final Petri net used for state exploration.                     |
+| `petrinet_reduce_1_loop.dot`                         | Petri net after loop removal.                                   |
+| `petrinet_reduce_2_sequence.dot`                     | Petri net after sequence merging.                               |
+| `petrinet_reduce_3_intermediate.dot`                 | Petri net after intermediate-place elimination.                 |
+| `stategraph.dot`                                     | State graph built from the final Petri net.                     |
+| `deadlock_report.txt` / `deadlock_report.txt.json`   | Deadlock detector report.                                       |
+| `datarace_report.txt` / `datarace_report.txt.json`   | Data-race detector report.                                      |
+| `atomicity_report.txt` / `atomicity_report.txt.json` | Atomicity detector report.                                      |
+| `points_to_report.txt`                               | Points-to report.                                               |
+| `mir/*.dot`                                          | MIR graph output when `--viz-mir` is enabled.                   |
+| `cir.yaml`                                           | Concurrency IR output when `--viz-cir` is enabled.              |
 
-The `pn-web` binary serves a local UI for browsing generated runs, rendering DOT graphs, viewing summaries/reports, and generating benchmark cases.
-
-```bash
-cargo run --bin pn-web -- --runs-root ./tmp --cases-root ./benchmarks --port 7878
-```
-
-Then open `http://127.0.0.1:7878`.
-
-The viewer can display:
-
-- call graph;
-- raw and final Petri nets;
-- state graph;
-- detector reports;
-- `summary.json` metrics;
-- the three Petri-net reduction stages at `/reduction`.
-
-When the UI generates a new case, it clears the selected output root before running analysis, so use a disposable output directory such as `./tmp`.
-
-## Benchmarks
-
-Benchmark helpers live under `benchmarks/`.
-
-```bash
-./benchmarks/run_benchmarks.sh
-```
 
 ## Configuration
 
@@ -179,21 +154,23 @@ Supported configuration areas include:
 
 ## Project structure
 
-| Path | Responsibility |
-| --- | --- |
-| `src/bin/pn.rs` | Direct `pn` binary entry point. |
-| `src/bin/cargo-pn.rs` | Cargo subcommand wrapper for `cargo pn`. |
-| `src/bin/pn-web.rs` | Local web viewer and artifact API. |
-| `src/callback.rs` | rustc callback pipeline, artifact writing, and detector dispatch. |
-| `src/options.rs` | CLI parsing and runtime option construction. |
-| `src/config.rs` | TOML configuration model and defaults. |
-| `src/translate/` | Call graph construction and MIR-to-Petri-net translation. |
-| `src/net/` | Petri-net data structures, DOT output, incidence logic, and reductions. |
-| `src/analysis/` | State-space and reachability analysis. |
-| `src/detect/` | Deadlock, data-race, atomicity, and async bug detectors. |
-| `src/memory/` | Ownership, unsafe-memory, and points-to analysis support. See [docs/pointer-analysis.md](docs/pointer-analysis.md) for the points-to data-flow. |
-| `src/report/` | Text/JSON report structures. |
-| `src/util/` | MIR DOT export, memory watcher, and helper utilities. |
+
+| Path                  | Responsibility                                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/bin/pn.rs`       | Direct `pn` binary entry point.                                                                                                                 |
+| `src/bin/cargo-pn.rs` | Cargo subcommand wrapper for `cargo pn`.                                                                                                        |
+| `src/bin/pn-web.rs`   | Local web viewer and artifact API.                                                                                                              |
+| `src/callback.rs`     | rustc callback pipeline, artifact writing, and detector dispatch.                                                                               |
+| `src/options.rs`      | CLI parsing and runtime option construction.                                                                                                    |
+| `src/config.rs`       | TOML configuration model and defaults.                                                                                                          |
+| `src/translate/`      | Call graph construction and MIR-to-Petri-net translation.                                                                                       |
+| `src/net/`            | Petri-net data structures, DOT output, incidence logic, and reductions.                                                                         |
+| `src/analysis/`       | State-space and reachability analysis.                                                                                                          |
+| `src/detect/`         | Deadlock, data-race, atomicity, and async bug detectors.                                                                                        |
+| `src/memory/`         | Ownership, unsafe-memory, and points-to analysis support. See [docs/pointer-analysis.md](docs/pointer-analysis.md) for the points-to data-flow. |
+| `src/report/`         | Text/JSON report structures.                                                                                                                    |
+| `src/util/`           | MIR DOT export, memory watcher, and helper utilities.                                                                                           |
+
 
 ## Known limitations
 
