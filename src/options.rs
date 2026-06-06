@@ -71,7 +71,8 @@ fn make_options_parser() -> clap::Command {
             Arg::new("target_crate")
                 .short('p')
                 .long("pn-crate")
-                .help("Target crate for analysis (required for cargo; optional for single file)"),
+                .help("Target crate for analysis (required for cargo; optional for single file)")
+                .default_value("main"),
         )
         .arg(
             Arg::new("input_file")
@@ -508,6 +509,9 @@ mod tests {
             ..Options::default()
         };
 
-        assert_eq!(options.analysis_output_dir(), PathBuf::from("/tmp/pn-tests/dr_1"));
+        assert_eq!(
+            options.analysis_output_dir(),
+            PathBuf::from("/tmp/pn-tests/dr_1")
+        );
     }
 }

@@ -72,10 +72,7 @@ pub fn run() -> ExitCode {
             .iter()
             .any(|arg| arg.starts_with(print))
         {
-            // If a --print option is given on the command line we wont get called to analyze
-            // anything. We also don't want to the caller to know that LOCKBUD adds configuration
-            // parameters to the command line, lest the caller be cargo and it panics because
-            // the output from --print=cfg is not what it expects.
+            // If a --print option is given on the command line we wont get called to analyze anything.
         } else {
             let sysroot = "--sysroot";
             if !rustc_command_line_arguments
@@ -83,7 +80,6 @@ pub fn run() -> ExitCode {
                 .any(|arg| arg.starts_with(sysroot))
             {
                 // Tell compiler where to find the std library and so on.
-                // The compiler relies on the standard rustc driver to tell it, so we have to do likewise.
                 rustc_command_line_arguments.push(format!("{sysroot}={}", find_sysroot()));
             }
 
