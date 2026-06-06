@@ -13,3 +13,4 @@ bench
 tmp
 docs
 .claude
+.DS_Store
