@@ -1,6 +1,4 @@
 //! Petri net → CIR conversion (sync experiment crate).
-//!
-//! Target format: [kevindadi/cir](https://github.com/kevindadi/cir) JSON IR.
 
 #![feature(rustc_private)]
 

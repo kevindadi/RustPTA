@@ -6,12 +6,14 @@ Core `/src` stays unchanged; this crate consumes the public `Net` type and emits
 
 ## Status (framework)
 
-| Module | Status |
-| --- | --- |
-| `ast/` | CIR JSON data model (aligned with kevindadi/cir) |
-| `convert/` | `PnToCirConverter` — resource + function skeleton extraction |
-| `export/` | Write `cir.json` |
-| `validate/` | Optional hook for `ceir` CLI (planned) |
+
+| Module      | Status                                                       |
+| ----------- | ------------------------------------------------------------ |
+| `ast/`      | CIR JSON data model                                          |
+| `convert/`  | `PnToCirConverter` — resource + function skeleton extraction |
+| `export/`   | Write `cir.json`                                             |
+| `validate/` | Optional hook for `ceir` CLI (planned)                       |
+
 
 ## Usage (library)
 
@@ -43,3 +45,4 @@ cd cir && cargo build --release
 1. **M1 (current)**: AST + resource extraction + per-function stub statements from `TransitionType`.
 2. **M2**: CFG-aware statement ordering from BB places / transition sequence.
 3. **M3**: Wire into `pn-cir` driver callback (`--viz-cir` → `cir.json`) without editing core pipeline logic.
+

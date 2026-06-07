@@ -6,7 +6,7 @@ use crate::config::{AliasUnknownPolicy, PnConfig, ReportLevel};
 use clap::{Arg, ArgGroup, Command};
 use rustc_session::EarlyDiagCtxt;
 
-const DEFAULT_ANALYSIS_DIR: &str = "/home/kevin/RustPTA/tmp";
+const DEFAULT_ANALYSIS_DIR: &str = "./tmp";
 #[derive(Debug, Clone)]
 pub enum CrateNameList {
     White(Vec<String>),
@@ -71,7 +71,8 @@ fn make_options_parser() -> clap::Command {
             Arg::new("target_crate")
                 .short('p')
                 .long("pn-crate")
-                .help("Target crate for analysis (required for cargo; optional for single file)"),
+                .help("Target crate for analysis (required for cargo; optional for single file)")
+                .default_value("main"),
         )
         .arg(
             Arg::new("input_file")
@@ -504,10 +505,13 @@ mod tests {
     fn analysis_output_dir_uses_target_crate_name() {
         let options = Options {
             crate_name: "dr_1".to_string(),
-            output: Some(PathBuf::from("/tmp/pn-tests")),
+            output: Some(PathBuf::from("./tmp/pn-tests")),
             ..Options::default()
         };
 
-        assert_eq!(options.analysis_output_dir(), PathBuf::from("/tmp/pn-tests/dr_1"));
+        assert_eq!(
+            options.analysis_output_dir(),
+            PathBuf::from("./tmp/pn-tests/dr_1")
+        );
     }
 }

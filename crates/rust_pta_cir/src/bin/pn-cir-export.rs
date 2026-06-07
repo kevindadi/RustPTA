@@ -7,8 +7,8 @@
 use std::env;
 use std::process::ExitCode;
 
-use rust_petri_net_analysis::net::structure::{Place, PlaceType, Transition, TransitionType};
 use rust_petri_net_analysis::net::Net;
+use rust_petri_net_analysis::net::structure::{Place, PlaceType, Transition, TransitionType};
 use rust_pta_cir::{PnToCirOptions, convert_net_to_cir, write_cir_json_pretty};
 
 fn main() -> ExitCode {
@@ -17,7 +17,7 @@ fn main() -> ExitCode {
         eprintln!("Usage: pn-cir-export <output.json> [program_name]");
         eprintln!();
         eprintln!("Framework stub: emits a demo CIR JSON converted from a built-in sample net.");
-        eprintln!("Validate: ceir <output.json>  (https://github.com/kevindadi/cir)");
+        eprintln!("Validate: ceir <output.json>");
         return ExitCode::from(if args.len() < 2 { 2 } else { 0 });
     }
 
@@ -65,13 +65,7 @@ fn demo_net() -> Net {
         PlaceType::FunctionStart,
         String::new(),
     ));
-    let mtx = net.add_place(Place::new(
-        "mtx",
-        1,
-        1,
-        PlaceType::Resources,
-        String::new(),
-    ));
+    let mtx = net.add_place(Place::new("mtx", 1, 1, PlaceType::Resources, String::new()));
 
     let spawn = net.add_transition(Transition::new_with_transition_type(
         "main_spawn",
