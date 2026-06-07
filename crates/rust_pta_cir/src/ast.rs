@@ -1,4 +1,4 @@
-//! CIR AST — aligned with [kevindadi/cir](https://github.com/kevindadi/cir) JSON schema.
+//! CIR AST
 
 use std::collections::BTreeMap;
 
@@ -95,7 +95,7 @@ pub struct Statement {
     pub transfer: Transfer,
 }
 
-/// CIR operation — serializes to the kevindadi/cir wire format.
+/// CIR operation
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     ResOp {

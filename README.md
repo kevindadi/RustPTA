@@ -66,7 +66,7 @@ Atomicity detection is behind the `atomic-violation` feature.
 
 ```bash
 cargo run --features atomic-violation --bin pn -- \
-  -f path/to/file.rs \
+  -p your_crate \
   -m atomic \
   --viz-petrinet \
   --viz-stategraph \
@@ -77,7 +77,7 @@ cargo run --features atomic-violation --bin pn -- \
 
 ```bash
 cargo run --bin pn -- \
-  -f path/to/file.rs \
+  -p your_crate \
   -m pointsto \
   --pn-analysis-dir ./tmp \
   -- path/to/file.rs
