@@ -10,11 +10,6 @@ Cargo.lock
 toys
 tools
 bench/deadlock/
-bench/atomic-violation/atomic-violation
-bench/atomic-violation/fragile
-bench/atomic-violation/ordering_misuse
-bench/atomic-violation/RUSTSEC-2022-0006
-bench/atomic-violation/RUSTSEC-2022-0029
 tmp
 docs
 .claude
