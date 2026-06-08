@@ -49,66 +49,271 @@ impl<'a> DataRaceDetector<'a> {
         state_marks: Vec<(usize, u8)>,
         race_infos: &mut Vec<RaceCondition>,
     ) {
-        for (i, access_a) in transitions.iter().enumerate() {
-            for access_b in transitions.iter().skip(i + 1) {
-                if access_a.location_id == access_b.location_id
-                    && (access_a.is_write || access_b.is_write)
-                {
-                    let operations = vec![
-                        RaceOperation {
-                            operation_type: access_a.op_type.to_string(),
-                            variable: access_a.data_type.clone(),
-                            location: access_a.span.clone(),
-                            basic_block: Some(access_a.basic_block),
-                        },
-                        RaceOperation {
-                            operation_type: access_b.op_type.to_string(),
-                            variable: access_b.data_type.clone(),
-                            location: access_b.span.clone(),
-                            basic_block: Some(access_b.basic_block),
-                        },
-                    ];
+        for (location_id, accesses) in Self::group_accesses_by_location(transitions) {
+            let access_sites = Self::summarize_access_sites(accesses);
+            if access_sites.len() < 2 {
+                continue;
+            }
 
-                    race_infos.push(RaceCondition {
-                        operations,
-                        variable_info: format!(
-                            "Potential data race on variable {}",
-                            access_a.location_id
-                        ),
-                        state: state_marks.clone(),
-                    });
+            let Some((left, right)) = Self::select_best_race_pair(&access_sites) else {
+                continue;
+            };
+
+            let mut operations = vec![
+                Self::build_race_operation(&left),
+                Self::build_race_operation(&right),
+            ];
+            operations.sort_by_key(Self::race_operation_signature);
+
+            race_infos.push(RaceCondition {
+                operations,
+                variable_info: format!("Potential data race on variable {}", location_id),
+                state: state_marks.clone(),
+            });
+        }
+    }
+
+    fn build_race_operation(access: &StateAccess) -> RaceOperation {
+        RaceOperation {
+            operation_type: access.op_type.to_string(),
+            variable: access.data_type.clone(),
+            location: access.span.clone(),
+            basic_block: Some(access.basic_block),
+        }
+    }
+
+    fn group_accesses_by_location<'b>(
+        transitions: &'b [StateAccess],
+    ) -> FxHashMap<usize, Vec<&'b StateAccess>> {
+        let mut grouped: FxHashMap<usize, Vec<&'b StateAccess>> = FxHashMap::default();
+
+        for access in transitions {
+            grouped.entry(access.location_id).or_default().push(access);
+        }
+
+        grouped
+    }
+
+    fn summarize_access_sites(accesses: Vec<&StateAccess>) -> Vec<AccessSiteSummary> {
+        let mut grouped: FxHashMap<AccessSiteKey, Vec<&StateAccess>> = FxHashMap::default();
+
+        for access in accesses {
+            grouped
+                .entry(AccessSiteKey::from_access(access))
+                .or_insert_with(Vec::new)
+                .push(access);
+        }
+
+        let mut summaries = grouped
+            .into_iter()
+            .map(|(site, site_accesses)| AccessSiteSummary {
+                sort_span: site_accesses
+                    .iter()
+                    .map(|access| access.span.clone())
+                    .min()
+                    .unwrap_or_default(),
+                read_representative: Self::select_site_representative(&site_accesses, false).cloned(),
+                write_representative: Self::select_site_representative(&site_accesses, true).cloned(),
+                site,
+            })
+            .collect::<Vec<_>>();
+
+        summaries.sort_by_key(|summary| {
+            (
+                summary.site.scope.clone(),
+                summary.site.basic_block,
+                summary.sort_span.clone(),
+            )
+        });
+        summaries
+    }
+
+    fn select_site_representative<'b>(
+        accesses: &[&'b StateAccess],
+        prefer_write: bool,
+    ) -> Option<&'b StateAccess> {
+        accesses
+            .iter()
+            .copied()
+            .filter(|access| access.is_write == prefer_write)
+            .max_by_key(|access| Self::state_access_signature(access))
+    }
+
+    fn select_best_race_pair(
+        access_sites: &[AccessSiteSummary],
+    ) -> Option<(StateAccess, StateAccess)> {
+        let mut best_pair = None;
+
+        for (index, left_site) in access_sites.iter().enumerate() {
+            for right_site in access_sites.iter().skip(index + 1) {
+                for (left, right) in Self::candidate_pairs(left_site, right_site) {
+                    let score = Self::pair_priority(left, right);
+                    match &best_pair {
+                        Some((best_score, _, _)) if *best_score >= score => {}
+                        _ => best_pair = Some((score, left.clone(), right.clone())),
+                    }
                 }
             }
+        }
+
+        best_pair.map(|(_, left, right)| (left, right))
+    }
+
+    fn candidate_pairs<'b>(
+        left_site: &'b AccessSiteSummary,
+        right_site: &'b AccessSiteSummary,
+    ) -> Vec<(&'b StateAccess, &'b StateAccess)> {
+        let mut candidates = Vec::new();
+
+        for left in [
+            left_site.read_representative.as_ref(),
+            left_site.write_representative.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for right in [
+                right_site.read_representative.as_ref(),
+                right_site.write_representative.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if left.is_write || right.is_write {
+                    candidates.push((left, right));
+                }
+            }
+        }
+
+        candidates
+    }
+
+    fn pair_priority(
+        left: &StateAccess,
+        right: &StateAccess,
+    ) -> PairPriority {
+        let mut signatures = [
+            Self::state_access_signature(left),
+            Self::state_access_signature(right),
+        ];
+        signatures.sort();
+
+        (
+            usize::from(left.is_write != right.is_write),
+            Self::state_access_specificity(left) + Self::state_access_specificity(right),
+            signatures[1].clone(),
+            signatures[0].clone(),
+        )
+    }
+
+    fn state_access_specificity(access: &StateAccess) -> usize {
+        Self::data_type_priority(&access.data_type) * 2 + usize::from(access.is_write)
+    }
+
+    fn data_type_priority(data_type: &str) -> usize {
+        if data_type.contains("Closure(") {
+            0
+        } else if data_type.contains("JoinHandle") {
+            1
+        } else if data_type.starts_with("*const ") || data_type.starts_with("*mut ") {
+            3
+        } else {
+            2
         }
     }
 
     fn merge_race_conditions(&self, conditions: Vec<RaceCondition>) -> Vec<RaceCondition> {
-        let mut merged = FxHashMap::default();
+        let mut merged: FxHashMap<String, RaceCondition> = FxHashMap::default();
 
         for condition in conditions {
-            let key = (
-                condition.variable_info.clone(),
-                condition.operations[0].basic_block.clone(),
-                condition.operations[0].location.clone(),
-            );
-
             merged
-                .entry(key)
-                .and_modify(|existing: &mut RaceCondition| {
-                    for op in condition.clone().operations {
-                        if !existing
-                            .operations
-                            .iter()
-                            .any(|existing_op| existing_op.operation_type == op.operation_type)
-                        {
-                            existing.operations.push(op);
-                        }
+                .entry(condition.variable_info.clone())
+                .and_modify(|existing| {
+                    if Self::race_condition_priority(&condition)
+                        > Self::race_condition_priority(existing)
+                    {
+                        *existing = condition.clone();
                     }
                 })
                 .or_insert(condition);
         }
 
-        merged.into_values().collect()
+        let mut deduped = merged.into_values().collect::<Vec<_>>();
+        deduped.sort_by_key(|condition| condition.variable_info.clone());
+        deduped
+    }
+
+    fn race_condition_priority(condition: &RaceCondition) -> RaceConditionPriority {
+        let mut operation_priorities = condition
+            .operations
+            .iter()
+            .map(Self::race_operation_priority)
+            .collect::<Vec<_>>();
+        operation_priorities.sort();
+
+        let total_specificity = operation_priorities
+            .iter()
+            .map(|priority| priority.0)
+            .sum::<usize>();
+        let mixed_access = usize::from(
+            condition
+                .operations
+                .iter()
+                .any(|operation| operation.operation_type == "read")
+                && condition
+                    .operations
+                    .iter()
+                    .any(|operation| operation.operation_type == "write"),
+        );
+
+        (
+            mixed_access,
+            total_specificity,
+            operation_priorities,
+            Self::race_condition_key(condition),
+        )
+    }
+
+    fn race_condition_key(condition: &RaceCondition) -> RaceConditionKey {
+        let mut operations = condition
+            .operations
+            .iter()
+            .map(Self::race_operation_signature)
+            .collect::<Vec<_>>();
+        operations.sort();
+
+        (condition.variable_info.clone(), operations)
+    }
+
+    fn race_operation_priority(operation: &RaceOperation) -> RaceOperationPriority {
+        (
+            Self::data_type_priority(&operation.variable),
+            operation.operation_type.clone(),
+            operation.variable.clone(),
+            operation.basic_block.unwrap_or_default(),
+            operation.location.clone(),
+        )
+    }
+
+    fn race_operation_signature(operation: &RaceOperation) -> RaceOperationSignature {
+        (
+            operation.operation_type.clone(),
+            operation.variable.clone(),
+            operation.basic_block.unwrap_or_default(),
+            operation.location.clone(),
+        )
+    }
+
+    fn state_access_signature(access: &StateAccess) -> StateAccessSignature {
+        (
+            usize::from(access.is_write),
+            Self::data_type_priority(&access.data_type),
+            access.op_type.to_string(),
+            access.data_type.clone(),
+            access.basic_block,
+            access.span.clone(),
+            access.transition_name.clone(),
+        )
     }
 
     fn collect_state_accesses(&self, state: NodeIndex) -> Vec<StateAccess> {
@@ -124,6 +329,7 @@ impl<'a> DataRaceDetector<'a> {
                         op_type: "read",
                         data_type: place_ty.clone(),
                         is_write: false,
+                        transition_name: edge.weight().transition.name.clone(),
                     });
                 }
                 TransitionType::UnsafeWrite(alias_id, span, basic_block, place_ty) => {
@@ -134,6 +340,7 @@ impl<'a> DataRaceDetector<'a> {
                         op_type: "write",
                         data_type: place_ty.clone(),
                         is_write: true,
+                        transition_name: edge.weight().transition.name.clone(),
                     });
                 }
                 _ => {}
@@ -157,6 +364,36 @@ impl<'a> DataRaceDetector<'a> {
     }
 }
 
+type RaceOperationSignature = (String, String, usize, String);
+type StateAccessSignature = (usize, usize, String, String, usize, String, String);
+type RaceConditionKey = (String, Vec<RaceOperationSignature>);
+type RaceOperationPriority = (usize, String, String, usize, String);
+type RaceConditionPriority = (usize, usize, Vec<RaceOperationPriority>, RaceConditionKey);
+type PairPriority = (usize, usize, StateAccessSignature, StateAccessSignature);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AccessSiteKey {
+    scope: String,
+    basic_block: usize,
+}
+
+impl AccessSiteKey {
+    fn from_access(access: &StateAccess) -> Self {
+        Self {
+            scope: transition_scope_key(&access.transition_name),
+            basic_block: access.basic_block,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AccessSiteSummary {
+    site: AccessSiteKey,
+    sort_span: String,
+    read_representative: Option<StateAccess>,
+    write_representative: Option<StateAccess>,
+}
+
 #[derive(Debug, Clone)]
 struct StateAccess {
     location_id: usize,
@@ -165,6 +402,18 @@ struct StateAccess {
     op_type: &'static str,
     data_type: String,
     is_write: bool,
+    transition_name: String,
+}
+
+fn transition_scope_key(name: &str) -> String {
+    let suffix_start = [name.rfind("_read_"), name.rfind("_write_")]
+        .into_iter()
+        .flatten()
+        .max();
+
+    suffix_start
+        .map(|index| name[..index].to_string())
+        .unwrap_or_else(|| name.to_string())
 }
 
 #[cfg(test)]
@@ -202,6 +451,37 @@ mod tests {
         net
     }
 
+    fn build_grouped_data_race_net() -> Net {
+        let mut net = Net::empty();
+        let shared = net.add_place(Place::new(
+            "shared",
+            1,
+            1,
+            PlaceType::BasicBlock,
+            "shared.rs:1:1".into(),
+        ));
+
+        let thread_a_read = net.add_transition(Transition::new_with_transition_type(
+            "thread_a_read__1_in:shared.rs:10:5",
+            TransitionType::UnsafeRead(0, "shared.rs:10:5".into(), 0, "SharedPtr".into()),
+        ));
+        let thread_a_write = net.add_transition(Transition::new_with_transition_type(
+            "thread_a_write__1_in:shared.rs:11:5",
+            TransitionType::UnsafeWrite(0, "shared.rs:11:5".into(), 0, "i32".into()),
+        ));
+        let thread_b_read = net.add_transition(Transition::new_with_transition_type(
+            "thread_b_read__2_in:shared.rs:20:5",
+            TransitionType::UnsafeRead(0, "shared.rs:20:5".into(), 0, "SharedPtr".into()),
+        ));
+
+        for transition in [thread_a_read, thread_a_write, thread_b_read] {
+            net.set_input_weight(shared, transition, 1);
+            net.set_output_weight(shared, transition, 1);
+        }
+
+        net
+    }
+
     #[test]
     fn detect_simple_data_race() {
         let net = build_data_race_net();
@@ -217,6 +497,42 @@ mod tests {
             race.operations
                 .iter()
                 .any(|op| op.operation_type == "write")
+        );
+    }
+
+    #[test]
+    fn groups_same_site_accesses_before_reporting() {
+        let net = build_grouped_data_race_net();
+        let state_graph = StateGraph::from_net(&net);
+        let detector = DataRaceDetector::new(&state_graph);
+        let report = detector.detect();
+
+        assert!(report.has_race, "Expected grouped data race to be detected");
+        assert_eq!(report.race_count, 1);
+
+        let race = &report.race_conditions[0];
+        assert_eq!(race.operations.len(), 2);
+        assert!(race
+            .operations
+            .iter()
+            .any(|op| op.operation_type == "write" && op.location == "shared.rs:11:5"));
+        assert!(race
+            .operations
+            .iter()
+            .any(|op| op.operation_type == "read" && op.location == "shared.rs:20:5"));
+        assert!(!race
+            .operations
+            .iter()
+            .any(|op| op.location == "shared.rs:10:5"));
+    }
+
+    #[test]
+    fn transition_scope_uses_last_access_marker() {
+        let name = "unsafe_write_read::main::{closure#1}_write__1_in:src/main.rs:25:32";
+
+        assert_eq!(
+            transition_scope_key(name),
+            "unsafe_write_read::main::{closure#1}".to_string()
         );
     }
 }
