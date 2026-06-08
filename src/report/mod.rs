@@ -193,7 +193,10 @@ impl fmt::Display for IncidentReport {
                     }
                 }
             }
-            if incident.kind != "deadlock" && !incident.where_to_look.is_empty() {
+            if incident.kind != "deadlock"
+                && incident.kind != "datarace"
+                && !incident.where_to_look.is_empty()
+            {
                 writeln!(f)?;
                 writeln!(f, "Where to look:")?;
                 for (index, location) in incident.where_to_look.iter().enumerate() {
@@ -206,7 +209,10 @@ impl fmt::Display for IncidentReport {
                     )?;
                 }
             }
-            if incident.kind != "deadlock" && !incident.developer_explanation.is_empty() {
+            if incident.kind != "deadlock"
+                && incident.kind != "datarace"
+                && !incident.developer_explanation.is_empty()
+            {
                 writeln!(f)?;
                 writeln!(f, "Developer explanation:")?;
                 writeln!(f, "  {}", incident.developer_explanation)?;
@@ -249,26 +255,34 @@ impl fmt::Display for IncidentReport {
                     }
                 }
             } else if incident.kind == "datarace" {
-                writeln!(f, "Conflicting unsafe accesses:")?;
-                for operation in &incident.diagnosis.conflicting_operations {
-                    writeln!(f, "  - {}", operation)?;
-                }
-                writeln!(f)?;
-                writeln!(f, "Enabled state:")?;
-                if incident.evidence.marking.is_empty() {
-                    writeln!(f, "  No state marking was recorded for this incident.")?;
+                writeln!(f, "Key unsafe accesses:")?;
+                if !incident.where_to_look.is_empty() {
+                    for (index, location) in incident.where_to_look.iter().enumerate() {
+                        let detail = incident
+                            .diagnosis
+                            .conflicting_operations
+                            .get(index)
+                            .map(String::as_str)
+                            .unwrap_or(location.message.as_str());
+                        writeln!(
+                            f,
+                            "  {}. {:<32} {}",
+                            index + 1,
+                            render_source_location(location),
+                            detail
+                        )?;
+                    }
                 } else {
-                    for mark in &incident.evidence.marking {
-                        if let Some(span) = mark.span.as_deref() {
-                            writeln!(f, "  - {} tokens={} at {}", mark.place, mark.tokens, span)?;
-                        } else {
-                            writeln!(f, "  - {} tokens={}", mark.place, mark.tokens)?;
-                        }
+                    for operation in &incident.diagnosis.conflicting_operations {
+                        writeln!(f, "  - {}", operation)?;
                     }
                 }
-                writeln!(f)?;
-                writeln!(f, "Developer explanation:")?;
-                writeln!(f, "  At least one conflicting access is a write; read/read pairs are not reported.")?;
+
+                if let Some(state_summary) = summarize_datarace_marking(&incident.evidence.marking) {
+                    writeln!(f)?;
+                    writeln!(f, "Enabled state:")?;
+                    writeln!(f, "  {}", state_summary)?;
+                }
             } else if incident.kind == "atomicity_violation" {
                 writeln!(f, "Candidate atomic pattern:")?;
                 if let Some((load, stores)) = incident.diagnosis.conflicting_operations.split_first() {
@@ -322,9 +336,11 @@ impl fmt::Display for IncidentReport {
                 }
             }
             writeln!(f)?;
-            writeln!(f, "Suggested next steps:")?;
-            for step in &incident.suggested_next_steps {
-                writeln!(f, "  - {}", step)?;
+            if incident.kind != "datarace" && !incident.suggested_next_steps.is_empty() {
+                writeln!(f, "Suggested next steps:")?;
+                for step in &incident.suggested_next_steps {
+                    writeln!(f, "  - {}", step)?;
+                }
             }
         }
 
@@ -451,6 +467,38 @@ fn render_source_location(location: &SourceLocation) -> String {
         (Some(file), None, _) => file.clone(),
         _ => "unknown source".to_string(),
     }
+}
+
+fn summarize_datarace_marking(marking: &[MarkingEvidence]) -> Option<String> {
+    if marking.is_empty() {
+        return None;
+    }
+
+    let human_readable = marking
+        .iter()
+        .filter(|mark| mark.span.is_some() || !mark.place.starts_with("place#"))
+        .collect::<Vec<_>>();
+
+    if human_readable.is_empty() {
+        return Some(format!(
+            "{} Petri-net places are marked in the witness state.",
+            marking.len()
+        ));
+    }
+
+    Some(
+        human_readable
+            .into_iter()
+            .map(|mark| {
+                if let Some(span) = mark.span.as_deref() {
+                    format!("{} tokens={} at {}", mark.place, mark.tokens, span)
+                } else {
+                    format!("{} tokens={}", mark.place, mark.tokens)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
 }
 
 fn marking_evidence(place: &str, tokens: u8) -> MarkingEvidence {
@@ -833,12 +881,9 @@ impl RaceReport {
                     .iter()
                     .map(|op| {
                         if let Some(basic_block) = op.basic_block {
-                            format!(
-                                "{} {} at {} (bb{})",
-                                op.operation_type, op.variable, op.location, basic_block
-                            )
+                            format!("{} {} (bb{})", op.operation_type, op.variable, basic_block)
                         } else {
-                            format!("{} {} at {}", op.operation_type, op.variable, op.location)
+                            format!("{} {}", op.operation_type, op.variable)
                         }
                     })
                     .collect::<Vec<_>>();
@@ -864,11 +909,11 @@ impl RaceReport {
                     kind: "datarace".to_string(),
                     state_id: None,
                     what_happened: format!(
-                        "Two unsynchronized unsafe accesses target {} and at least one access is a write.",
+                        "Two unsafe accesses to {} are simultaneously enabled without synchronization.",
                         race.variable_info
                     ),
                     where_to_look,
-                    developer_explanation: "Both operations are enabled in the same reachable state, so the Petri net admits an execution where the accesses can overlap without an ordering transition between them.".to_string(),
+                    developer_explanation: String::new(),
                     diagnosis: IncidentDiagnosis {
                         blocked_resources: Vec::new(),
                         conflicting_operations,
@@ -903,7 +948,7 @@ impl RaceReport {
                 state_space: None,
                 primary_locations: primary_locations(&incidents),
                 explanation: if self.has_race {
-                    "At least one reachable state enables conflicting unsafe memory operations."
+                    "At least one reachable state enables conflicting unsafe memory operations; read/read pairs are omitted."
                         .to_string()
                 } else {
                     "No simultaneously enabled conflicting unsafe memory operations were found."
@@ -1122,22 +1167,32 @@ mod tests {
 
         assert!(text.contains("Mode          : datarace"));
         assert!(text.contains("Incident datarace-1"));
-        assert!(text.contains("read i32"));
-        assert!(text.contains("write i32"));
-        assert!(text.contains("Both operations are enabled in the same reachable state"));
+        assert!(text.contains("Key unsafe accesses:"));
+        assert!(text.contains("1. src/main.rs:10:5"));
+        assert!(text.contains("read i32 (bb0)"));
+        assert!(text.contains("2. src/main.rs:20:5"));
+        assert!(text.contains("write i32 (bb1)"));
+        assert!(!text.contains("Where to look:"));
     }
 
     #[test]
     fn race_display_focuses_on_enabled_unsafe_accesses() {
         let text = sample_race_report().to_string();
 
-        assert!(text.contains("Conflicting unsafe accesses:"));
-        assert!(text.contains("  - read i32 at src/main.rs:10:5 (bb0)"));
-        assert!(text.contains("  - write i32 at src/main.rs:20:5 (bb1)"));
         assert!(text.contains("Enabled state:"));
-        assert!(text.contains("  - place#1 tokens=1"));
-        assert!(text.contains("At least one conflicting access is a write; read/read pairs are not reported."));
+        assert!(text.contains("1 Petri-net places are marked in the witness state."));
+        assert!(text.contains("read/read pairs are omitted"));
+        assert!(!text.contains("Conflicting unsafe accesses:"));
+        assert!(!text.contains("  - place#1 tokens=1"));
         assert!(!text.contains("Relevant marking:"));
+    }
+
+    #[test]
+    fn race_display_omits_suggested_next_steps() {
+        let text = sample_race_report().to_string();
+
+        assert!(!text.contains("Suggested next steps:"));
+        assert!(!text.contains("Check whether the reported accesses should be protected"));
     }
 
     fn sample_atomic_report() -> AtomicReport {
