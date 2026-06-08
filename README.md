@@ -83,6 +83,30 @@ cargo run --bin pn -- \
   -- path/to/file.rs
 ```
 
+### Run benchmark crates
+
+The repository also contains standalone benchmark crates under `bench/`.
+
+For data-race benchmarks, install `pn` normally and run the target crate with `RUSTC_WRAPPER=pn` and `PN_FLAGS`:
+
+```bash
+cargo install --path . --bin pn --force
+RUSTC_WRAPPER="$(command -v pn)" \
+PN_FLAGS="-m datarace -p unsafe_write_read --pn-analysis-dir=tmp/unsafe_write_read" \
+  cargo build --manifest-path bench/data-race/unsafe-write-read/Cargo.toml
+```
+
+For atomic-violation benchmarks, reinstall `pn` with the feature enabled before using `-m atomic`:
+
+```bash
+cargo install --path . --bin pn --features atomic-violation --force
+RUSTC_WRAPPER="$(command -v pn)" \
+PN_FLAGS="-m atomic -p av1_load_store_store --pn-analysis-dir=tmp/av1" \
+  cargo build --manifest-path bench/atomic-violation/av1-load-store-store/Cargo.toml
+```
+
+The batch helper `./detect.sh` works well for deadlock and data-race crate directories. Atomic benchmarks still require a feature-enabled `pn` install. Inspect `datarace_report.txt` or `atomicity_report.txt` under the selected analysis directory after each run.
+
 ## Common flags
 
 

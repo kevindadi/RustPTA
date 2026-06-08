@@ -31,8 +31,6 @@ use serde::Serialize;
 use std::fmt::{Debug, Formatter, Result};
 use std::path::PathBuf;
 use std::time::Instant;
-#[cfg(feature = "atomic-violation")]
-use std::time::Instant;
 
 #[derive(Clone)]
 pub struct PTACallbacks {
