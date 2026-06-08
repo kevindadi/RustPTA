@@ -16,16 +16,14 @@ Build and analyze every benchmark crate grouped by bench mode directories:
   bench/atomic-violation/
 
 Artifacts are written to:
-  ${OUTPUT_ROOT}/<crate_name>/
+  ${OUTPUT_ROOT}/<crate_name>/
 
-Default exports per crate:
-  - summary/report files
-  - callgraph.dot
-  - petrinet*.dot
-  - stategraph.dot
-  - points_to_report*.txt
-  - mir/*.dot
-  - cir.yaml
+Default pn export flags per crate:
+  --viz-callgraph --viz-petrinet --viz-stategraph
+  --viz-pointsto --viz-cir --report-level=research
+
+Typical outputs include summary/report files plus any supported exports
+emitted for that crate and mode.
 
 Behavior:
   - deadlock benches         -> -m deadlock
@@ -80,7 +78,6 @@ default_pn_flags=(
 	--viz-petrinet
 	--viz-stategraph
 	--viz-pointsto
-	--viz-mir
 	--viz-cir
 	--report-level=research
 )
