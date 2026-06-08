@@ -43,15 +43,17 @@ impl PTACallbacks {
     pub fn new(options: Options) -> Self {
         let diagnostics_output = options.analysis_output_dir();
 
-        std::fs::create_dir_all(&diagnostics_output).unwrap_or_else(|e| {
-            log::debug!("Warning: Failed to create output directory: {}", e);
-        });
-
         Self {
             options,
             output_directory: diagnostics_output,
             test_run: false,
         }
+    }
+
+    fn ensure_output_directory(&self) {
+        std::fs::create_dir_all(&self.output_directory).unwrap_or_else(|e| {
+            log::debug!("Warning: Failed to create output directory: {}", e);
+        });
     }
 
     fn is_research_report(&self) -> bool {
@@ -124,6 +126,18 @@ impl PTACallbacks {
 
         let current_crate_name = tcx.crate_name(LOCAL_CRATE).to_string();
 
+        if !self.options.targets_current_crate(&current_crate_name) {
+            debug!(
+                "skip Petri net construction for crate {} (target crate: {})",
+                current_crate_name,
+                self.options.crate_name
+            );
+            return;
+        }
+
+        self.output_directory = self.options.analysis_output_dir();
+        self.ensure_output_directory();
+
         let cgus = tcx.collect_and_partition_mono_items(()).codegen_units;
         let instances: Vec<Instance<'tcx>> = cgus
             .iter()
@@ -150,15 +164,6 @@ impl PTACallbacks {
         // Stop after call graph construction.
         if self.options.stop_after == StopAfter::AfterCallGraph {
             log::info!("Stopping analysis after call graph construction");
-            return;
-        }
-
-        if !self.options.targets_current_crate(&current_crate_name) {
-            debug!(
-                "skip Petri net construction for crate {} (target crate: {})",
-                current_crate_name,
-                self.options.crate_name
-            );
             return;
         }
 
@@ -682,6 +687,35 @@ impl PTACallbacks {
         } else {
             info!("atomicity analysis completed: no violations detected");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn callbacks_new_does_not_create_output_directory() {
+        let output_root = std::env::temp_dir().join(format!(
+            "rustpta_callbacks_new_no_create_{}",
+            std::process::id()
+        ));
+        let output_dir = output_root.join("target_crate");
+        let _ = std::fs::remove_dir_all(&output_root);
+
+        let options = Options {
+            crate_name: "target_crate".to_string(),
+            output: Some(output_root.clone()),
+            ..Options::default()
+        };
+
+        let callbacks = PTACallbacks::new(options);
+
+        assert_eq!(callbacks.output_directory, PathBuf::from(&output_dir));
+        assert!(!output_dir.exists());
+
+        let _ = std::fs::remove_dir_all(&output_root);
     }
 }
 
