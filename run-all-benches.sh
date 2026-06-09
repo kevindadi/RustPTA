@@ -5,6 +5,9 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="${DIR}/bench"
 OUTPUT_ROOT="${DIR}/tmp"
+PN_BUILD_ROOT=""
+PN_BIN_PLAIN=""
+PN_BIN_ATOMIC=""
 
 usage() {
 	cat <<EOF
@@ -26,10 +29,10 @@ Typical outputs include summary/report files plus any supported exports
 emitted for that crate and mode.
 
 Behavior:
-  - deadlock benches         -> -m deadlock
-  - data-race benches        -> -m datarace
-  - atomic-violation benches -> -m atomic
-  - installs pn with the atomic-violation feature enabled
+  - deadlock benches         -> -m deadlock with plain pn
+  - data-race benches        -> -m datarace with plain pn
+  - atomic-violation benches -> -m atomic with atomic-feature pn
+  - builds separate pn wrappers for plain and atomic analyses
   - cleans each crate before building so analysis always reruns
 
 Examples:
@@ -56,16 +59,55 @@ fi
 OUTPUT_ROOT="${BENCH_OUTPUT_ROOT:-$OUTPUT_ROOT}"
 mkdir -p "$OUTPUT_ROOT"
 
-pushd "$DIR" > /dev/null
-cargo install --path . --bin pn --features atomic-violation --force
-popd > /dev/null
+cleanup() {
+	if [[ -n "$PN_BUILD_ROOT" && -d "$PN_BUILD_ROOT" ]]; then
+		rm -rf "$PN_BUILD_ROOT"
+	fi
+}
+trap cleanup EXIT
 
-PN_BIN="$(command -v pn || true)"
-if [[ -z "$PN_BIN" ]]; then
-	PN_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/pn"
-fi
+build_pn_wrappers() {
+	local plain_target_dir atomic_target_dir
 
-export RUSTC_WRAPPER="$PN_BIN"
+	plain_target_dir="${PN_BUILD_ROOT}/plain"
+	atomic_target_dir="${PN_BUILD_ROOT}/atomic"
+
+	pushd "$DIR" > /dev/null
+	CARGO_TARGET_DIR="$plain_target_dir" cargo build --bin pn
+	CARGO_TARGET_DIR="$atomic_target_dir" cargo build --bin pn --features atomic-violation
+	popd > /dev/null
+
+	PN_BIN_PLAIN="${plain_target_dir}/debug/pn"
+	PN_BIN_ATOMIC="${atomic_target_dir}/debug/pn"
+
+	if [[ ! -x "$PN_BIN_PLAIN" ]]; then
+		echo "plain pn wrapper not found: $PN_BIN_PLAIN" >&2
+		exit 1
+	fi
+	if [[ ! -x "$PN_BIN_ATOMIC" ]]; then
+		echo "atomic pn wrapper not found: $PN_BIN_ATOMIC" >&2
+		exit 1
+	fi
+}
+
+wrapper_for_mode() {
+	case "$1" in
+		deadlock|datarace)
+			echo "$PN_BIN_PLAIN"
+			;;
+		atomic)
+			echo "$PN_BIN_ATOMIC"
+			;;
+		*)
+			echo "unsupported pn mode: $1" >&2
+			return 1
+			;;
+	esac
+}
+
+PN_BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rustpta-pn-build.XXXXXX")"
+build_pn_wrappers
+
 RUSTC_SYSROOT="$(rustc --print sysroot)"
 export LD_LIBRARY_PATH="${RUSTC_SYSROOT}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export RUST_BACKTRACE=full
@@ -106,11 +148,12 @@ map_mode() {
 
 run_mode_dir() {
 	local mode_dir="$1"
-	local mode_name mode_flag
+	local mode_name mode_flag pn_bin
 	local -a manifests pn_flags
 
 	mode_name="$(basename "$mode_dir")"
 	mode_flag="$(map_mode "$mode_name")"
+	pn_bin="$(wrapper_for_mode "$mode_flag")"
 
 	mapfile -t manifests < <(find "$mode_dir" -mindepth 2 -maxdepth 2 -name Cargo.toml | sort)
 	if [[ ${#manifests[@]} -eq 0 ]]; then
@@ -135,7 +178,8 @@ run_mode_dir() {
 			"${default_pn_flags[@]}"
 			"${extra_pn_flags[@]}"
 		)
-		export PN_FLAGS="${pn_flags[*]}"
+		RUSTC_WRAPPER="$pn_bin" \
+		PN_FLAGS="${pn_flags[*]}" \
 		cargo build --manifest-path "$manifest" "${cargo_build_args[@]}"
 	done
 }
