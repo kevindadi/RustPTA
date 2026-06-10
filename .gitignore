@@ -9,6 +9,5 @@ AGENTS.md
 Cargo.lock
 toys
 tools
-bench/deadlock/
 docs
 .claude
