@@ -9,8 +9,6 @@ AGENTS.md
 Cargo.lock
 toys
 tools
-bench/deadlock/
-tmp
 docs
 .claude
 .DS_Store
