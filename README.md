@@ -1,5 +1,7 @@
 # RustPTA
 
+> **Note:** This repository is kept as-is for historical reference. All future development and new features are being pursued in a separate repository: **[ConcBugDect-Rust](https://github.com/kevindadi/ConcBugDect-Rust)**. We will not be using branches here for new work; please direct all contributions and issues to the new repository.
+
 RustPTA is a Petri-net-based static analyzer for Rust concurrency bugs. It runs as a Rust compiler driver, collects MIR-level information during compilation, translates the analyzed program into a Petri net, builds a state graph, and reports potential concurrency problems.
 
 The project is intended for three audiences:
